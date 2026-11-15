@@ -159,6 +159,15 @@ class Hyprland:
         out = self._run(["-j", *args])
         return json.loads(out) if out.strip() else None
 
+    def locked(self) -> bool | None:
+        """Authoritative compositor lock state, or unknown on a version without the query."""
+        try:
+            state = self._json("locked")
+        except (HyprctlError, json.JSONDecodeError):
+            return None
+        value = state.get("locked") if isinstance(state, dict) else None
+        return value if isinstance(value, bool) else None
+
     def windows(self) -> list[Window]:
         instance, wayland = "", ""
         real = self._run is run_hyprctl
