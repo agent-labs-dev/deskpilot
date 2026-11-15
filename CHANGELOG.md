@@ -7,6 +7,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+- Window captures report a locked desktop before waiting for a frame when Hyprland exposes its lock state. Unlock the desktop to capture again; plugin availability is independent.
+
 ## [0.7.0] - 2026-11-12
 
 - `adopt ADDRESS` hands one unfocused native window to an agent for hidden actions; `release ADDRESS`, stop and plugin unload return it without closing its shared application.

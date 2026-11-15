@@ -28,6 +28,10 @@ if TYPE_CHECKING:
     from .batch import BatchRequest, BatchResult
 
 
+class SessionLocked(RuntimeError):
+    code = "refused"
+
+
 class NotVisible(LookupError):
     code = "not_visible"
 
@@ -351,11 +355,12 @@ class Desk:
     ) -> screen.Shot:
         return screen.capture(self._shootable(self._target(query, show, hidden, refresh=True)), out, max_width)
 
-    @staticmethod
-    def _shootable(win: Window) -> Window:
+    def _shootable(self, win: Window) -> Window:
         """The window, if a shot of it can get a frame. Hyprland copies a window's frame only while the window lies
         partly in its monitor's area, so a hidden shot of a scrolling layout's off-screen column is refused here
         rather than left to time out."""
+        if self.hypr.locked() is True:
+            raise SessionLocked("the session is locked: unlock the desktop before capturing a window")
         if not win.on_monitor:
             raise NotVisible(
                 f"{win.cls} ({win.address}) lies outside its monitor's area, where Hyprland sends no frame of it, so "

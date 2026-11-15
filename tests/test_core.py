@@ -160,6 +160,27 @@ def test_a_shot_is_refused_for_another_window_or_a_resized_one(tmp_path, monkeyp
         screen.load("nope")
 
 
+def test_a_locked_session_refuses_capture_before_grim(tmp_path, monkeypatch):
+    desk, *_ = make_desk(tmp_path, monkeypatch)
+    original = desk.hypr._run
+    desk.hypr._run = lambda args: '{"locked": true}' if args == ["-j", "locked"] else original(args)
+    calls = fake_grim(monkeypatch, (100, 50))
+    with pytest.raises(RuntimeError, match=r"session is locked.*unlock") as error:
+        desk.shot("battle")
+    assert error_code(error.value) == "refused"
+    assert calls == []
+
+
+@pytest.mark.parametrize("reply", ['{"locked": false}', "unknown request"])
+def test_an_unlocked_or_unsupported_lock_query_keeps_capture(tmp_path, monkeypatch, reply):
+    desk, *_ = make_desk(tmp_path, monkeypatch)
+    original = desk.hypr._run
+    desk.hypr._run = lambda args: reply if args == ["-j", "locked"] else original(args)
+    calls = fake_grim(monkeypatch, (100, 50))
+    assert desk.shot("battle").width == 100
+    assert len(calls) == 1
+
+
 def test_a_capture_that_gets_no_frame_is_a_timeout(tmp_path, monkeypatch):
     monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path))
 
