@@ -7,6 +7,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+- A window that Hyprland gives a closed window's address, such as a freshly launched app, is no longer refused as changed since the closed window's shot. Shots and accessibility snapshots are matched to the window by its compositor, process and stable id as well as its address, so a new window at a reused address simply has none yet, while a window that changed since its own shot is still refused, and so are coordinates given without a shot id or scale, which are in the closed window's shot.
+
 ## [0.7.3] - 2026-11-16
 
 - A modifier the user holds on any of their keyboards while their keyboard focus is in another window of the target's app no longer reaches a click, scroll, drag or hover there, so a held Ctrl never turns the action's click on a link into a new tab. Until the action ends, their keys wait behind it, as for XWayland windows.

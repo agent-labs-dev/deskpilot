@@ -1,4 +1,5 @@
 import json
+from dataclasses import replace
 from types import SimpleNamespace
 
 import pytest
@@ -357,3 +358,15 @@ def test_popup_layer_distinguishes_a_menu_at_the_window_origin(tmp_path, monkeyp
     located = a11y.locate(window(), item.id, bus=fake)
     assert located == a11y.Located(6, 9, 80, 20, ((0, 0),), True)
     assert a11y.resolve([popup], located.keys) == popup
+
+
+def test_a_new_window_at_a_reused_address_has_no_prior_elements(tmp_path, monkeypatch):
+    # Hyprland hands a closed window's address to a later window: the closed one's element ids name nothing there.
+    monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path))
+    fake = FakeBus()
+    a11y.snapshot(window(), bus=fake)
+    for reused in (window(pid=43), replace(window(), stable_id="8")):
+        with pytest.raises(a11y.A11yError, match="unknown for window 0xabc") as error:
+            a11y.locate(reused, "e2", bus=fake)
+        assert error.value.code == "stale"
+    assert a11y.locate(window(), "e2", bus=fake) == a11y.Located(10, 20, 80, 20)

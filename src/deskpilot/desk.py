@@ -236,7 +236,7 @@ class Desk:
 
     @staticmethod
     def _check_identity(win: Window) -> None:
-        taken = screen.latest(win.address, instance=win.instance)
+        taken = screen.latest(win)
         if taken:
             taken.check_identity(win)
 
@@ -404,7 +404,7 @@ class Desk:
         if element is not None:
             return win, *self._element_point(win, element)
         assert x is not None and y is not None
-        taken = screen.load(shot) if shot else screen.latest(win.address, instance=win.instance)
+        taken = screen.load(shot) if shot else screen.last_at(win)
         if taken and (shot or scale is None):
             taken.check(win)
         if scale is None:
