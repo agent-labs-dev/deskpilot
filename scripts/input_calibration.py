@@ -11,6 +11,7 @@ import base64
 import contextlib
 import json
 import os
+import re
 import shutil
 import subprocess
 import time
@@ -206,10 +207,13 @@ def calibrate_native_seat_keys(desk, chrome, browser, verify, output):  # noqa: 
         for command in ("key 45 1", "motion 8 0", "key2 45 1", "key2 45 0", "key 45 0"):
             send(command)
         desk.plugin.path(win.address, "plain", [*surface, f"m{gx},{gy}"])
-        time.sleep(0.3)
-        settled = companion_value()
+        # A's press reached the companion, which kept focus; its held release lets the client repeat x until then.
+        arrived = wait_for_element(
+            desk, companion.address, lambda e: e.name == "companion" and re.fullmatch("xyzxxx+", e.text or ""), 2
+        )
+        focused = desk.window(companion.address).focused
         time.sleep(1)
-        shared_released = settled is not None and companion_value() == settled
+        shared_released = arrived is not None and focused and companion_value() == arrived.text
         # A stuck x is released through A, whose press the seat already has.
         send("key 45 1")
         send("key 45 0")
