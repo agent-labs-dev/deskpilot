@@ -100,6 +100,59 @@ def keyboard_control(output):
     return process
 
 
+def calibrate_native_seat_keys(desk, chrome, browser, verify, output):
+    """A pointer action on a native window of the app the user's pointer is on takes the seat's pointer and holds the
+    user's pointer input until it ends, but never their keys: those reach their own focused window meanwhile."""
+    companion = desk.launch(
+        [
+            chrome,
+            "--new-window",
+            "--ozone-platform=wayland",
+            "--force-renderer-accessibility",
+            "data:text/html,<title>Seat companion</title><textarea autofocus></textarea>",
+        ]
+    )
+    desk.focus(companion.address)
+    window = desk.window(companion.address)
+    desk.hypr.move_cursor(window.x + window.width // 2, window.y + window.height // 2)
+    field = next(e for e in descendants(desk.elements(browser.address)) if "editable" in e.states)
+    desk.shot(browser.address)
+    win, gx, gy, surface = desk._aim(browser.address, None, None, None, None, False, field.id, False)
+    control = keyboard_control(output)
+    assert control.stdin is not None and control.stdout is not None
+
+    def send(command):
+        control.stdin.write(command + "\n")
+        control.stdin.flush()
+        if control.stdout.readline().strip() != "done":
+            raise RuntimeError("private virtual keyboard command failed")
+
+    try:
+        # `n` acknowledges the running path before the dwell, so the keys are sent while it holds the seat's pointer.
+        desk.plugin.path(win.address, "plain", [*surface, f"m{gx},{gy}", "n", "d3000"])
+        for command in ("key 45 1", "key 45 0", "key 21 1", "key 21 0", "key 44 1", "key 44 0"):
+            send(command)
+        deadline = time.monotonic() + 2
+        typed = False
+        while not typed and time.monotonic() < deadline:
+            tree = descendants(desk.elements(companion.address))
+            typed = any(e.text == "xyz" and "editable" in e.states for e in tree)
+            time.sleep(0.05)
+        verify("chrome_seat_pointer_keys_pass", typed and desk.plugin.status()["busy"])
+        # A queued path is a completion barrier for the held action.
+        desk.plugin.path(win.address, "plain", [*surface, f"m{gx},{gy}"])
+        verify("chrome_seat_pointer_focus_preserved", desk.window(companion.address).focused)
+    finally:
+        if control.poll() is None:
+            control.stdin.write("quit\n")
+            control.stdin.flush()
+            try:
+                control.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                control.kill()
+                control.wait()
+
+
 def calibrate_x11_pointer(desk, chrome, background, verify, output):  # noqa: PLR0915 - sequential live input probe
     html = """<title>Deskpilot X11 pointer calibration</title>
 <button id=t onpointerdown="events.value=JSON.stringify({type:event.type,
@@ -345,6 +398,7 @@ def main() -> int:  # noqa: PLR0915 - a bounded, sequential live calibration wit
             desk.plugin.keys(browser.address, keys.chord_words("BackSpace"))
             expect_text("chrome_unfocused_select_delete", browser.address, "")
             verify("chrome_unfocused_focus_preserved", desk.window(target.address).focused)
+            calibrate_native_seat_keys(desk, chrome, browser, verify, args.output)
             calibrate_x11_pointer(desk, chrome, target.address, verify, args.output)
         if args.wine:
             calibrate_wine(desk, args.output, verify)

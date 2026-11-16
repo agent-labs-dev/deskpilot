@@ -277,8 +277,9 @@ namespace {
         // whose surface origin relative to the window is this. Unset, any surface of the window takes it.
         std::optional<std::optional<Vector2D>> onSurface;
         // The input goes to the window client's own pointer (see "hidden pointer" below), leaving the user's pointer,
-        // focus and input alone. Otherwise the seat's pointer is moved onto the window and the user's input is held:
-        // for an XWayland window, which reads the one X pointer, and for a window of the app the user's pointer is on.
+        // focus and input alone. Otherwise the seat's pointer is moved onto the window and the user's pointer input is
+        // held: for an XWayland window, which reads the one X pointer, and for a window of the app the user's pointer is
+        // on. Their keys are held too only where pointerHoldsKeys says passing them on would be wrong.
         bool                               direct = false;
         std::vector<WP<CWLKeyboardResource>> modifierKeyboards;
         // The window's client bound the agent seat, so the input goes to its agent pointer (see "agent seat").
@@ -471,16 +472,25 @@ namespace {
 
     std::function<void()> keyboardReplay(std::function<void()> replay);
 
+    // A pointer action holds the user's keys only where passing them on would be wrong: while it has replaced their
+    // modifiers on the target client's keyboards (clearPointerMods, for XWayland), since a key would send that client
+    // their modifiers again mid-action, and once it holds pointer input of theirs, which could move keyboard focus and
+    // must stay ahead of the keys that follow it. Otherwise the seat route moves the pointer alone, never keyboard
+    // focus, so the user's keys go where they would without it.
+    bool pointerHoldsKeys() {
+        return g_op && (!g_op->modifierKeyboards.empty() || !g_op->heldInput.empty());
+    }
+
     void hkOnKeyboardKey(CInputManager* self, const IKeyboard::SKeyEvent& e, SP<IKeyboard> keyboard) {
         auto replay = [self, e, keyboard] { reinterpret_cast<KeyFn>(g_keyHook->m_original)(self, e, keyboard); };
-        if ((g_op && !g_op->direct) || (g_keyOp && g_keyOp->holding)) {
+        if (pointerHoldsKeys() || (g_keyOp && g_keyOp->holding)) {
             // The pointer or agent stroke may have replaced the client's modifiers. Deliver the event's own
             // modifiers first, including when they were already held before the action began.
             auto held = keyboardReplay([self, keyboard, replay] {
                 reinterpret_cast<ModFn>(g_modHook->m_original)(self, keyboard);
                 replay();
             });
-            if (g_op && !g_op->direct)
+            if (pointerHoldsKeys())
                 g_op->heldInput.emplace_back(std::move(held));
             else
                 holdForStroke(std::move(held));
@@ -490,7 +500,7 @@ namespace {
 
     void hkOnKeyboardMod(CInputManager* self, SP<IKeyboard> keyboard) {
         auto replay = [self, keyboard] { reinterpret_cast<ModFn>(g_modHook->m_original)(self, keyboard); };
-        if (g_op && !g_op->direct)
+        if (pointerHoldsKeys())
             g_op->heldInput.emplace_back(keyboardReplay(replay));
         else if (g_keyOp && g_keyOp->holding)
             holdForStroke(keyboardReplay(replay));

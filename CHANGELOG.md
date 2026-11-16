@@ -7,6 +7,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+- A click, scroll, drag or hover on a native window of the app the user's pointer is in no longer holds the user's typing until it ends. Their keys wait only behind their own pointer input, and for XWayland windows, whose modifiers the action replaces.
+
 ## [0.7.1] - 2026-11-16
 
 - Window captures report a locked desktop before waiting for a frame when Hyprland exposes its lock state. Unlock the desktop to capture again; plugin availability is independent.
