@@ -362,6 +362,20 @@ def calibrate_native_seat_keys(desk, chrome, browser, verify, output):  # noqa: 
         send("mods 0")
         send("key 29 0")
         stop_ime(ime)
+
+        # A Shift Chrome got before the plugin loaded is still the user's: after an agent stroke in that window, the
+        # user's next key, with Shift still held, must still be shifted.
+        cleared = clear_companion()
+        send("key 42 1")
+        send("mods 1")
+        desk.plugin.unload()
+        desk.plugin.load()
+        desk.type("x", companion.address)
+        send("key 30 1")
+        send("key 30 0")
+        held_shift_unrecorded = cleared and companion_text("xA") is not None
+        send("mods 0")
+        send("key 42 0")
         # Every outcome is recorded before any stops the run.
         verify("chrome_seat_pointer_release_not_repeated", released, stop=False)
         verify("chrome_seat_pointer_prior_key_released", prior_released, stop=False)
@@ -371,7 +385,8 @@ def calibrate_native_seat_keys(desk, chrome, browser, verify, output):  # noqa: 
         verify("chrome_seat_pointer_other_keyboard_ctrl_isolated", other_keyboard_ctrl, stop=False)
         verify("chrome_seat_pointer_grabbed_ctrl_isolated_unrecorded", grabbed_ctrl_unrecorded, stop=False)
         verify("chrome_ime_kept_ctrl_not_restored_unrecorded", ime_ctrl_kept_unrecorded, stop=False)
-        verify("chrome_ime_kept_ctrl_not_restored", ime_ctrl_kept)
+        verify("chrome_ime_kept_ctrl_not_restored", ime_ctrl_kept, stop=False)
+        verify("chrome_held_shift_restored_unrecorded", held_shift_unrecorded)
     finally:
         for process in processes:
             if process.poll() is None:
