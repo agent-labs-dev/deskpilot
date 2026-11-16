@@ -376,6 +376,29 @@ def calibrate_native_seat_keys(desk, chrome, browser, verify, output):  # noqa: 
         held_shift_unrecorded = cleared and companion_text("xA") is not None
         send("mods 0")
         send("key 42 0")
+
+        # An input method's keyboard keeps a Ctrl it forwarded when it lets go of the keyboard, and the user's release
+        # of that Ctrl then reaches Chrome with no modifiers. Once it grabs again, Hyprland sends Chrome nothing from
+        # that keyboard but its keys until it forwards new modifiers, so with the plugin loaded before then, its next
+        # plain key must stay plain, as it does without the plugin. A Ctrl+z would undo back to the earlier "xA".
+        cleared = clear_companion()
+        ime, forward = start_ime("later")
+        forward("grab")
+        forward("key 45 1")
+        forward("key 45 0")
+        send("key 29 1")
+        send("mods 4")
+        forward("mods 4")
+        forward("ungrab")
+        send("mods 0")
+        send("key 29 0")
+        forward("grab")
+        desk.plugin.unload()
+        desk.plugin.load()
+        forward("key 44 1")
+        forward("key 44 0")
+        ime_stale_ctrl_unrecorded = cleared and companion_text("xz") is not None
+        stop_ime(ime)
         # Every outcome is recorded before any stops the run.
         verify("chrome_seat_pointer_release_not_repeated", released, stop=False)
         verify("chrome_seat_pointer_prior_key_released", prior_released, stop=False)
@@ -386,7 +409,8 @@ def calibrate_native_seat_keys(desk, chrome, browser, verify, output):  # noqa: 
         verify("chrome_seat_pointer_grabbed_ctrl_isolated_unrecorded", grabbed_ctrl_unrecorded, stop=False)
         verify("chrome_ime_kept_ctrl_not_restored_unrecorded", ime_ctrl_kept_unrecorded, stop=False)
         verify("chrome_ime_kept_ctrl_not_restored", ime_ctrl_kept, stop=False)
-        verify("chrome_held_shift_restored_unrecorded", held_shift_unrecorded)
+        verify("chrome_held_shift_restored_unrecorded", held_shift_unrecorded, stop=False)
+        verify("chrome_ime_stale_ctrl_not_resent_unrecorded", ime_stale_ctrl_unrecorded)
     finally:
         for process in processes:
             if process.poll() is None:

@@ -43,7 +43,8 @@ static uint32_t now_ms(void) {
 }
 // With "ime", this client is instead an input method that grabs the seat's keyboard and keeps every key it gets, its
 // own keyboard ("key") being the one its keys reach clients through, as an input method forwards them. With "ime
-// later", it grabs on the "grab" command, as an input method does once a text field is focused.
+// later", it grabs on the "grab" command, as an input method does once a text field is focused, and "ungrab" lets go
+// of the keyboard while keeping its own, as an input method does when that field loses focus.
 int main(int argc, char **argv) {
     int ime = argc > 1 && !strcmp(argv[1], "ime");
     struct wl_display *display = wl_display_connect(NULL);
@@ -102,6 +103,9 @@ int main(int argc, char **argv) {
             zwp_virtual_keyboard_v1_modifiers(keyboard, value, 0, 0, 0);
         } else if (!strncmp(line, "grab", 4) && input_method && !grab) {
             grab = zwp_input_method_v2_grab_keyboard(input_method);
+        } else if (!strncmp(line, "ungrab", 6) && grab) {
+            zwp_input_method_keyboard_grab_v2_release(grab);
+            grab = NULL;
         } else if (!strncmp(line, "quit", 4)) break;
         if (wl_display_roundtrip(display) < 0) return 6;
         puts("done"); fflush(stdout);

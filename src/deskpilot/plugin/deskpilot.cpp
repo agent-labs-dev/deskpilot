@@ -1734,10 +1734,13 @@ namespace {
     // through the recording hook, the modifiers Hyprland would deliver it now. This mirrors CInputManager::onKeyboardMod
     // for the seat's keyboard: with no input method grab, its state with the user's other keyboards merged in
     // (shareModsFromAllKBs); under a grab, the client gets only what the input method forwards through its own keyboard
-    // (DISALLOWACTION), as it is, so that keyboard's state, or no held modifiers before it has one. Its input-capture
-    // branch, which sends nothing while another program captures input, is not mirrored: what the client holds then is
-    // what it had when the capture began, and the seat's state is what it gets next. A client without keyboard focus
-    // needs nothing: setKeyboardFocus sends it modifiers when it gets focus.
+    // (DISALLOWACTION), as it is. Both of that keyboard's paths make it the seat's keyboard and the user's keyboards
+    // reach only the input method (USEIME), so while the seat's keyboard is another, the input method has forwarded
+    // nothing during this grab: its keyboard's state may be one it kept from an earlier grab, after which Hyprland sent
+    // the client the user's modifiers, so the client is sent no held modifiers. Its input-capture branch, which sends
+    // nothing while another program captures input, is not mirrored: what the client holds then is what it had when the
+    // capture began, and the seat's state is what it gets next. A client without keyboard focus needs nothing:
+    // setKeyboardFocus sends it modifiers when it gets focus.
     void syncFocusedMods() {
         const auto KEYBOARD = g_pSeatManager->m_keyboard.lock();
         const auto FOCUS    = g_pSeatManager->m_state.keyboardFocus.lock();
@@ -1749,15 +1752,8 @@ namespace {
         if (!HASIME) {
             const auto ALLMODS = ((*g_pInputManager).*member(SShareMods{}))(g_pInputManager->xkbModsToHyprland(KEYBOARD, mods.depressed));
             mods.depressed |= g_pInputManager->hyprlandModsToXkb(KEYBOARD, ALLMODS);
-        } else if (!(KEYBOARD->isVirtual() && g_pInputManager->shouldIgnoreVirtualKeyboard(KEYBOARD))) {
-            const auto FORWARDING = std::ranges::find_if(g_pInputManager->m_keyboards, [](const auto& keyboard) {
-                return keyboard->isVirtual() && g_pInputManager->shouldIgnoreVirtualKeyboard(keyboard);
-            });
-            if (FORWARDING != g_pInputManager->m_keyboards.end())
-                mods = (*FORWARDING)->m_modifiersState;
-            else
-                mods.depressed = mods.latched = 0;
-        }
+        } else if (!(KEYBOARD->isVirtual() && g_pInputManager->shouldIgnoreVirtualKeyboard(KEYBOARD)))
+            mods.depressed = mods.latched = 0;
         for (const auto& weak : keyboardsOf(FOCUS->client())) {
             if (const auto RESOURCE = weak.lock())
                 RESOURCE->sendMods(mods.depressed, mods.latched, mods.locked, mods.group);
