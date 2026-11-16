@@ -277,10 +277,16 @@ namespace {
         // whose surface origin relative to the window is this. Unset, any surface of the window takes it.
         std::optional<std::optional<Vector2D>> onSurface;
         // The input goes to the window client's own pointer (see "hidden pointer" below), leaving the user's pointer,
-        // focus and input alone. Otherwise the seat's pointer is moved onto the window and the user's input is held:
-        // for an XWayland window, which reads the one X pointer, and for a window of the app the user's pointer is on.
+        // focus and input alone. Otherwise the seat's pointer is moved onto the window and the user's pointer input is
+        // held: for an XWayland window, which reads the one X pointer, and for a window of the app the user's pointer is
+        // on. Their keys are held too only where pointerHoldsKeys says passing them on would be wrong.
         bool                               direct = false;
         std::vector<WP<CWLKeyboardResource>> modifierKeyboards;
+        // The seat route: the target window's client, the keycodes of the user's key events in heldInput, and whether
+        // a change of their modifiers while that client had keyboard focus holds their keys.
+        wl_client*            client = nullptr;
+        std::vector<uint32_t> heldKeys;
+        bool                  modsHeld = false;
         // The window's client bound the agent seat, so the input goes to its agent pointer (see "agent seat").
         bool                               agentSeat = false;
         // A direct action: the surface its pointer is on and the pointers entered there, the client's own wl_pointer
@@ -471,18 +477,67 @@ namespace {
 
     std::function<void()> keyboardReplay(std::function<void()> replay);
 
+    // A pointer action holds the user's keys only where passing them on would be wrong:
+    // - while it has replaced their modifiers on the target client's keyboards (clearPointerMods, for XWayland), since a
+    //   key would send that client their modifiers again mid-action;
+    // - once it holds pointer input of theirs, which could move keyboard focus and must stay ahead of the keys after it;
+    // - from the first change of their modifiers while the target's client has their keyboard focus (modsHeld).
+    //   Modifiers are per client, not per window, so the action's own presses would carry the change.
+    // Otherwise the seat route moves the pointer alone, never keyboard focus, so the user's keys go where they would
+    // without it. A key's release goes through unless an event of the same keycode is held (hkOnKeyboardKey).
+    bool pointerHoldsKeys() {
+        return g_op && (!g_op->modifierKeyboards.empty() || !g_op->heldInput.empty() || g_op->modsHeld);
+    }
+
+    // The user's modifier state reaches the client with their keyboard focus.
+    bool focusOnTargetClient() {
+        const auto FOCUS = g_pSeatManager->m_state.keyboardFocus.lock();
+        return FOCUS && FOCUS->client() == g_op->client;
+    }
+
+    // Whether the key sets, latches or locks a modifier on its keyboard's keymap, as its client reads the key event
+    // itself as well as the modifiers event after it. Read on a fresh state in the keyboard's layout, since the
+    // keyboard's own state has advanced past the event. Without a keymap it cannot be told, so it counts.
+    bool changesModifiers(const SP<IKeyboard>& keyboard, uint32_t keycode) {
+        if (!keyboard->m_xkbKeymap)
+            return true;
+        const auto STATE = xkb_state_new(keyboard->m_xkbKeymap);
+        if (!STATE)
+            return true;
+        xkb_state_update_mask(STATE, 0, 0, 0, 0, 0, keyboard->m_modifiersState.group);
+        const auto CHANGED = xkb_state_update_key(STATE, keycode + 8, XKB_KEY_DOWN);
+        xkb_state_unref(STATE);
+        return CHANGED & XKB_STATE_MODS_EFFECTIVE;
+    }
+
     void hkOnKeyboardKey(CInputManager* self, const IKeyboard::SKeyEvent& e, SP<IKeyboard> keyboard) {
-        auto replay = [self, e, keyboard] { reinterpret_cast<KeyFn>(g_keyHook->m_original)(self, e, keyboard); };
-        if ((g_op && !g_op->direct) || (g_keyOp && g_keyOp->holding)) {
+        auto       replay = [self, e, keyboard] { reinterpret_cast<KeyFn>(g_keyHook->m_original)(self, e, keyboard); };
+        const bool SEAT   = g_op && !g_op->direct;
+        if (SEAT) {
+            // A release goes where its press went, whether that was before the action or during it: held, its client
+            // would go on repeating the key until replay. Unless an event of its keycode is held: Hyprland merges a
+            // keycode across keyboards (shareKeyFromAllKBs) into one seat-wide pressed set, and replays each held event
+            // against the keyboards' state when it came, so a release that overtook another keyboard's held press and
+            // release of the key would leave the client with the key down. One keycode's events reach the seat in the
+            // order they came.
+            if (e.state == WL_KEYBOARD_KEY_STATE_RELEASED && !std::ranges::contains(g_op->heldKeys, e.keycode)) {
+                replay();
+                return;
+            }
+            if (!g_op->modsHeld && focusOnTargetClient() && changesModifiers(keyboard, e.keycode))
+                g_op->modsHeld = true;
+        }
+        if (pointerHoldsKeys() || (g_keyOp && g_keyOp->holding)) {
             // The pointer or agent stroke may have replaced the client's modifiers. Deliver the event's own
             // modifiers first, including when they were already held before the action began.
             auto held = keyboardReplay([self, keyboard, replay] {
                 reinterpret_cast<ModFn>(g_modHook->m_original)(self, keyboard);
                 replay();
             });
-            if (g_op && !g_op->direct)
+            if (pointerHoldsKeys()) {
                 g_op->heldInput.emplace_back(std::move(held));
-            else
+                g_op->heldKeys.push_back(e.keycode);
+            } else
                 holdForStroke(std::move(held));
         } else
             replay();
@@ -490,7 +545,9 @@ namespace {
 
     void hkOnKeyboardMod(CInputManager* self, SP<IKeyboard> keyboard) {
         auto replay = [self, keyboard] { reinterpret_cast<ModFn>(g_modHook->m_original)(self, keyboard); };
-        if (g_op && !g_op->direct)
+        if (g_op && !g_op->direct && focusOnTargetClient())
+            g_op->modsHeld = true;
+        if (pointerHoldsKeys())
             g_op->heldInput.emplace_back(keyboardReplay(replay));
         else if (g_keyOp && g_keyOp->holding)
             holdForStroke(keyboardReplay(replay));
@@ -1486,6 +1543,7 @@ namespace {
         op.agentSeat      = NATIVE && MINE && !agentPointersOf(MINE).empty();
         op.direct         = op.mode == eMode::HIDDEN || op.agentSeat || (NATIVE && (!USER || USER->client() != MINE));
         if (!op.direct) {
+            op.client       = MINE;
             op.saved        = g_pInputManager->getMouseCoordsInternal();
             op.focusWindow  = Desktop::focusState()->window();
             op.focusSurface = Desktop::focusState()->surface();

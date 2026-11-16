@@ -11,6 +11,7 @@ import base64
 import contextlib
 import json
 import os
+import re
 import shutil
 import subprocess
 import time
@@ -72,15 +73,21 @@ def keyboard_control(output):
     scratch = output.parent / "keyboard-calibration"
     scratch.mkdir(parents=True, exist_ok=True)
     subprocess.run(["keeper", "claim", str(scratch)], check=True, capture_output=True)
-    xml = ROOT / "scripts/protocols/virtual-keyboard.xml"
-    for mode, name in (("client-header", "virtual-keyboard.h"), ("private-code", "virtual-keyboard.c")):
-        subprocess.run(["wayland-scanner", mode, str(xml), str(scratch / name)], check=True, capture_output=True)
+    for protocol in ("virtual-keyboard", "virtual-pointer"):
+        xml = ROOT / f"scripts/protocols/{protocol}.xml"
+        for mode, suffix in (("client-header", "h"), ("private-code", "c")):
+            subprocess.run(
+                ["wayland-scanner", mode, str(xml), str(scratch / f"{protocol}.{suffix}")],
+                check=True,
+                capture_output=True,
+            )
     binary = scratch / "keyboard-control"
     subprocess.run(
         [
             "cc",
             str(ROOT / "scripts/keyboard_control.c"),
             str(scratch / "virtual-keyboard.c"),
+            str(scratch / "virtual-pointer.c"),
             "-I",
             str(scratch),
             "-lwayland-client",
@@ -100,13 +107,149 @@ def keyboard_control(output):
     return process
 
 
-def calibrate_x11_pointer(desk, chrome, background, verify, output):  # noqa: PLR0915 - sequential live input probe
-    html = """<title>Deskpilot X11 pointer calibration</title>
+TRIGGER_HTML = """<title>TITLE</title>
 <button id=t onpointerdown="events.value=JSON.stringify({type:event.type,
 button:event.button,pointerType:event.pointerType,ctrlKey:event.ctrlKey});
 if(event.button===0&&event.pointerType==='mouse'&&!event.ctrlKey)result.value='OPEN'">Trigger</button>
 <input id=result aria-label=result value=CLOSED><textarea id=events aria-label=events></textarea>"""
-    url = "data:text/html;base64," + base64.b64encode(html.encode()).decode()
+
+
+def trigger_page(title):
+    """A page whose Trigger button records the modifiers of the pointer press it gets."""
+    return "data:text/html;base64," + base64.b64encode(TRIGGER_HTML.replace("TITLE", title).encode()).decode()
+
+
+def wait_for_element(desk, address, match, timeout=5):
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        found = next((e for e in descendants(desk.elements(address)) if match(e)), None)
+        if found is not None:
+            return found
+        time.sleep(0.05)
+    return None
+
+
+def calibrate_native_seat_keys(desk, chrome, browser, verify, output):  # noqa: PLR0915 - sequential live input probe
+    """A pointer action on a native window of the app the user's pointer is on takes the seat's pointer and holds the
+    user's pointer input until it ends. Their keys reach their own focused window meanwhile, except what would change
+    the modifiers the target's app sees before the action's own press."""
+    trigger = desk.launch(
+        [
+            chrome,
+            "--new-window",
+            "--ozone-platform=wayland",
+            "--force-renderer-accessibility",
+            trigger_page("Seat trigger"),
+        ]
+    )
+    companion = desk.launch(
+        [
+            chrome,
+            "--new-window",
+            "--ozone-platform=wayland",
+            "--force-renderer-accessibility",
+            "data:text/html,<title>Seat companion</title><textarea autofocus aria-label=companion></textarea>",
+        ]
+    )
+    desk.focus(companion.address)
+    window = desk.window(companion.address)
+    desk.hypr.move_cursor(window.x + window.width // 2, window.y + window.height // 2)
+    field = next(e for e in descendants(desk.elements(browser.address)) if "editable" in e.states)
+    desk.shot(browser.address)
+    win, gx, gy, surface = desk._aim(browser.address, None, None, None, None, False, field.id, False)
+    control = keyboard_control(output)
+    assert control.stdin is not None and control.stdout is not None
+
+    def send(command):
+        control.stdin.write(command + "\n")
+        control.stdin.flush()
+        if control.stdout.readline().strip() != "done":
+            raise RuntimeError("private virtual keyboard command failed")
+
+    def companion_text(text):
+        return wait_for_element(desk, companion.address, lambda e: e.text == text and "editable" in e.states, 2)
+
+    def companion_value():
+        field = wait_for_element(desk, companion.address, lambda e: e.name == "companion" and "editable" in e.states, 2)
+        return None if field is None else field.text
+
+    try:
+        # `n` acknowledges the running path before the dwell, so the keys are sent while it holds the seat's pointer.
+        desk.plugin.path(win.address, "plain", [*surface, f"m{gx},{gy}", "n", "d3000"])
+        for command in ("key 45 1", "key 45 0", "key 21 1", "key 21 0", "key 44 1", "key 44 0"):
+            send(command)
+        typed = companion_text("xyz") is not None
+        verify("chrome_seat_pointer_keys_pass", typed and desk.plugin.status()["busy"])
+        # A queued path is a completion barrier for the held action.
+        desk.plugin.path(win.address, "plain", [*surface, f"m{gx},{gy}"])
+        verify("chrome_seat_pointer_focus_preserved", desk.window(companion.address).focused)
+
+        # Pointer motion of the user's is held behind the action, and the keys after it with it, but the release of a
+        # key that went through goes through too: held, its client would repeat the key until the action ended.
+        desk.plugin.path(win.address, "plain", [*surface, f"m{gx},{gy}", "n", "d3000"])
+        send("key 45 1")
+        send("motion 8 0")
+        send("key 45 0")
+        desk.plugin.path(win.address, "plain", [*surface, f"m{gx},{gy}"])
+        released = companion_text("xyzx") is not None
+
+        # The same for a key already down when the action starts.
+        send("key 45 1")
+        desk.plugin.path(win.address, "plain", [*surface, f"m{gx},{gy}", "n", "d3000"])
+        send("motion 8 0")
+        send("key 45 0")
+        desk.plugin.path(win.address, "plain", [*surface, f"m{gx},{gy}"])
+        prior_released = companion_text("xyzxx") is not None
+
+        # Hyprland merges one keycode across the user's keyboards. A presses x, the user's pointer input is held, then
+        # B presses and releases x (held) and A releases x: the client must end with x up, not repeating it.
+        desk.plugin.path(win.address, "plain", [*surface, f"m{gx},{gy}", "n", "d3000"])
+        for command in ("key 45 1", "motion 8 0", "key2 45 1", "key2 45 0", "key 45 0"):
+            send(command)
+        desk.plugin.path(win.address, "plain", [*surface, f"m{gx},{gy}"])
+        # A's press reached the companion, which kept focus; its held release lets the client repeat x until then.
+        arrived = wait_for_element(
+            desk, companion.address, lambda e: e.name == "companion" and re.fullmatch("xyzxxx+", e.text or ""), 2
+        )
+        focused = desk.window(companion.address).focused
+        time.sleep(1)
+        shared_released = arrived is not None and focused and companion_value() == arrived.text
+        # A stuck x is released through A, whose press the seat already has.
+        send("key 45 1")
+        send("key 45 0")
+
+        # Wayland modifiers are per client, and Chrome's windows share one: a Ctrl the user presses during the dwell
+        # must not reach Chrome before the action's own press, or Chrome makes that a Ctrl-click.
+        button = wait_for_element(desk, trigger.address, lambda e: e.name == "Trigger" and e.role == "button")
+        if button is None:
+            raise RuntimeError("seat trigger page did not expose its Trigger button")
+        desk.shot(trigger.address)
+        win, gx, gy, surface = desk._aim(trigger.address, None, None, None, None, False, button.id, False)
+        desk.plugin.path(win.address, "plain", [*surface, f"m{gx},{gy}", "n", "d1500", "p272", "r272"])
+        send("key 29 1")
+        send("mods 4")
+        desk.plugin.path(win.address, "plain", [*surface, f"m{gx},{gy}"])
+        send("mods 0")
+        send("key 29 0")
+        pressed = wait_for_element(desk, trigger.address, lambda e: e.name == "events" and '"type"' in (e.text or ""))
+        # Both outcomes are recorded before either stops the run.
+        verify("chrome_seat_pointer_release_not_repeated", released, stop=False)
+        verify("chrome_seat_pointer_prior_key_released", prior_released, stop=False)
+        verify("chrome_seat_pointer_shared_key_released", shared_released, stop=False)
+        verify("chrome_seat_pointer_ctrl_held", pressed is not None and '"ctrlKey":false' in pressed.text)
+    finally:
+        if control.poll() is None:
+            control.stdin.write("mods 0\nkey 29 0\nquit\n")
+            control.stdin.flush()
+            try:
+                control.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                control.kill()
+                control.wait()
+
+
+def calibrate_x11_pointer(desk, chrome, background, verify, output):  # noqa: PLR0915 - sequential live input probe
+    url = trigger_page("Deskpilot X11 pointer calibration")
     browser = desk.launch(
         [
             chrome,
@@ -234,9 +377,9 @@ def main() -> int:  # noqa: PLR0915 - a bounded, sequential live calibration wit
 
     before = parent_state()
 
-    def verify(name, condition):
+    def verify(name, condition, stop=True):
         checks[name] = bool(condition)
-        if not condition:
+        if not condition and stop:
             raise RuntimeError(f"calibration failed: {name}")
 
     def nodes(address):
@@ -345,6 +488,7 @@ def main() -> int:  # noqa: PLR0915 - a bounded, sequential live calibration wit
             desk.plugin.keys(browser.address, keys.chord_words("BackSpace"))
             expect_text("chrome_unfocused_select_delete", browser.address, "")
             verify("chrome_unfocused_focus_preserved", desk.window(target.address).focused)
+            calibrate_native_seat_keys(desk, chrome, browser, verify, args.output)
             calibrate_x11_pointer(desk, chrome, target.address, verify, args.output)
         if args.wine:
             calibrate_wine(desk, args.output, verify)
