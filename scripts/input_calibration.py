@@ -69,12 +69,16 @@ def calibrate_wine(desk, output, verify):
     verify("wine_raw_pointer_buttons", "RAW_DOWN" in rows and "RAW_UP" in rows)
 
 
-def keyboard_control(output):
+def keyboard_control(output, *args):
     scratch = output.parent / "keyboard-calibration"
     scratch.mkdir(parents=True, exist_ok=True)
     subprocess.run(["keeper", "claim", str(scratch)], check=True, capture_output=True)
-    for protocol in ("virtual-keyboard", "virtual-pointer"):
-        xml = ROOT / f"scripts/protocols/{protocol}.xml"
+    for protocol, xml_name in (
+        ("virtual-keyboard", "virtual-keyboard"),
+        ("virtual-pointer", "virtual-pointer"),
+        ("input-method", "input-method-unstable-v2"),
+    ):
+        xml = ROOT / f"scripts/protocols/{xml_name}.xml"
         for mode, suffix in (("client-header", "h"), ("private-code", "c")):
             subprocess.run(
                 ["wayland-scanner", mode, str(xml), str(scratch / f"{protocol}.{suffix}")],
@@ -88,6 +92,7 @@ def keyboard_control(output):
             str(ROOT / "scripts/keyboard_control.c"),
             str(scratch / "virtual-keyboard.c"),
             str(scratch / "virtual-pointer.c"),
+            str(scratch / "input-method.c"),
             "-I",
             str(scratch),
             "-lwayland-client",
@@ -98,7 +103,7 @@ def keyboard_control(output):
         check=True,
         capture_output=True,
     )
-    process = subprocess.Popen([str(binary)], stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True)
+    process = subprocess.Popen([str(binary), *args], stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True)
     assert process.stdout is not None
     if process.stdout.readline().strip() != "ready":
         process.kill()
@@ -176,6 +181,7 @@ def calibrate_native_seat_keys(desk, chrome, browser, verify, output):  # noqa: 
     win, gx, gy, surface = desk._aim(browser.address, None, None, None, None, False, field.id, False)
     control = keyboard_control(output)
     assert control.stdin is not None and control.stdout is not None
+    processes = []
 
     def send(command):
         control.stdin.write(command + "\n")
@@ -274,14 +280,50 @@ def calibrate_native_seat_keys(desk, chrome, browser, verify, output):  # noqa: 
         send("mods 0")
         send("key 29 0")
         other_keyboard_ctrl = link_click_isolated(desk, trigger.address, tabs, 2)
-        # Both outcomes are recorded before either stops the run.
+
+        # An input method that grabs the keyboard gets the user's keys, and clients get only what it forwards through
+        # its own keyboard. A Ctrl it keeps never reached the focused client, so an agent stroke there must not give it
+        # that Ctrl back afterwards, or the input method's next plain key becomes a shortcut there (Ctrl+z, an undo).
+        desk.focus(companion.address)
+        desk.key("ctrl+a", companion.address)
+        desk.key("BackSpace", companion.address)
+        cleared = companion_text("") is not None
+        ime = keyboard_control(output, "ime")
+        processes.append(ime)
+        assert ime.stdin is not None and ime.stdout is not None
+
+        def forward(command):
+            ime.stdin.write(command + "\n")
+            ime.stdin.flush()
+            if ime.stdout.readline().strip() != "done":
+                raise RuntimeError("private input method command failed")
+
+        forward("key 45 1")
+        forward("key 45 0")
+        send("key 29 1")
+        send("mods 4")
+        desk.type("y", companion.address)
+        forward("key 44 1")
+        forward("key 44 0")
+        ime_ctrl_kept = cleared and companion_text("xyz") is not None
+        send("mods 0")
+        send("key 29 0")
+        ime.stdin.write("quit\n")
+        ime.stdin.flush()
+        ime.wait(timeout=5)
+        # Every outcome is recorded before any stops the run.
         verify("chrome_seat_pointer_release_not_repeated", released, stop=False)
         verify("chrome_seat_pointer_prior_key_released", prior_released, stop=False)
         verify("chrome_seat_pointer_shared_key_released", shared_released, stop=False)
         verify("chrome_seat_pointer_ctrl_held", pressed is not None and '"ctrlKey":false' in pressed.text, stop=False)
         verify("chrome_seat_pointer_prior_ctrl_isolated", prior_ctrl, stop=False)
-        verify("chrome_seat_pointer_other_keyboard_ctrl_isolated", other_keyboard_ctrl)
+        verify("chrome_seat_pointer_other_keyboard_ctrl_isolated", other_keyboard_ctrl, stop=False)
+        verify("chrome_ime_kept_ctrl_not_restored", ime_ctrl_kept)
     finally:
+        for process in processes:
+            if process.poll() is None:
+                process.kill()
+                process.wait()
         if control.poll() is None:
             control.stdin.write("mods 0\nkey 29 0\nquit\n")
             control.stdin.flush()
