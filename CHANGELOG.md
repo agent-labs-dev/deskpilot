@@ -7,6 +7,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [0.7.3] - 2026-11-16
+
 - A modifier the user holds on any of their keyboards while their keyboard focus is in another window of the target's app no longer reaches a click, scroll, drag or hover there, so a held Ctrl never turns the action's click on a link into a new tab. Until the action ends, their keys wait behind it, as for XWayland windows.
 - After a click or keystroke, the target's app gets back exactly the modifiers Hyprland last sent it. A modifier an input method kept to itself no longer reaches that app after the action, including one kept before the plugin loaded, where it turned the input method's next key into a shortcut. When the plugin loads, the app with the user's keyboard focus is given the modifiers they hold there, so a Shift held from before the load still reaches their next key after a keystroke, while a Ctrl an input method's keyboard kept from an earlier text field is not given back.
 - A click, scroll, drag or hover on an XWayland window now reaches it where Hyprland shows it over another X window that took focus later, such as a floating Wine window over a focused tiled one. Before, the action reported success while its press went to the other window. The action raises its window in the X stack first, as a click of the user's does, without moving focus, and an action whose point another X window still holds, or that its window has left by the time the raise is done, is refused as covered.
