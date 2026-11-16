@@ -22,6 +22,21 @@ static void global(void *d, struct wl_registry *r, uint32_t name, const char *in
 }
 static void removed(void *d, struct wl_registry *r, uint32_t name) {}
 static const struct wl_registry_listener listener = {global, removed};
+static struct zwp_virtual_keyboard_v1 *new_keyboard(const char *text) {
+    size_t size = strlen(text) + 1;
+    int fd = memfd_create("deskpilot-keymap", MFD_CLOEXEC);
+    if (fd < 0 || ftruncate(fd, size) < 0 || write(fd, text, size) != (ssize_t)size)
+        return NULL;
+    struct zwp_virtual_keyboard_v1 *keyboard = zwp_virtual_keyboard_manager_v1_create_virtual_keyboard(manager, seat);
+    zwp_virtual_keyboard_v1_keymap(keyboard, WL_KEYBOARD_KEYMAP_FORMAT_XKB_V1, fd, size);
+    close(fd);
+    return keyboard;
+}
+static uint32_t now_ms(void) {
+    struct timespec now;
+    clock_gettime(CLOCK_MONOTONIC, &now);
+    return now.tv_sec * 1000u + now.tv_nsec / 1000000u;
+}
 int main(void) {
     struct wl_display *display = wl_display_connect(NULL);
     if (!display)
@@ -36,38 +51,35 @@ int main(void) {
     if (!keymap)
         return 3;
     char *text = xkb_keymap_get_as_string(keymap, XKB_KEYMAP_FORMAT_TEXT_V1);
-    size_t size = strlen(text) + 1;
-    int fd = memfd_create("deskpilot-keymap", MFD_CLOEXEC);
-    if (fd < 0 || ftruncate(fd, size) < 0 || write(fd, text, size) != (ssize_t)size)
-        return 4;
-    struct zwp_virtual_keyboard_v1 *keyboard = zwp_virtual_keyboard_manager_v1_create_virtual_keyboard(manager, seat);
-    zwp_virtual_keyboard_v1_keymap(keyboard, WL_KEYBOARD_KEYMAP_FORMAT_XKB_V1, fd, size);
-    close(fd);
-    free(text);
     xkb_keymap_unref(keymap);
     xkb_context_unref(context);
+    struct zwp_virtual_keyboard_v1 *keyboard = new_keyboard(text);
+    if (!keyboard)
+        return 4;
     if (wl_display_roundtrip(display) < 0)
         return 5;
     puts("ready");
     fflush(stdout);
     // The user's pointer, for moving it while a key is down: created on the first motion command.
     struct zwlr_virtual_pointer_v1 *pointer = NULL;
+    // A second keyboard of the user's, sharing key state with the first in Hyprland: created on the first key2 command.
+    struct zwp_virtual_keyboard_v1 *second = NULL;
     char line[256];
     while (fgets(line, sizeof(line), stdin)) {
         unsigned code, value;
         int dx, dy;
-        if (sscanf(line, "key %u %u", &code, &value) == 2) {
-            struct timespec now;
-            clock_gettime(CLOCK_MONOTONIC, &now);
-            zwp_virtual_keyboard_v1_key(keyboard, now.tv_sec * 1000u + now.tv_nsec / 1000000u, code, value);
+        if (sscanf(line, "key2 %u %u", &code, &value) == 2) {
+            if (!second && !(second = new_keyboard(text)))
+                return 8;
+            zwp_virtual_keyboard_v1_key(second, now_ms(), code, value);
+        } else if (sscanf(line, "key %u %u", &code, &value) == 2) {
+            zwp_virtual_keyboard_v1_key(keyboard, now_ms(), code, value);
         } else if (sscanf(line, "motion %d %d", &dx, &dy) == 2) {
             if (!pointers)
                 return 7;
             if (!pointer)
                 pointer = zwlr_virtual_pointer_manager_v1_create_virtual_pointer(pointers, seat);
-            struct timespec now;
-            clock_gettime(CLOCK_MONOTONIC, &now);
-            zwlr_virtual_pointer_v1_motion(pointer, now.tv_sec * 1000u + now.tv_nsec / 1000000u, wl_fixed_from_int(dx), wl_fixed_from_int(dy));
+            zwlr_virtual_pointer_v1_motion(pointer, now_ms(), wl_fixed_from_int(dx), wl_fixed_from_int(dy));
             zwlr_virtual_pointer_v1_frame(pointer);
         } else if (sscanf(line, "mods %u", &value) == 1) {
             zwp_virtual_keyboard_v1_modifiers(keyboard, value, 0, 0, 0);
@@ -77,6 +89,9 @@ int main(void) {
     }
     zwp_virtual_keyboard_v1_modifiers(keyboard, 0, 0, 0, 0);
     zwp_virtual_keyboard_v1_destroy(keyboard);
+    if (second)
+        zwp_virtual_keyboard_v1_destroy(second);
+    free(text);
     if (pointer)
         zwlr_virtual_pointer_v1_destroy(pointer);
     wl_display_roundtrip(display);

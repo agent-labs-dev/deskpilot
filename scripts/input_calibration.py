@@ -147,7 +147,7 @@ def calibrate_native_seat_keys(desk, chrome, browser, verify, output):  # noqa: 
             "--new-window",
             "--ozone-platform=wayland",
             "--force-renderer-accessibility",
-            "data:text/html,<title>Seat companion</title><textarea autofocus></textarea>",
+            "data:text/html,<title>Seat companion</title><textarea autofocus aria-label=companion></textarea>",
         ]
     )
     desk.focus(companion.address)
@@ -167,6 +167,10 @@ def calibrate_native_seat_keys(desk, chrome, browser, verify, output):  # noqa: 
 
     def companion_text(text):
         return wait_for_element(desk, companion.address, lambda e: e.text == text and "editable" in e.states, 2)
+
+    def companion_value():
+        field = wait_for_element(desk, companion.address, lambda e: e.name == "companion" and "editable" in e.states, 2)
+        return None if field is None else field.text
 
     try:
         # `n` acknowledges the running path before the dwell, so the keys are sent while it holds the seat's pointer.
@@ -188,6 +192,28 @@ def calibrate_native_seat_keys(desk, chrome, browser, verify, output):  # noqa: 
         desk.plugin.path(win.address, "plain", [*surface, f"m{gx},{gy}"])
         released = companion_text("xyzx") is not None
 
+        # The same for a key already down when the action starts.
+        send("key 45 1")
+        desk.plugin.path(win.address, "plain", [*surface, f"m{gx},{gy}", "n", "d3000"])
+        send("motion 8 0")
+        send("key 45 0")
+        desk.plugin.path(win.address, "plain", [*surface, f"m{gx},{gy}"])
+        prior_released = companion_text("xyzxx") is not None
+
+        # Hyprland merges one keycode across the user's keyboards. A presses x, the user's pointer input is held, then
+        # B presses and releases x (held) and A releases x: the client must end with x up, not repeating it.
+        desk.plugin.path(win.address, "plain", [*surface, f"m{gx},{gy}", "n", "d3000"])
+        for command in ("key 45 1", "motion 8 0", "key2 45 1", "key2 45 0", "key 45 0"):
+            send(command)
+        desk.plugin.path(win.address, "plain", [*surface, f"m{gx},{gy}"])
+        time.sleep(0.3)
+        settled = companion_value()
+        time.sleep(1)
+        shared_released = settled is not None and companion_value() == settled
+        # A stuck x is released through A, whose press the seat already has.
+        send("key 45 1")
+        send("key 45 0")
+
         # Wayland modifiers are per client, and Chrome's windows share one: a Ctrl the user presses during the dwell
         # must not reach Chrome before the action's own press, or Chrome makes that a Ctrl-click.
         button = wait_for_element(desk, trigger.address, lambda e: e.name == "Trigger" and e.role == "button")
@@ -204,6 +230,8 @@ def calibrate_native_seat_keys(desk, chrome, browser, verify, output):  # noqa: 
         pressed = wait_for_element(desk, trigger.address, lambda e: e.name == "events" and '"type"' in (e.text or ""))
         # Both outcomes are recorded before either stops the run.
         verify("chrome_seat_pointer_release_not_repeated", released, stop=False)
+        verify("chrome_seat_pointer_prior_key_released", prior_released, stop=False)
+        verify("chrome_seat_pointer_shared_key_released", shared_released, stop=False)
         verify("chrome_seat_pointer_ctrl_held", pressed is not None and '"ctrlKey":false' in pressed.text)
     finally:
         if control.poll() is None:

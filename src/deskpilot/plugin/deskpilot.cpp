@@ -282,11 +282,11 @@ namespace {
         // on. Their keys are held too only where pointerHoldsKeys says passing them on would be wrong.
         bool                               direct = false;
         std::vector<WP<CWLKeyboardResource>> modifierKeyboards;
-        // The seat route: the target window's client, the user's key presses that went through meanwhile (by keyboard
-        // and keycode), and whether a change of their modifiers while that client had keyboard focus holds their keys.
-        wl_client*                                   client = nullptr;
-        std::vector<std::pair<IKeyboard*, uint32_t>> passedKeys;
-        bool                                         modsHeld = false;
+        // The seat route: the target window's client, the keycodes of the user's key events in heldInput, and whether
+        // a change of their modifiers while that client had keyboard focus holds their keys.
+        wl_client*            client = nullptr;
+        std::vector<uint32_t> heldKeys;
+        bool                  modsHeld = false;
         // The window's client bound the agent seat, so the input goes to its agent pointer (see "agent seat").
         bool                               agentSeat = false;
         // A direct action: the surface its pointer is on and the pointers entered there, the client's own wl_pointer
@@ -484,7 +484,7 @@ namespace {
     // - from the first change of their modifiers while the target's client has their keyboard focus (modsHeld).
     //   Modifiers are per client, not per window, so the action's own presses would carry the change.
     // Otherwise the seat route moves the pointer alone, never keyboard focus, so the user's keys go where they would
-    // without it. The release of a key that went through always goes through (hkOnKeyboardKey).
+    // without it. A key's release goes through unless an event of the same keycode is held (hkOnKeyboardKey).
     bool pointerHoldsKeys() {
         return g_op && (!g_op->modifierKeyboards.empty() || !g_op->heldInput.empty() || g_op->modsHeld);
     }
@@ -513,13 +513,14 @@ namespace {
     void hkOnKeyboardKey(CInputManager* self, const IKeyboard::SKeyEvent& e, SP<IKeyboard> keyboard) {
         auto       replay = [self, e, keyboard] { reinterpret_cast<KeyFn>(g_keyHook->m_original)(self, e, keyboard); };
         const bool SEAT   = g_op && !g_op->direct;
-        const auto KEY    = std::pair{keyboard.get(), e.keycode};
         if (SEAT) {
-            // A release goes where its press went. Held, its client would go on repeating the key until replay.
-            auto& passed = g_op->passedKeys;
-            const auto IT     = std::ranges::find(passed, KEY);
-            if (e.state == WL_KEYBOARD_KEY_STATE_RELEASED && IT != passed.end()) {
-                passed.erase(IT);
+            // A release goes where its press went, whether that was before the action or during it: held, its client
+            // would go on repeating the key until replay. Unless an event of its keycode is held: Hyprland merges a
+            // keycode across keyboards (shareKeyFromAllKBs) into one seat-wide pressed set, and replays each held event
+            // against the keyboards' state when it came, so a release that overtook another keyboard's held press and
+            // release of the key would leave the client with the key down. One keycode's events reach the seat in the
+            // order they came.
+            if (e.state == WL_KEYBOARD_KEY_STATE_RELEASED && !std::ranges::contains(g_op->heldKeys, e.keycode)) {
                 replay();
                 return;
             }
@@ -533,15 +534,13 @@ namespace {
                 reinterpret_cast<ModFn>(g_modHook->m_original)(self, keyboard);
                 replay();
             });
-            if (pointerHoldsKeys())
+            if (pointerHoldsKeys()) {
                 g_op->heldInput.emplace_back(std::move(held));
-            else
+                g_op->heldKeys.push_back(e.keycode);
+            } else
                 holdForStroke(std::move(held));
-        } else {
-            if (SEAT && e.state == WL_KEYBOARD_KEY_STATE_PRESSED)
-                g_op->passedKeys.push_back(KEY);
+        } else
             replay();
-        }
     }
 
     void hkOnKeyboardMod(CInputManager* self, SP<IKeyboard> keyboard) {
