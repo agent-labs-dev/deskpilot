@@ -1740,6 +1740,15 @@ namespace {
         };
     }
 
+    // The modifiers the seat sends the client with the user's keyboard focus. Hyprland merges the modifiers held on every
+    // keyboard that shares state into each modifiers event (CInputManager::onKeyboardMod, kept as getModsFromAllKBs), so
+    // a Ctrl held on one keyboard still reaches the client after a plain key on another makes that one the seat's.
+    decltype(IKeyboard::m_modifiersState) seatMods(const SP<IKeyboard>& keyboard) {
+        auto mods = keyboard->m_modifiersState;
+        mods.depressed |= g_pInputManager->hyprlandModsToXkb(keyboard, g_pInputManager->getModsFromAllKBs());
+        return mods;
+    }
+
     // Pointer actions have no modifier argument, so isolate their buttons from the modifiers the user holds where the
     // target would read them. XWayland pointer events carry its shared X keyboard modifiers, even when another X window
     // has focus. A native client reads the modifiers on its own wl_keyboard, which are per client, not per window, so
@@ -1754,7 +1763,7 @@ namespace {
             return;
         const auto  CLIENT = WINDOW->wlSurface()->resource()->client();
         const auto  FOCUS  = g_pSeatManager->m_state.keyboardFocus.lock();
-        const auto& MODS   = KEYBOARD->m_modifiersState;
+        const auto  MODS   = seatMods(KEYBOARD);
         if (!WINDOW->backend().isX11() && (!FOCUS || FOCUS->client() != CLIENT || !(MODS.depressed | MODS.latched)))
             return;
         op.modifierKeyboards = keyboardsOf(CLIENT);
@@ -1769,7 +1778,7 @@ namespace {
         if (!KEYBOARD)
             return;
         const auto FOCUS = g_pSeatManager->m_state.keyboardFocus.lock();
-        const auto& MODS = KEYBOARD->m_modifiersState;
+        const auto MODS  = seatMods(KEYBOARD);
         for (const auto& weak : op.modifierKeyboards) {
             if (const auto resource = weak.lock()) {
                 const bool FOCUSED = FOCUS && resource->m_owner && resource->m_owner->client() == FOCUS->client();
@@ -2713,12 +2722,12 @@ namespace {
         eachKeyboard(op, [&](auto& keyboard) { kbMods(keyboard, DEPRESSED, LATCHED, LOCKED, GROUP); });
     }
 
-    // The modifiers the user's keyboard really has, as the seat would send them.
+    // The modifiers the user's keyboards really have, as the seat would send them.
     void sendRealMods(SKeyOp& op) {
         const auto KEYBOARD = g_pSeatManager->m_keyboard.lock();
         if (!KEYBOARD)
             return;
-        const auto& MODS = KEYBOARD->m_modifiersState;
+        const auto MODS = seatMods(KEYBOARD);
         eachKeyboard(op, [&](auto& keyboard) { kbMods(keyboard, MODS.depressed, MODS.latched, MODS.locked, MODS.group); });
     }
 

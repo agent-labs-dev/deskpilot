@@ -108,7 +108,8 @@ def keyboard_control(output):
 
 
 TRIGGER_HTML = """<title>TITLE</title>
-<a href="https://example.invalid/opened" onclick="events.value=JSON.stringify({type:event.type,ctrlKey:event.ctrlKey});
+<a href="https://example.invalid/opened" onclick="window.clicks=(window.clicks||0)+1;
+events.value=JSON.stringify({type:event.type,ctrlKey:event.ctrlKey,n:clicks});
 if(!event.ctrlKey)event.preventDefault()">Link</a>
 <button id=t onpointerdown="events.value=JSON.stringify({type:event.type,
 button:event.button,pointerType:event.pointerType,ctrlKey:event.ctrlKey});
@@ -118,13 +119,21 @@ if(event.button===0&&event.pointerType==='mouse'&&!event.ctrlKey)result.value='O
 
 def trigger_page(title):
     """A page whose Trigger button records the modifiers of the pointer press it gets, and whose Link records those of
-    its click and opens a tab only when Ctrl is held."""
+    its click, numbered, and opens a tab only when Ctrl is held."""
     return "data:text/html;base64," + base64.b64encode(TRIGGER_HTML.replace("TITLE", title).encode()).decode()
 
 
 def page_tabs(desk, address):
     """The number of tabs in a Chrome window's tab strip."""
     return sum(e.role == "page tab" for e in descendants(desk.elements(address)))
+
+
+def link_click_isolated(desk, address, tabs, n):
+    """Whether the trigger page's Link got its nth click without Ctrl and the window kept its tab count."""
+    clicked = wait_for_element(desk, address, lambda e: e.name == "events" and f'"n":{n}}}' in (e.text or ""))
+    # A Ctrl-click opens its tab after the click event, so the tab strip is read once that settles.
+    time.sleep(1)
+    return clicked is not None and '"ctrlKey":false' in clicked.text and page_tabs(desk, address) == tabs
 
 
 def wait_for_element(desk, address, match, timeout=5):
@@ -252,19 +261,26 @@ def calibrate_native_seat_keys(desk, chrome, browser, verify, output):  # noqa: 
         desk.click(trigger.address, None, None, element=link.id)
         send("mods 0")
         send("key 29 0")
-        clicked = wait_for_element(
-            desk, trigger.address, lambda e: e.name == "events" and '"type":"click"' in (e.text or "")
-        )
-        # A Ctrl-click opens its tab after the click event, so the tab strip is read once that settles.
-        time.sleep(1)
-        no_tab = page_tabs(desk, trigger.address) == tabs
-        prior_ctrl = clicked is not None and '"ctrlKey":false' in clicked.text and no_tab
+        prior_ctrl = link_click_isolated(desk, trigger.address, tabs, 1)
+
+        # Hyprland sends a client the modifiers held on all of the user's keyboards, so a Ctrl held on keyboard A still
+        # reaches Chrome after a plain key on keyboard B makes B the seat's keyboard, with no modifiers of its own.
+        tabs = page_tabs(desk, trigger.address)
+        send("key 29 1")
+        send("mods 4")
+        send("key2 30 1")
+        send("key2 30 0")
+        desk.click(trigger.address, None, None, element=link.id)
+        send("mods 0")
+        send("key 29 0")
+        other_keyboard_ctrl = link_click_isolated(desk, trigger.address, tabs, 2)
         # Both outcomes are recorded before either stops the run.
         verify("chrome_seat_pointer_release_not_repeated", released, stop=False)
         verify("chrome_seat_pointer_prior_key_released", prior_released, stop=False)
         verify("chrome_seat_pointer_shared_key_released", shared_released, stop=False)
         verify("chrome_seat_pointer_ctrl_held", pressed is not None and '"ctrlKey":false' in pressed.text, stop=False)
-        verify("chrome_seat_pointer_prior_ctrl_isolated", prior_ctrl)
+        verify("chrome_seat_pointer_prior_ctrl_isolated", prior_ctrl, stop=False)
+        verify("chrome_seat_pointer_other_keyboard_ctrl_isolated", other_keyboard_ctrl)
     finally:
         if control.poll() is None:
             control.stdin.write("mods 0\nkey 29 0\nquit\n")
