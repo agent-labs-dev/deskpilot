@@ -42,7 +42,8 @@ static uint32_t now_ms(void) {
     return now.tv_sec * 1000u + now.tv_nsec / 1000000u;
 }
 // With "ime", this client is instead an input method that grabs the seat's keyboard and keeps every key it gets, its
-// own keyboard ("key") being the one its keys reach clients through, as an input method forwards them.
+// own keyboard ("key") being the one its keys reach clients through, as an input method forwards them. With "ime
+// later", it grabs on the "grab" command, as an input method does once a text field is focused.
 int main(int argc, char **argv) {
     int ime = argc > 1 && !strcmp(argv[1], "ime");
     struct wl_display *display = wl_display_connect(NULL);
@@ -69,7 +70,8 @@ int main(int argc, char **argv) {
         if (!input_methods)
             return 9;
         input_method = zwp_input_method_manager_v2_get_input_method(input_methods, seat);
-        grab = zwp_input_method_v2_grab_keyboard(input_method);
+        if (!(argc > 2 && !strcmp(argv[2], "later")))
+            grab = zwp_input_method_v2_grab_keyboard(input_method);
     }
     if (wl_display_roundtrip(display) < 0)
         return 5;
@@ -98,6 +100,8 @@ int main(int argc, char **argv) {
             zwlr_virtual_pointer_v1_frame(pointer);
         } else if (sscanf(line, "mods %u", &value) == 1) {
             zwp_virtual_keyboard_v1_modifiers(keyboard, value, 0, 0, 0);
+        } else if (!strncmp(line, "grab", 4) && input_method && !grab) {
+            grab = zwp_input_method_v2_grab_keyboard(input_method);
         } else if (!strncmp(line, "quit", 4)) break;
         if (wl_display_roundtrip(display) < 0) return 6;
         puts("done"); fflush(stdout);

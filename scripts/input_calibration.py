@@ -284,20 +284,53 @@ def calibrate_native_seat_keys(desk, chrome, browser, verify, output):  # noqa: 
         # An input method that grabs the keyboard gets the user's keys, and clients get only what it forwards through
         # its own keyboard. A Ctrl it keeps never reached the focused client, so an agent stroke there must not give it
         # that Ctrl back afterwards, or the input method's next plain key becomes a shortcut there (Ctrl+z, an undo).
-        desk.focus(companion.address)
-        desk.key("ctrl+a", companion.address)
-        desk.key("BackSpace", companion.address)
-        cleared = companion_text("") is not None
-        ime = keyboard_control(output, "ime")
-        processes.append(ime)
-        assert ime.stdin is not None and ime.stdout is not None
+        def clear_companion():
+            desk.focus(companion.address)
+            desk.key("ctrl+a", companion.address)
+            desk.key("BackSpace", companion.address)
+            return companion_text("") is not None
 
-        def forward(command):
-            ime.stdin.write(command + "\n")
+        def start_ime(*args):
+            ime = keyboard_control(output, "ime", *args)
+            processes.append(ime)
+            assert ime.stdin is not None and ime.stdout is not None
+
+            def forward(command):
+                ime.stdin.write(command + "\n")
+                ime.stdin.flush()
+                if ime.stdout.readline().strip() != "done":
+                    raise RuntimeError("private input method command failed")
+
+            return ime, forward
+
+        def stop_ime(ime):
+            ime.stdin.write("quit\n")
             ime.stdin.flush()
-            if ime.stdout.readline().strip() != "done":
-                raise RuntimeError("private input method command failed")
+            ime.wait(timeout=5)
 
+        # The same, with the plugin loaded after the Ctrl was kept and before the input method forwarded anything, so it
+        # has no record of what Chrome was sent. The input method grabs once the user's keyboard has made itself the
+        # seat's keyboard (a Shift), as an input method does when a text field takes focus, so the seat's keyboard is
+        # still the user's, reporting that Ctrl.
+        cleared = clear_companion()
+        ime, forward = start_ime("later")
+        send("key 42 1")
+        send("key 42 0")
+        forward("grab")
+        send("key 29 1")
+        send("mods 4")
+        desk.plugin.unload()
+        desk.plugin.load()
+        desk.type("y", companion.address)
+        forward("key 44 1")
+        forward("key 44 0")
+        ime_ctrl_kept_unrecorded = cleared and companion_text("yz") is not None
+        send("mods 0")
+        send("key 29 0")
+        stop_ime(ime)
+
+        cleared = clear_companion()
+        ime, forward = start_ime()
         forward("key 45 1")
         forward("key 45 0")
         send("key 29 1")
@@ -308,9 +341,7 @@ def calibrate_native_seat_keys(desk, chrome, browser, verify, output):  # noqa: 
         ime_ctrl_kept = cleared and companion_text("xyz") is not None
         send("mods 0")
         send("key 29 0")
-        ime.stdin.write("quit\n")
-        ime.stdin.flush()
-        ime.wait(timeout=5)
+        stop_ime(ime)
         # Every outcome is recorded before any stops the run.
         verify("chrome_seat_pointer_release_not_repeated", released, stop=False)
         verify("chrome_seat_pointer_prior_key_released", prior_released, stop=False)
@@ -318,6 +349,7 @@ def calibrate_native_seat_keys(desk, chrome, browser, verify, output):  # noqa: 
         verify("chrome_seat_pointer_ctrl_held", pressed is not None and '"ctrlKey":false' in pressed.text, stop=False)
         verify("chrome_seat_pointer_prior_ctrl_isolated", prior_ctrl, stop=False)
         verify("chrome_seat_pointer_other_keyboard_ctrl_isolated", other_keyboard_ctrl, stop=False)
+        verify("chrome_ime_kept_ctrl_not_restored_unrecorded", ime_ctrl_kept_unrecorded, stop=False)
         verify("chrome_ime_kept_ctrl_not_restored", ime_ctrl_kept)
     finally:
         for process in processes:

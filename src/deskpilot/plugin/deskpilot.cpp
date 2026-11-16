@@ -89,6 +89,7 @@
 // {"ok":true,"pending":<ticket>}, collected with `hyprctl deskpilot wait <ticket>`, since hyprctl stops reading a
 // reply after five seconds. Replies are JSON. `hyprctl deskpilot status` reports the plugin's version and queue.
 
+#include <hyprland/src/protocols/InputMethodV2.hpp>
 #include <hyprland/src/protocols/PrimarySelection.hpp>
 #include <hyprland/src/plugins/PluginAPI.hpp>
 
@@ -643,8 +644,13 @@ namespace {
         }
     }
 
-    // A keyboard Hyprland has sent nothing since the plugin loaded gets what it would send: onKeyboardMod's modifiers
-    // from the seat's keyboard for the client with keyboard focus, and setKeyboardFocus's leave for any other.
+    // Hyprland keeps no record of what it sent before the plugin loaded, so a keyboard sent nothing since gets what the
+    // seat's routing sends a client now. A client without keyboard focus was sent setKeyboardFocus's leave. Under an input
+    // method's keyboard grab, onKeyboardMod gives the user's keyboards to the input method and sends the focused client
+    // only the modifiers of the input method's own keyboard, as they are. Only that path makes such a keyboard the seat's
+    // keyboard, so while the seat's keyboard is another, the input method has forwarded no modifiers and the client has
+    // been sent none of the user's since the grab: it gets none. Otherwise onKeyboardMod merges in the user's other
+    // keyboards.
     SClientMods sentMods(const SP<CWLKeyboardResource>& resource) {
         if (const auto SENT = std::ranges::find_if(g_sentMods, [&resource](const auto& sent) { return sent.keyboard.get() == resource.get(); }); SENT != g_sentMods.end())
             return SENT->mods;
@@ -655,8 +661,13 @@ namespace {
         const auto FOCUS = g_pSeatManager->m_state.keyboardFocus.lock();
         if (!FOCUS || !resource->m_owner || resource->m_owner->client() != FOCUS->client())
             return {0, mods.latched, mods.locked, mods.group};
-        if (!(KEYBOARD->isVirtual() && g_pInputManager->shouldIgnoreVirtualKeyboard(KEYBOARD)))
-            mods.depressed |= g_pInputManager->hyprlandModsToXkb(KEYBOARD, g_pInputManager->getModsFromAllKBs());
+        const auto IME = g_pInputManager->m_relay.m_inputMethod.lock();
+        if (IME && IME->hasGrab()) {
+            if (KEYBOARD->isVirtual() && g_pInputManager->shouldIgnoreVirtualKeyboard(KEYBOARD))
+                return {mods.depressed, mods.latched, mods.locked, mods.group};
+            return {0, 0, mods.locked, mods.group};
+        }
+        mods.depressed |= g_pInputManager->hyprlandModsToXkb(KEYBOARD, g_pInputManager->getModsFromAllKBs());
         return {mods.depressed, mods.latched, mods.locked, mods.group};
     }
 
