@@ -1346,3 +1346,27 @@ def test_a_changed_window_with_the_same_identity_is_still_stale(tmp_path, monkey
     assert screen.latest(window) == shot
     with pytest.raises(screen.StaleShot, match="has changed since shot"):
         Desk._check_identity(replace(window, cls="other"))
+
+
+def test_shot_coordinates_refuse_a_new_window_at_a_reused_address(tmp_path, monkeypatch):
+    # Coordinates without a shot id are in the address's latest shot, which is of the closed window: refuse them.
+    desk, fake, _, plugin = make_desk(tmp_path, monkeypatch)
+    fake.clients[0] = {**CLIENT, "pid": 999}
+    for action in (
+        lambda: desk.click("battle", 1, 1),
+        lambda: desk.move("battle", 1, 1),
+        lambda: desk.scroll("battle", 1, 1, 1),
+        lambda: desk.drag("battle", (1, 1), (2, 2)),
+    ):
+        with pytest.raises(screen.StaleShot, match="has changed since shot"):
+            action()
+    assert plugin.calls == []
+    desk.click("battle", 1, 1, scale=1)
+    desk.key("Return", "battle")
+    assert [call[0] for call in plugin.calls] == ["path", "keys"]
+
+
+def test_shot_coordinates_on_a_window_never_shot_are_window_pixels(tmp_path, monkeypatch):
+    desk, fake, _, _ = make_desk(tmp_path, monkeypatch)
+    fake.clients[0] = {**CLIENT, "address": "0xdef"}
+    assert desk.click("battle", 100, 50) == (2527 + 100, 966 + 50)

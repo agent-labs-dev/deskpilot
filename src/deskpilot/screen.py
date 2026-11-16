@@ -194,6 +194,17 @@ def latest(window: Window, folder: Path | None = None) -> Shot | None:
     return None
 
 
+def last_at(window: Window, folder: Path | None = None) -> Shot | None:
+    """The newest shot at `window`'s address on its compositor, of whatever window was there, or None. Coordinates
+    given without a shot id are in this shot: one of an earlier window at the address refuses them, never re-aims them
+    at the window there now."""
+    for record in reversed(_records(shots_dir(folder), window.address)):
+        shot = load(record.stem, folder)
+        if shot.instance == window.instance:
+            return shot
+    return None
+
+
 def to_global(window: Window, x: float, y: float, scale: float) -> tuple[int, int]:
     """A point in a screenshot of `window` taken at `scale`, as a global compositor position.
 

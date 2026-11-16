@@ -404,7 +404,7 @@ class Desk:
         if element is not None:
             return win, *self._element_point(win, element)
         assert x is not None and y is not None
-        taken = screen.load(shot) if shot else screen.latest(win)
+        taken = screen.load(shot) if shot else screen.last_at(win)
         if taken and (shot or scale is None):
             taken.check(win)
         if scale is None:

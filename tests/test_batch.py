@@ -264,3 +264,11 @@ def test_the_mcp_batch_tool_returns_the_image_and_metadata_or_an_error_with_part
     with pytest.raises(Exception, match=r"dy|action|valid"):
         call({"actions": [CLICK, {"action": "scroll", "dy": 0, "x": 1, "y": 1}]})
     assert desk.plugin.calls == []
+
+
+def test_a_window_replaced_before_the_batch_refuses_coordinates_of_the_closed_ones_shot(tmp_path, monkeypatch):
+    desk, fake, _, plugin = make_desk(tmp_path, monkeypatch)
+    fake.clients[0] = {**CLIENT, "pid": 99}  # Hyprland reused the address for another process
+    result = run(desk, [{"action": "key", "combo": "Return"}, CLICK])
+    assert result["completed"] == 1 and result["failed"]["index"] == 1 and result["failed"]["code"] == "stale"
+    assert kinds(plugin) == ["keys"]
