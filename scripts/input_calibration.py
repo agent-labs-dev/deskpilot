@@ -69,12 +69,16 @@ def calibrate_wine(desk, output, verify):
     verify("wine_raw_pointer_buttons", "RAW_DOWN" in rows and "RAW_UP" in rows)
 
 
-def keyboard_control(output):
+def keyboard_control(output, *args):
     scratch = output.parent / "keyboard-calibration"
     scratch.mkdir(parents=True, exist_ok=True)
     subprocess.run(["keeper", "claim", str(scratch)], check=True, capture_output=True)
-    for protocol in ("virtual-keyboard", "virtual-pointer"):
-        xml = ROOT / f"scripts/protocols/{protocol}.xml"
+    for protocol, xml_name in (
+        ("virtual-keyboard", "virtual-keyboard"),
+        ("virtual-pointer", "virtual-pointer"),
+        ("input-method", "input-method-unstable-v2"),
+    ):
+        xml = ROOT / f"scripts/protocols/{xml_name}.xml"
         for mode, suffix in (("client-header", "h"), ("private-code", "c")):
             subprocess.run(
                 ["wayland-scanner", mode, str(xml), str(scratch / f"{protocol}.{suffix}")],
@@ -88,6 +92,7 @@ def keyboard_control(output):
             str(ROOT / "scripts/keyboard_control.c"),
             str(scratch / "virtual-keyboard.c"),
             str(scratch / "virtual-pointer.c"),
+            str(scratch / "input-method.c"),
             "-I",
             str(scratch),
             "-lwayland-client",
@@ -98,7 +103,7 @@ def keyboard_control(output):
         check=True,
         capture_output=True,
     )
-    process = subprocess.Popen([str(binary)], stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True)
+    process = subprocess.Popen([str(binary), *args], stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True)
     assert process.stdout is not None
     if process.stdout.readline().strip() != "ready":
         process.kill()
@@ -108,6 +113,9 @@ def keyboard_control(output):
 
 
 TRIGGER_HTML = """<title>TITLE</title>
+<a href="https://example.invalid/opened" onclick="window.clicks=(window.clicks||0)+1;
+events.value=JSON.stringify({type:event.type,ctrlKey:event.ctrlKey,n:clicks});
+if(!event.ctrlKey)event.preventDefault()">Link</a>
 <button id=t onpointerdown="events.value=JSON.stringify({type:event.type,
 button:event.button,pointerType:event.pointerType,ctrlKey:event.ctrlKey});
 if(event.button===0&&event.pointerType==='mouse'&&!event.ctrlKey)result.value='OPEN'">Trigger</button>
@@ -115,8 +123,22 @@ if(event.button===0&&event.pointerType==='mouse'&&!event.ctrlKey)result.value='O
 
 
 def trigger_page(title):
-    """A page whose Trigger button records the modifiers of the pointer press it gets."""
+    """A page whose Trigger button records the modifiers of the pointer press it gets, and whose Link records those of
+    its click, numbered, and opens a tab only when Ctrl is held."""
     return "data:text/html;base64," + base64.b64encode(TRIGGER_HTML.replace("TITLE", title).encode()).decode()
+
+
+def page_tabs(desk, address):
+    """The number of tabs in a Chrome window's tab strip."""
+    return sum(e.role == "page tab" for e in descendants(desk.elements(address)))
+
+
+def link_click_isolated(desk, address, tabs, n):
+    """Whether the trigger page's Link got its nth click without Ctrl and the window kept its tab count."""
+    clicked = wait_for_element(desk, address, lambda e: e.name == "events" and f'"n":{n}}}' in (e.text or ""))
+    # A Ctrl-click opens its tab after the click event, so the tab strip is read once that settles.
+    time.sleep(1)
+    return clicked is not None and '"ctrlKey":false' in clicked.text and page_tabs(desk, address) == tabs
 
 
 def wait_for_element(desk, address, match, timeout=5):
@@ -159,6 +181,7 @@ def calibrate_native_seat_keys(desk, chrome, browser, verify, output):  # noqa: 
     win, gx, gy, surface = desk._aim(browser.address, None, None, None, None, False, field.id, False)
     control = keyboard_control(output)
     assert control.stdin is not None and control.stdout is not None
+    processes = []
 
     def send(command):
         control.stdin.write(command + "\n")
@@ -232,12 +255,167 @@ def calibrate_native_seat_keys(desk, chrome, browser, verify, output):  # noqa: 
         send("mods 0")
         send("key 29 0")
         pressed = wait_for_element(desk, trigger.address, lambda e: e.name == "events" and '"type"' in (e.text or ""))
-        # Both outcomes are recorded before either stops the run.
+
+        # A Ctrl the user holds from before the action, in their focused sibling window, is the modifier state Chrome
+        # sees in every window: the action's own click must not carry it, or a Ctrl-click on a link opens a tab.
+        link = wait_for_element(desk, trigger.address, lambda e: e.name == "Link" and e.role == "link")
+        if link is None:
+            raise RuntimeError("seat trigger page did not expose its Link")
+        tabs = page_tabs(desk, trigger.address)
+        send("key 29 1")
+        send("mods 4")
+        desk.click(trigger.address, None, None, element=link.id)
+        send("mods 0")
+        send("key 29 0")
+        prior_ctrl = link_click_isolated(desk, trigger.address, tabs, 1)
+
+        # Hyprland sends a client the modifiers held on all of the user's keyboards, so a Ctrl held on keyboard A still
+        # reaches Chrome after a plain key on keyboard B makes B the seat's keyboard, with no modifiers of its own.
+        tabs = page_tabs(desk, trigger.address)
+        send("key 29 1")
+        send("mods 4")
+        send("key2 30 1")
+        send("key2 30 0")
+        desk.click(trigger.address, None, None, element=link.id)
+        send("mods 0")
+        send("key 29 0")
+        other_keyboard_ctrl = link_click_isolated(desk, trigger.address, tabs, 2)
+
+        # An input method that grabs the keyboard gets the user's keys, and clients get only what it forwards through
+        # its own keyboard. A Ctrl it keeps never reached the focused client, so an agent stroke there must not give it
+        # that Ctrl back afterwards, or the input method's next plain key becomes a shortcut there (Ctrl+z, an undo).
+        def clear_companion():
+            desk.focus(companion.address)
+            desk.key("ctrl+a", companion.address)
+            desk.key("BackSpace", companion.address)
+            return companion_text("") is not None
+
+        def start_ime(*args):
+            ime = keyboard_control(output, "ime", *args)
+            processes.append(ime)
+            assert ime.stdin is not None and ime.stdout is not None
+
+            def forward(command):
+                ime.stdin.write(command + "\n")
+                ime.stdin.flush()
+                if ime.stdout.readline().strip() != "done":
+                    raise RuntimeError("private input method command failed")
+
+            return ime, forward
+
+        def stop_ime(ime):
+            ime.stdin.write("quit\n")
+            ime.stdin.flush()
+            ime.wait(timeout=5)
+
+        # A grab clears no client's modifiers, so a Ctrl Chrome got before an input method grabbed the keyboard is still
+        # Chrome's. With the plugin loaded after the grab and before anything changes them, it has no record of what
+        # Chrome holds, and the action's click on a sibling window must still not carry that Ctrl.
+        desk.focus(companion.address)
+        tabs = page_tabs(desk, trigger.address)
+        ime, forward = start_ime("later")
+        send("key 29 1")
+        send("mods 4")
+        forward("grab")
+        desk.plugin.unload()
+        desk.plugin.load()
+        desk.click(trigger.address, None, None, element=link.id)
+        grabbed_ctrl_unrecorded = link_click_isolated(desk, trigger.address, tabs, 3)
+        send("mods 0")
+        send("key 29 0")
+        stop_ime(ime)
+        # The input method took that release, so Chrome is given a Ctrl press and release of its own.
+        for command in ("key 29 1", "mods 4", "mods 0", "key 29 0"):
+            send(command)
+
+        # The same, with the plugin loaded after the Ctrl was kept and before the input method forwarded anything, so it
+        # has no record of what Chrome was sent. The input method grabs once the user's keyboard has made itself the
+        # seat's keyboard (a Shift), as an input method does when a text field takes focus, so the seat's keyboard is
+        # still the user's, reporting that Ctrl.
+        cleared = clear_companion()
+        ime, forward = start_ime("later")
+        send("key 42 1")
+        send("key 42 0")
+        forward("grab")
+        send("key 29 1")
+        send("mods 4")
+        desk.plugin.unload()
+        desk.plugin.load()
+        desk.type("y", companion.address)
+        forward("key 44 1")
+        forward("key 44 0")
+        ime_ctrl_kept_unrecorded = cleared and companion_text("yz") is not None
+        send("mods 0")
+        send("key 29 0")
+        stop_ime(ime)
+
+        cleared = clear_companion()
+        ime, forward = start_ime()
+        forward("key 45 1")
+        forward("key 45 0")
+        send("key 29 1")
+        send("mods 4")
+        desk.type("y", companion.address)
+        forward("key 44 1")
+        forward("key 44 0")
+        ime_ctrl_kept = cleared and companion_text("xyz") is not None
+        send("mods 0")
+        send("key 29 0")
+        stop_ime(ime)
+
+        # A Shift Chrome got before the plugin loaded is still the user's: after an agent stroke in that window, the
+        # user's next key, with Shift still held, must still be shifted.
+        cleared = clear_companion()
+        send("key 42 1")
+        send("mods 1")
+        desk.plugin.unload()
+        desk.plugin.load()
+        desk.type("x", companion.address)
+        send("key 30 1")
+        send("key 30 0")
+        held_shift_unrecorded = cleared and companion_text("xA") is not None
+        send("mods 0")
+        send("key 42 0")
+
+        # An input method's keyboard keeps a Ctrl it forwarded when it lets go of the keyboard, and the user's release
+        # of that Ctrl then reaches Chrome with no modifiers. Once it grabs again, Hyprland sends Chrome nothing from
+        # that keyboard but its keys until it forwards new modifiers, so with the plugin loaded before then, its next
+        # plain key must stay plain, as it does without the plugin. A Ctrl+z would undo back to the earlier "xA".
+        cleared = clear_companion()
+        ime, forward = start_ime("later")
+        forward("grab")
+        forward("key 45 1")
+        forward("key 45 0")
+        send("key 29 1")
+        send("mods 4")
+        forward("mods 4")
+        forward("ungrab")
+        send("mods 0")
+        send("key 29 0")
+        forward("grab")
+        desk.plugin.unload()
+        desk.plugin.load()
+        forward("key 44 1")
+        forward("key 44 0")
+        ime_stale_ctrl_unrecorded = cleared and companion_text("xz") is not None
+        stop_ime(ime)
+        # Every outcome is recorded before any stops the run.
         verify("chrome_seat_pointer_release_not_repeated", released, stop=False)
         verify("chrome_seat_pointer_prior_key_released", prior_released, stop=False)
         verify("chrome_seat_pointer_shared_key_released", shared_released, stop=False)
-        verify("chrome_seat_pointer_ctrl_held", pressed is not None and '"ctrlKey":false' in pressed.text)
+        verify("chrome_seat_pointer_ctrl_held", pressed is not None and '"ctrlKey":false' in pressed.text, stop=False)
+        verify("chrome_seat_pointer_prior_ctrl_isolated", prior_ctrl, stop=False)
+        verify("chrome_seat_pointer_other_keyboard_ctrl_isolated", other_keyboard_ctrl, stop=False)
+        verify("chrome_seat_pointer_grabbed_ctrl_isolated_unrecorded", grabbed_ctrl_unrecorded, stop=False)
+        verify("chrome_ime_kept_ctrl_not_restored_unrecorded", ime_ctrl_kept_unrecorded, stop=False)
+        verify("chrome_ime_kept_ctrl_not_restored", ime_ctrl_kept, stop=False)
+        verify("chrome_held_shift_restored_unrecorded", held_shift_unrecorded, stop=False)
+        verify("chrome_ime_stale_ctrl_not_resent_unrecorded", ime_stale_ctrl_unrecorded)
     finally:
+        for process in processes:
+            if process.poll() is None:
+                process.kill()
+                process.wait()
         if control.poll() is None:
             control.stdin.write("mods 0\nkey 29 0\nquit\n")
             control.stdin.flush()

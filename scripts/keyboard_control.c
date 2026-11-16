@@ -1,4 +1,5 @@
 #define _GNU_SOURCE
+#include "input-method.h"
 #include "virtual-keyboard.h"
 #include "virtual-pointer.h"
 #include <stdio.h>
@@ -12,6 +13,7 @@
 static struct wl_seat *seat;
 static struct zwp_virtual_keyboard_manager_v1 *manager;
 static struct zwlr_virtual_pointer_manager_v1 *pointers;
+static struct zwp_input_method_manager_v2 *input_methods;
 static void global(void *d, struct wl_registry *r, uint32_t name, const char *interface, uint32_t version) {
     if (!strcmp(interface, "wl_seat") && !seat)
         seat = wl_registry_bind(r, name, &wl_seat_interface, 1);
@@ -19,6 +21,8 @@ static void global(void *d, struct wl_registry *r, uint32_t name, const char *in
         manager = wl_registry_bind(r, name, &zwp_virtual_keyboard_manager_v1_interface, 1);
     if (!strcmp(interface, "zwlr_virtual_pointer_manager_v1"))
         pointers = wl_registry_bind(r, name, &zwlr_virtual_pointer_manager_v1_interface, 1);
+    if (!strcmp(interface, "zwp_input_method_manager_v2"))
+        input_methods = wl_registry_bind(r, name, &zwp_input_method_manager_v2_interface, 1);
 }
 static void removed(void *d, struct wl_registry *r, uint32_t name) {}
 static const struct wl_registry_listener listener = {global, removed};
@@ -37,7 +41,12 @@ static uint32_t now_ms(void) {
     clock_gettime(CLOCK_MONOTONIC, &now);
     return now.tv_sec * 1000u + now.tv_nsec / 1000000u;
 }
-int main(void) {
+// With "ime", this client is instead an input method that grabs the seat's keyboard and keeps every key it gets, its
+// own keyboard ("key") being the one its keys reach clients through, as an input method forwards them. With "ime
+// later", it grabs on the "grab" command, as an input method does once a text field is focused, and "ungrab" lets go
+// of the keyboard while keeping its own, as an input method does when that field loses focus.
+int main(int argc, char **argv) {
+    int ime = argc > 1 && !strcmp(argv[1], "ime");
     struct wl_display *display = wl_display_connect(NULL);
     if (!display)
         return 1;
@@ -56,6 +65,15 @@ int main(void) {
     struct zwp_virtual_keyboard_v1 *keyboard = new_keyboard(text);
     if (!keyboard)
         return 4;
+    struct zwp_input_method_v2 *input_method = NULL;
+    struct zwp_input_method_keyboard_grab_v2 *grab = NULL;
+    if (ime) {
+        if (!input_methods)
+            return 9;
+        input_method = zwp_input_method_manager_v2_get_input_method(input_methods, seat);
+        if (!(argc > 2 && !strcmp(argv[2], "later")))
+            grab = zwp_input_method_v2_grab_keyboard(input_method);
+    }
     if (wl_display_roundtrip(display) < 0)
         return 5;
     puts("ready");
@@ -83,6 +101,11 @@ int main(void) {
             zwlr_virtual_pointer_v1_frame(pointer);
         } else if (sscanf(line, "mods %u", &value) == 1) {
             zwp_virtual_keyboard_v1_modifiers(keyboard, value, 0, 0, 0);
+        } else if (!strncmp(line, "grab", 4) && input_method && !grab) {
+            grab = zwp_input_method_v2_grab_keyboard(input_method);
+        } else if (!strncmp(line, "ungrab", 6) && grab) {
+            zwp_input_method_keyboard_grab_v2_release(grab);
+            grab = NULL;
         } else if (!strncmp(line, "quit", 4)) break;
         if (wl_display_roundtrip(display) < 0) return 6;
         puts("done"); fflush(stdout);
@@ -92,6 +115,10 @@ int main(void) {
     if (second)
         zwp_virtual_keyboard_v1_destroy(second);
     free(text);
+    if (grab)
+        zwp_input_method_keyboard_grab_v2_release(grab);
+    if (input_method)
+        zwp_input_method_v2_destroy(input_method);
     if (pointer)
         zwlr_virtual_pointer_v1_destroy(pointer);
     wl_display_roundtrip(display);

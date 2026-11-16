@@ -128,6 +128,7 @@
 #include <hyprland/src/managers/eventLoop/EventLoopTimer.hpp>
 #include <hyprland/src/managers/fullscreen/FullscreenController.hpp>
 #include <hyprland/src/managers/input/InputManager.hpp>
+#include <hyprland/src/protocols/InputMethodV2.hpp>
 #include <hyprland/src/output/Monitor.hpp>
 #include <hyprland/src/pointer/PointerManager.hpp>
 #include <hyprland/src/render/Renderer.hpp>
@@ -478,7 +479,7 @@ namespace {
     std::function<void()> keyboardReplay(std::function<void()> replay);
 
     // A pointer action holds the user's keys only where passing them on would be wrong:
-    // - while it has replaced their modifiers on the target client's keyboards (clearPointerMods, for XWayland), since a
+    // - while it has replaced their modifiers on the target client's keyboards (clearPointerMods), since a
     //   key would send that client their modifiers again mid-action;
     // - once it holds pointer input of theirs, which could move keyboard focus and must stay ahead of the keys after it;
     // - from the first change of their modifiers while the target's client has their keyboard focus (modsHeld).
@@ -610,7 +611,61 @@ namespace {
     using KeyboardModsFn = void (*)(CWLKeyboardResource*, uint32_t, uint32_t, uint32_t, uint32_t);
     CFunctionHook* g_keyboardModsHook = nullptr;
 
+    // The modifiers Hyprland last sent each of the seat's wl_keyboard resources, which is what the user's keys have
+    // given that client. The plugin puts these back after replacing them, rather than deriving them again from the
+    // keyboards: Hyprland keeps no record, and what it sends depends on the path. CInputManager::onKeyboardMod merges
+    // the modifiers of the user's other keyboards in, except for keys an input method forwards through its own keyboard,
+    // whose modifiers it sends as they are (and a modifier the input method consumes is never sent at all);
+    // CSeatManager::setKeyboardFocus sends a client it leaves empty modifiers but its latched ones.
+    struct SClientMods {
+        uint32_t depressed = 0, latched = 0, locked = 0, group = 0;
+    };
+    struct SSentMods {
+        WP<CWLKeyboardResource> keyboard;
+        SClientMods             mods;
+    };
+    std::vector<SSentMods>               g_sentMods;
+    std::vector<WP<CWLKeyboardResource>> keyboardsOf(wl_client* client);
+
+    void recordSentMods(CWLKeyboardResource* keyboard, SClientMods mods) {
+        std::erase_if(g_sentMods, [](const auto& sent) { return sent.keyboard.expired(); });
+        if (const auto SENT = std::ranges::find_if(g_sentMods, [keyboard](const auto& sent) { return sent.keyboard.get() == keyboard; }); SENT != g_sentMods.end()) {
+            SENT->mods = mods;
+            return;
+        }
+        const auto OWNER = keyboard->m_owner.lock();
+        if (!OWNER)
+            return;
+        for (const auto& weak : keyboardsOf(OWNER->client())) {
+            if (weak.get() == keyboard) {
+                g_sentMods.push_back({weak, mods});
+                return;
+            }
+        }
+    }
+
+    // What a keyboard was sent. Every keyboard has an exact record or was sent none: PLUGIN_INIT gives the focused
+    // client's keyboards the modifiers Hyprland would send them now (syncFocusedMods), a client is sent modifiers with
+    // keyboard focus (CSeatManager::setKeyboardFocus), and a wl_keyboard bound while its client has focus is entered with
+    // none (CWLKeyboardResource's constructor), which is the empty state a client starts from.
+    SClientMods sentMods(const SP<CWLKeyboardResource>& resource) {
+        if (const auto SENT = std::ranges::find_if(g_sentMods, [&resource](const auto& sent) { return sent.keyboard.get() == resource.get(); }); SENT != g_sentMods.end())
+            return SENT->mods;
+        return {};
+    }
+
+    bool modsHeldBy(const SP<CWLKeyboardResource>& resource) {
+        const auto MODS = sentMods(resource);
+        return (MODS.depressed | MODS.latched) != 0;
+    }
+
+    // The plugin's own modifiers for a keyboard, which leave the record of Hyprland's alone.
+    void sendOwnMods(CWLKeyboardResource& keyboard, SClientMods mods) {
+        reinterpret_cast<KeyboardModsFn>(g_keyboardModsHook->m_original)(&keyboard, mods.depressed, mods.latched, mods.locked, mods.group);
+    }
+
     void hkKeyboardSendMods(CWLKeyboardResource* self, uint32_t depressed, uint32_t latched, uint32_t locked, uint32_t group) {
+        recordSentMods(self, {depressed, latched, locked, group});
         if (g_shieldKeys && g_keyOp && std::ranges::any_of(g_keyOp->keyboards, [self](const auto& keyboard) { return keyboard.get() == self; }))
             return;
         reinterpret_cast<KeyboardModsFn>(g_keyboardModsHook->m_original)(self, depressed, latched, locked, group);
@@ -1672,6 +1727,39 @@ namespace {
         return out;
     }
 
+    struct SShareMods { friend constexpr auto member(SShareMods); };
+    template struct SAccess<&CInputManager::shareModsFromAllKBs, SShareMods>;
+
+    // Nothing records what a client was sent before the plugin loaded, so at load the client with keyboard focus is sent,
+    // through the recording hook, the modifiers Hyprland would deliver it now. This mirrors CInputManager::onKeyboardMod
+    // for the seat's keyboard: with no input method grab, its state with the user's other keyboards merged in
+    // (shareModsFromAllKBs); under a grab, the client gets only what the input method forwards through its own keyboard
+    // (DISALLOWACTION), as it is. Both of that keyboard's paths make it the seat's keyboard and the user's keyboards
+    // reach only the input method (USEIME), so while the seat's keyboard is another, the input method has forwarded
+    // nothing during this grab: its keyboard's state may be one it kept from an earlier grab, after which Hyprland sent
+    // the client the user's modifiers, so the client is sent no held modifiers. Its input-capture branch, which sends
+    // nothing while another program captures input, is not mirrored: what the client holds then is what it had when the
+    // capture began, and the seat's state is what it gets next. A client without keyboard focus needs nothing:
+    // setKeyboardFocus sends it modifiers when it gets focus.
+    void syncFocusedMods() {
+        const auto KEYBOARD = g_pSeatManager->m_keyboard.lock();
+        const auto FOCUS    = g_pSeatManager->m_state.keyboardFocus.lock();
+        if (!KEYBOARD || !FOCUS)
+            return;
+        auto       mods   = KEYBOARD->m_modifiersState;
+        const auto IME    = g_pInputManager->m_relay.m_inputMethod.lock();
+        const bool HASIME = IME && IME->hasGrab();
+        if (!HASIME) {
+            const auto ALLMODS = ((*g_pInputManager).*member(SShareMods{}))(g_pInputManager->xkbModsToHyprland(KEYBOARD, mods.depressed));
+            mods.depressed |= g_pInputManager->hyprlandModsToXkb(KEYBOARD, ALLMODS);
+        } else if (!(KEYBOARD->isVirtual() && g_pInputManager->shouldIgnoreVirtualKeyboard(KEYBOARD)))
+            mods.depressed = mods.latched = 0;
+        for (const auto& weak : keyboardsOf(FOCUS->client())) {
+            if (const auto RESOURCE = weak.lock())
+                RESOURCE->sendMods(mods.depressed, mods.latched, mods.locked, mods.group);
+        }
+    }
+
     struct SKeyboardPressed { friend constexpr auto member(SKeyboardPressed); };
     template struct SAccess<&IKeyboard::m_pressed, SKeyboardPressed>;
 
@@ -1740,33 +1828,39 @@ namespace {
         };
     }
 
-    // XWayland pointer events carry its shared X keyboard modifiers, even when another X window has focus.
-    // Pointer actions have no modifier argument, so isolate their buttons from the user's held modifiers.
+    // Pointer actions have no modifier argument, so isolate their buttons from the modifiers the user holds where the
+    // target would read them. XWayland pointer events carry its shared X keyboard modifiers, even when another X window
+    // has focus. A native client reads the modifiers on its own wl_keyboard, which are per client, not per window, so
+    // while any of its windows has the user's keyboard focus, a Ctrl they hold there makes the action's click on a
+    // sibling window a Ctrl-click. Only these cases replace the client's modifiers, since that holds the user's keys
+    // until the action ends (pointerHoldsKeys).
     void clearPointerMods(SOp& op) {
         SInputOwner agent;
         const auto WINDOW = windowOf(op);
-        const auto KEYBOARD = g_pSeatManager->m_keyboard.lock();
-        if (!WINDOW || !WINDOW->backend().isX11() || !KEYBOARD)
+        if (!WINDOW)
             return;
-        const auto SURFACE = WINDOW->wlSurface()->resource();
-        op.modifierKeyboards = keyboardsOf(SURFACE->client());
+        const auto CLIENT    = WINDOW->wlSurface()->resource()->client();
+        const auto FOCUS     = g_pSeatManager->m_state.keyboardFocus.lock();
+        const auto KEYBOARDS = keyboardsOf(CLIENT);
+        const bool HELD      = std::ranges::any_of(KEYBOARDS, [](const auto& weak) {
+            const auto RESOURCE = weak.lock();
+            return RESOURCE && modsHeldBy(RESOURCE);
+        });
+        if (!WINDOW->backend().isX11() && (!FOCUS || FOCUS->client() != CLIENT || !HELD))
+            return;
+        op.modifierKeyboards = KEYBOARDS;
         for (const auto& weak : op.modifierKeyboards) {
-            if (const auto resource = weak.lock())
-                resource->sendMods(0, 0, KEYBOARD->m_modifiersState.locked, KEYBOARD->m_modifiersState.group);
+            if (const auto resource = weak.lock()) {
+                const auto MODS = sentMods(resource);
+                sendOwnMods(*resource, {0, 0, MODS.locked, MODS.group});
+            }
         }
     }
 
     void restorePointerMods(SOp& op) {
-        const auto KEYBOARD = g_pSeatManager->m_keyboard.lock();
-        if (!KEYBOARD)
-            return;
-        const auto FOCUS = g_pSeatManager->m_state.keyboardFocus.lock();
-        const auto& MODS = KEYBOARD->m_modifiersState;
         for (const auto& weak : op.modifierKeyboards) {
-            if (const auto resource = weak.lock()) {
-                const bool FOCUSED = FOCUS && resource->m_owner && resource->m_owner->client() == FOCUS->client();
-                resource->sendMods(FOCUSED ? MODS.depressed : 0, FOCUSED ? MODS.latched : 0, MODS.locked, MODS.group);
-            }
+            if (const auto resource = weak.lock())
+                sendOwnMods(*resource, sentMods(resource));
         }
     }
 
@@ -2675,7 +2769,7 @@ namespace {
         keyboard.sendKey(agentSerial(keyboard.client()), time, code, state);
     }
     void kbMods(CWLKeyboardResource& keyboard, uint32_t depressed, uint32_t latched, uint32_t locked, uint32_t group) {
-        keyboard.sendMods(depressed, latched, locked, group);
+        sendOwnMods(keyboard, {depressed, latched, locked, group});
     }
     void kbMods(CWlKeyboard& keyboard, uint32_t depressed, uint32_t latched, uint32_t locked, uint32_t group) {
         keyboard.sendModifiers(agentSerial(keyboard.client()), depressed, latched, locked, group);
@@ -2705,13 +2799,13 @@ namespace {
         eachKeyboard(op, [&](auto& keyboard) { kbMods(keyboard, DEPRESSED, LATCHED, LOCKED, GROUP); });
     }
 
-    // The modifiers the user's keyboard really has, as the seat would send them.
+    // The modifiers the user's keys have given the window's client, back on the seat keyboards the stroke used (the
+    // agent route, whose keyboards Hyprland never sends to, always leaves instead).
     void sendRealMods(SKeyOp& op) {
-        const auto KEYBOARD = g_pSeatManager->m_keyboard.lock();
-        if (!KEYBOARD)
-            return;
-        const auto& MODS = KEYBOARD->m_modifiersState;
-        eachKeyboard(op, [&](auto& keyboard) { kbMods(keyboard, MODS.depressed, MODS.latched, MODS.locked, MODS.group); });
+        for (const auto& weak : op.keyboards) {
+            if (const auto resource = weak.lock())
+                sendOwnMods(*resource, sentMods(resource));
+        }
     }
 
     // The locks a typed character needs, over the modifiers its pressed modifier keys hold, in the user's layout.
@@ -4244,6 +4338,7 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE handle) {
     g_lockHook          = hook(handle, "CPointerConstraintsProtocol", "onLockPointer", reinterpret_cast<void*>(&hkConstrain<g_lockHook, eInert::LOCKED>));
     g_confineHook       = hook(handle, "CPointerConstraintsProtocol", "onConfinePointer", reinterpret_cast<void*>(&hkConstrain<g_confineHook, eInert::CONFINED>));
     g_keyboardModsHook  = hook(handle, "CWLKeyboardResource", "sendMods", reinterpret_cast<void*>(&hkKeyboardSendMods));
+    syncFocusedMods();
 
     agentcursor::init();
     startAgentSeat();
