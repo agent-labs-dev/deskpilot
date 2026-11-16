@@ -3,18 +3,52 @@
 // a run shows whether a RawMotion reaches X clients before the press of a click deskpilot sends. Build with
 // gcc scripts/xi2_raw_probe.c -lXi -lX11, start it inside a nested Hyprland (scripts/nested.py) with that instance's
 // exec dispatcher so it gets its Xwayland DISPLAY, then shot and click its "deskpilot xi2 probe" window there. It
-// prints "ready WINDOW" once its window is mapped, and runs until killed.
+// prints "ready WINDOW" once its window is mapped, and runs until killed. On SIGUSR1 it asks to move its window one
+// window width to the right, as an X client that moves itself does, and prints "move".
 #include <X11/Xlib.h>
 #include <X11/Xutil.h>
 #include <X11/extensions/XInput2.h>
+#include <signal.h>
 #include <stdio.h>
 #include <string.h>
+#include <sys/select.h>
 #include <time.h>
+#include <unistd.h>
 
 static long long micros(void) {
   struct timespec t;
   clock_gettime(CLOCK_MONOTONIC, &t);
   return (long long)t.tv_sec * 1000000 + t.tv_nsec / 1000;
+}
+
+static int wake[2];
+
+static void onMoveSignal(int signal) {
+  (void)signal;
+  (void)!write(wake[1], "m", 1);
+}
+
+// Blocks until an X event is queued, moving the window on each SIGUSR1 meanwhile.
+static void waitForEvent(Display *display, Window window) {
+  while (!XPending(display)) {
+    fd_set fds;
+    FD_ZERO(&fds);
+    FD_SET(ConnectionNumber(display), &fds);
+    FD_SET(wake[0], &fds);
+    const int top = wake[0] > ConnectionNumber(display) ? wake[0] : ConnectionNumber(display);
+    if (select(top + 1, &fds, NULL, NULL, NULL) <= 0 || !FD_ISSET(wake[0], &fds))
+      continue;
+    char byte;
+    (void)!read(wake[0], &byte, 1);
+    XWindowAttributes attributes;
+    Window child;
+    int x, y;
+    XGetWindowAttributes(display, window, &attributes);
+    XTranslateCoordinates(display, window, attributes.root, 0, 0, &x, &y, &child);
+    XMoveWindow(display, window, x + attributes.width, y);
+    XFlush(display);
+    printf("%lld move\n", micros());
+  }
 }
 
 static void raw(const char *name, XIRawEvent *e) {
@@ -48,8 +82,12 @@ int main(void) {
   XISelectEvents(display, root, &mask, 1);
   XMapWindow(display, window);
   setvbuf(stdout, NULL, _IOLBF, 0);
+  if (pipe(wake) != 0)
+    return 4;
+  signal(SIGUSR1, onMoveSignal);
   for (;;) {
     XEvent e;
+    waitForEvent(display, window);
     XNextEvent(display, &e);
     XGenericEventCookie *cookie = &e.xcookie;
     if (cookie->type == GenericEvent && cookie->extension == opcode && XGetEventData(display, cookie)) {

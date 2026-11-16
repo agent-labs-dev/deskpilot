@@ -9,8 +9,10 @@ static LRESULT CALLBACK procedure(HWND window, UINT message, WPARAM w,
                                   LPARAM l) {
   if (message == WM_CHAR)
     fprintf(events, "CHAR %u\n", (unsigned)w);
+  // Where the button landed, in window pixels: the window is a popup, so its client area is the whole X window.
   if (message == WM_LBUTTONDOWN || message == WM_LBUTTONUP)
-    fprintf(events, "%s\n", message == WM_LBUTTONDOWN ? "DOWN" : "UP");
+    fprintf(events, "%s %d,%d\n", message == WM_LBUTTONDOWN ? "DOWN" : "UP",
+            (short)LOWORD(l), (short)HIWORD(l));
   if (message == WM_INPUT) {
     RAWINPUT input;
     UINT size = sizeof(input);
@@ -41,7 +43,7 @@ int WINAPI WinMain(HINSTANCE instance, HINSTANCE previous, LPSTR args,
     return 3;
   HWND window =
       CreateWindowW(cls.lpszClassName, L"Deskpilot Wine calibration",
-                    WS_OVERLAPPEDWINDOW, 0, 0, 600, 400, 0, 0, instance, 0);
+                    WS_POPUP, 0, 0, 600, 400, 0, 0, instance, 0);
   if (!window)
     return 4;
   RAWINPUTDEVICE devices[2] = {{1, 2, RIDEV_INPUTSINK, window},
