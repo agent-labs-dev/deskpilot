@@ -478,7 +478,7 @@ namespace {
     std::function<void()> keyboardReplay(std::function<void()> replay);
 
     // A pointer action holds the user's keys only where passing them on would be wrong:
-    // - while it has replaced their modifiers on the target client's keyboards (clearPointerMods, for XWayland), since a
+    // - while it has replaced their modifiers on the target client's keyboards (clearPointerMods), since a
     //   key would send that client their modifiers again mid-action;
     // - once it holds pointer input of theirs, which could move keyboard focus and must stay ahead of the keys after it;
     // - from the first change of their modifiers while the target's client has their keyboard focus (modsHeld).
@@ -1740,19 +1740,27 @@ namespace {
         };
     }
 
-    // XWayland pointer events carry its shared X keyboard modifiers, even when another X window has focus.
-    // Pointer actions have no modifier argument, so isolate their buttons from the user's held modifiers.
+    // Pointer actions have no modifier argument, so isolate their buttons from the modifiers the user holds where the
+    // target would read them. XWayland pointer events carry its shared X keyboard modifiers, even when another X window
+    // has focus. A native client reads the modifiers on its own wl_keyboard, which are per client, not per window, so
+    // while any of its windows has the user's keyboard focus, a Ctrl they hold there makes the action's click on a
+    // sibling window a Ctrl-click. Only these cases replace the client's modifiers, since that holds the user's keys
+    // until the action ends (pointerHoldsKeys).
     void clearPointerMods(SOp& op) {
         SInputOwner agent;
         const auto WINDOW = windowOf(op);
         const auto KEYBOARD = g_pSeatManager->m_keyboard.lock();
-        if (!WINDOW || !WINDOW->backend().isX11() || !KEYBOARD)
+        if (!WINDOW || !KEYBOARD)
             return;
-        const auto SURFACE = WINDOW->wlSurface()->resource();
-        op.modifierKeyboards = keyboardsOf(SURFACE->client());
+        const auto  CLIENT = WINDOW->wlSurface()->resource()->client();
+        const auto  FOCUS  = g_pSeatManager->m_state.keyboardFocus.lock();
+        const auto& MODS   = KEYBOARD->m_modifiersState;
+        if (!WINDOW->backend().isX11() && (!FOCUS || FOCUS->client() != CLIENT || !(MODS.depressed | MODS.latched)))
+            return;
+        op.modifierKeyboards = keyboardsOf(CLIENT);
         for (const auto& weak : op.modifierKeyboards) {
             if (const auto resource = weak.lock())
-                resource->sendMods(0, 0, KEYBOARD->m_modifiersState.locked, KEYBOARD->m_modifiersState.group);
+                resource->sendMods(0, 0, MODS.locked, MODS.group);
         }
     }
 

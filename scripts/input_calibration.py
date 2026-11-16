@@ -108,6 +108,8 @@ def keyboard_control(output):
 
 
 TRIGGER_HTML = """<title>TITLE</title>
+<a href="https://example.invalid/opened" onclick="events.value=JSON.stringify({type:event.type,ctrlKey:event.ctrlKey});
+if(!event.ctrlKey)event.preventDefault()">Link</a>
 <button id=t onpointerdown="events.value=JSON.stringify({type:event.type,
 button:event.button,pointerType:event.pointerType,ctrlKey:event.ctrlKey});
 if(event.button===0&&event.pointerType==='mouse'&&!event.ctrlKey)result.value='OPEN'">Trigger</button>
@@ -115,8 +117,14 @@ if(event.button===0&&event.pointerType==='mouse'&&!event.ctrlKey)result.value='O
 
 
 def trigger_page(title):
-    """A page whose Trigger button records the modifiers of the pointer press it gets."""
+    """A page whose Trigger button records the modifiers of the pointer press it gets, and whose Link records those of
+    its click and opens a tab only when Ctrl is held."""
     return "data:text/html;base64," + base64.b64encode(TRIGGER_HTML.replace("TITLE", title).encode()).decode()
+
+
+def page_tabs(desk, address):
+    """The number of tabs in a Chrome window's tab strip."""
+    return sum(e.role == "page tab" for e in descendants(desk.elements(address)))
 
 
 def wait_for_element(desk, address, match, timeout=5):
@@ -232,11 +240,31 @@ def calibrate_native_seat_keys(desk, chrome, browser, verify, output):  # noqa: 
         send("mods 0")
         send("key 29 0")
         pressed = wait_for_element(desk, trigger.address, lambda e: e.name == "events" and '"type"' in (e.text or ""))
+
+        # A Ctrl the user holds from before the action, in their focused sibling window, is the modifier state Chrome
+        # sees in every window: the action's own click must not carry it, or a Ctrl-click on a link opens a tab.
+        link = wait_for_element(desk, trigger.address, lambda e: e.name == "Link" and e.role == "link")
+        if link is None:
+            raise RuntimeError("seat trigger page did not expose its Link")
+        tabs = page_tabs(desk, trigger.address)
+        send("key 29 1")
+        send("mods 4")
+        desk.click(trigger.address, None, None, element=link.id)
+        send("mods 0")
+        send("key 29 0")
+        clicked = wait_for_element(
+            desk, trigger.address, lambda e: e.name == "events" and '"type":"click"' in (e.text or "")
+        )
+        # A Ctrl-click opens its tab after the click event, so the tab strip is read once that settles.
+        time.sleep(1)
+        no_tab = page_tabs(desk, trigger.address) == tabs
+        prior_ctrl = clicked is not None and '"ctrlKey":false' in clicked.text and no_tab
         # Both outcomes are recorded before either stops the run.
         verify("chrome_seat_pointer_release_not_repeated", released, stop=False)
         verify("chrome_seat_pointer_prior_key_released", prior_released, stop=False)
         verify("chrome_seat_pointer_shared_key_released", shared_released, stop=False)
-        verify("chrome_seat_pointer_ctrl_held", pressed is not None and '"ctrlKey":false' in pressed.text)
+        verify("chrome_seat_pointer_ctrl_held", pressed is not None and '"ctrlKey":false' in pressed.text, stop=False)
+        verify("chrome_seat_pointer_prior_ctrl_isolated", prior_ctrl)
     finally:
         if control.poll() is None:
             control.stdin.write("mods 0\nkey 29 0\nquit\n")

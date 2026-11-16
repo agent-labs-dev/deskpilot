@@ -7,6 +7,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+- A modifier the user holds while their keyboard focus is in another window of the target's app no longer reaches a click, scroll, drag or hover there, so a held Ctrl never turns the action's click on a link into a new tab. Until the action ends, their keys wait behind it, as for XWayland windows.
+
 ## [0.7.2] - 2026-11-16
 
 - A click, scroll, drag or hover on a native window of the app the user's pointer is in no longer holds the user's typing until it ends. Their keys wait only behind their own pointer input, after they change a modifier while that app has their keyboard focus (so the action's click never becomes a Ctrl-click), and for XWayland windows, whose modifiers the action replaces. Releasing a key that reached their window, before or during the action, goes through at once so it never repeats, unless input for the same key from another keyboard is waiting, which it then follows in order.
