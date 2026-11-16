@@ -1,5 +1,6 @@
 #define _GNU_SOURCE
 #include "virtual-keyboard.h"
+#include "virtual-pointer.h"
 #include <stdio.h>
 #include <time.h>
 #include <stdlib.h>
@@ -10,11 +11,14 @@
 #include <xkbcommon/xkbcommon.h>
 static struct wl_seat *seat;
 static struct zwp_virtual_keyboard_manager_v1 *manager;
+static struct zwlr_virtual_pointer_manager_v1 *pointers;
 static void global(void *d, struct wl_registry *r, uint32_t name, const char *interface, uint32_t version) {
     if (!strcmp(interface, "wl_seat") && !seat)
         seat = wl_registry_bind(r, name, &wl_seat_interface, 1);
     if (!strcmp(interface, "zwp_virtual_keyboard_manager_v1"))
         manager = wl_registry_bind(r, name, &zwp_virtual_keyboard_manager_v1_interface, 1);
+    if (!strcmp(interface, "zwlr_virtual_pointer_manager_v1"))
+        pointers = wl_registry_bind(r, name, &zwlr_virtual_pointer_manager_v1_interface, 1);
 }
 static void removed(void *d, struct wl_registry *r, uint32_t name) {}
 static const struct wl_registry_listener listener = {global, removed};
@@ -46,13 +50,25 @@ int main(void) {
         return 5;
     puts("ready");
     fflush(stdout);
+    // The user's pointer, for moving it while a key is down: created on the first motion command.
+    struct zwlr_virtual_pointer_v1 *pointer = NULL;
     char line[256];
     while (fgets(line, sizeof(line), stdin)) {
         unsigned code, value;
+        int dx, dy;
         if (sscanf(line, "key %u %u", &code, &value) == 2) {
             struct timespec now;
             clock_gettime(CLOCK_MONOTONIC, &now);
             zwp_virtual_keyboard_v1_key(keyboard, now.tv_sec * 1000u + now.tv_nsec / 1000000u, code, value);
+        } else if (sscanf(line, "motion %d %d", &dx, &dy) == 2) {
+            if (!pointers)
+                return 7;
+            if (!pointer)
+                pointer = zwlr_virtual_pointer_manager_v1_create_virtual_pointer(pointers, seat);
+            struct timespec now;
+            clock_gettime(CLOCK_MONOTONIC, &now);
+            zwlr_virtual_pointer_v1_motion(pointer, now.tv_sec * 1000u + now.tv_nsec / 1000000u, wl_fixed_from_int(dx), wl_fixed_from_int(dy));
+            zwlr_virtual_pointer_v1_frame(pointer);
         } else if (sscanf(line, "mods %u", &value) == 1) {
             zwp_virtual_keyboard_v1_modifiers(keyboard, value, 0, 0, 0);
         } else if (!strncmp(line, "quit", 4)) break;
@@ -61,6 +77,8 @@ int main(void) {
     }
     zwp_virtual_keyboard_v1_modifiers(keyboard, 0, 0, 0, 0);
     zwp_virtual_keyboard_v1_destroy(keyboard);
+    if (pointer)
+        zwlr_virtual_pointer_v1_destroy(pointer);
     wl_display_roundtrip(display);
     wl_display_disconnect(display);
     return 0;
