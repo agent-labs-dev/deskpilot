@@ -136,7 +136,7 @@ def test_shot_reads_its_scale_from_the_image_and_shrinks_wide_ones(tmp_path, mon
     assert calls[0][:3] == ["grim", "-T", "18000377"]
     assert (shot.width, shot.height, shot.scale) == (1376, 576, 0.8)
     assert Image.open(shot.path).size == (1376, 576)
-    assert screen.latest("0x1") == shot == screen.load(shot.id)
+    assert screen.latest(replace(window, stable_id="18000377")) == shot == screen.load(shot.id)
 
 
 def test_shot_without_a_toplevel_id_captures_the_area_at_an_explicit_scale(tmp_path, monkeypatch):
@@ -1197,9 +1197,9 @@ def test_shot_refuses_reused_addresses(tmp_path, monkeypatch, changed):
     shot.check(replace(window, title="A title changed by navigation"))
 
 
-def test_keys_and_explicit_scale_refuse_reused_address(tmp_path, monkeypatch):
+def test_keys_and_explicit_scale_refuse_a_window_changed_since_its_shot(tmp_path, monkeypatch):
     desk, fake, _, plugin = make_desk(tmp_path, monkeypatch)
-    fake.clients[0] = {**CLIENT, "pid": 999}
+    fake.clients[0] = {**CLIENT, "class": "battle.launcher.exe"}
     for action in (
         lambda: desk.key("Return", "battle"),
         lambda: desk.type("text", "battle"),
@@ -1272,9 +1272,9 @@ def test_latest_shot_is_scoped_to_compositor(tmp_path, monkeypatch):
     first = screen.capture(window)
     other = replace(first, id="1-newer", instance="second")
     (screen.shots_dir() / f"{other.id}.json").write_text(json.dumps(asdict(other)))
-    assert screen.latest(window.address, instance="first") == first
-    assert screen.latest(window.address, instance="second") == other
-    assert screen.latest(window.address, instance="third") is None
+    assert screen.latest(window) == first
+    assert screen.latest(replace(window, instance="second")) == other
+    assert screen.latest(replace(window, instance="third")) is None
 
 
 @pytest.mark.parametrize("hidden,expected", [(False, "agent"), (True, "agent-hidden")])
@@ -1319,3 +1319,30 @@ def test_window_snapshot_pins_one_compositor_across_queries(monkeypatch):
     monkeypatch.setattr(hypr, "run_hyprctl", run)
     assert hypr.Hyprland(run).windows() == []
     assert selected == ["chosen"] * 4
+
+
+def test_a_new_window_at_a_reused_address_has_no_prior_shot(tmp_path, monkeypatch):
+    # Hyprland hands a closed window's address to a later window: that window has no shot yet, and is not stale.
+    monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path))
+    closed = replace(win(), stable_id="7", pid=100)
+    fake_grim(monkeypatch, (closed.width, closed.height))
+    screen.capture(closed)
+    reused = replace(closed, stable_id="8", pid=200)
+    Desk._check_identity(reused)
+    assert screen.latest(reused) is None
+
+
+def test_keys_reach_a_new_window_at_a_reused_address(tmp_path, monkeypatch):
+    desk, fake, _, _ = make_desk(tmp_path, monkeypatch)
+    fake.clients[0] = {**CLIENT, "pid": 999}
+    desk.key("Return", "battle")
+
+
+def test_a_changed_window_with_the_same_identity_is_still_stale(tmp_path, monkeypatch):
+    monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path))
+    window = replace(win(), stable_id="7", pid=100)
+    fake_grim(monkeypatch, (window.width, window.height))
+    shot = screen.capture(window)
+    assert screen.latest(window) == shot
+    with pytest.raises(screen.StaleShot, match="has changed since shot"):
+        Desk._check_identity(replace(window, cls="other"))

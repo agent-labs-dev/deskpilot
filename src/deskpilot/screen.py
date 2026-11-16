@@ -85,6 +85,16 @@ class Shot:
                 f"shot {self.id}: take a new shot"
             )
 
+    def of(self, window: Window) -> bool:
+        """Whether this shot is of `window` itself. Hyprland gives a closed window's address to a later one, so the
+        address alone does not name a window: its compositor, process and stable id do too."""
+        return (self.address, self.instance, self.pid, self.stable_id) == (
+            window.address,
+            window.instance,
+            window.pid,
+            window.stable_id,
+        )
+
     def check_identity(self, window: Window) -> None:
         """Titles may change during navigation; stable ids, process ids and instances identify the target."""
         if (self.stable_id, self.pid, self.cls, self.instance) != (
@@ -175,11 +185,11 @@ def load(shot_id: str, folder: Path | None = None) -> Shot:
         raise StaleShot(f"no shot {shot_id}: take a new one") from error
 
 
-def latest(address: str, folder: Path | None = None, *, instance: str | None = None) -> Shot | None:
-    records = _records(shots_dir(folder), address)
-    for record in reversed(records):
+def latest(window: Window, folder: Path | None = None) -> Shot | None:
+    """The newest shot of `window` itself, or None. A shot of an earlier window at the same address is not one."""
+    for record in reversed(_records(shots_dir(folder), window.address)):
         shot = load(record.stem, folder)
-        if instance is None or shot.instance == instance:
+        if shot.of(window):
             return shot
     return None
 

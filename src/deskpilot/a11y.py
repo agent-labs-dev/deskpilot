@@ -557,7 +557,9 @@ def _write_records(
         path.parent.mkdir(parents=True, exist_ok=True)
         payload = {
             "address": window.address,
+            "instance": window.instance,
             "pid": window.pid,
+            "stable_id": window.stable_id,
             "snapshot": snapshot_id,
             "elements": records,
             "gtk3": gtk3,
@@ -676,6 +678,14 @@ def _load_record(window: Window, element_id: str, snapshot_id: str | None) -> tu
     path = _elements_path(window)
     try:
         payload = json.loads(path.read_text(encoding="utf-8"))
+        # Hyprland gives a closed window's address to a later one: a snapshot of another window names nothing here.
+        if [payload.get(key) for key in ("address", "instance", "pid", "stable_id")] != [
+            window.address,
+            window.instance,
+            window.pid,
+            window.stable_id,
+        ]:
+            raise KeyError(element_id)
         record = payload.get("elements", {}).get(element_id)
         if not isinstance(record, dict) or not {"bus", "path"} <= record.keys():
             raise KeyError(element_id)
