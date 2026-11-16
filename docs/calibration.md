@@ -31,3 +31,18 @@ plugin unload. It verifies sibling isolation, user-moved windows, pointer/focus 
 
 `scripts/containment_calibration.py SIGNATURE` and its `--negative` and `--negative-constraints` controls run only against a compositor owned by
 `scripts/nested.py`, testing agent-seat relative motion and pointer constraints.
+
+`scripts/xi2_raw_probe.c` shows which XInput2 raw events an XWayland client receives around a click, the way Wine
+reads the mouse. It needs the libX11 and libXi headers and runs only in a compositor owned by `scripts/nested.py`:
+
+```sh
+gcc scripts/xi2_raw_probe.c -lXi -lX11 -o /path/to/xi2_raw_probe
+python3 scripts/nested.py start    # note its signature
+HYPRLAND_INSTANCE_SIGNATURE=SIGNATURE hyprctl dispatch exec "/path/to/xi2_raw_probe > /path/to/events.log"
+HYPRLAND_INSTANCE_SIGNATURE=SIGNATURE uv run deskpilot shot "deskpilot xi2 probe"
+HYPRLAND_INSTANCE_SIGNATURE=SIGNATURE uv run deskpilot click "deskpilot xi2 probe" 100 100 --scale 1
+python3 scripts/nested.py stop SIGNATURE
+```
+
+Each line of the log is one event with a monotonic time in microseconds. A click that reaches Wine correctly shows a
+`RawMotion` at the target before its `RawButtonPress` and `ButtonPress`. Stopping the nested compositor ends the probe.
