@@ -8,11 +8,13 @@ from __future__ import annotations
 
 import argparse
 import base64
+import concurrent.futures
 import contextlib
 import json
 import os
 import re
 import shutil
+import signal
 import subprocess
 import time
 from pathlib import Path
@@ -21,6 +23,7 @@ from deskpilot import clipboard, keys, session
 from deskpilot.a11y import A11yError
 from deskpilot.desk import Desk
 from deskpilot.hypr import AmbiguousWindow
+from deskpilot.plugin import PluginError
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -119,6 +122,71 @@ def calibrate_wine_x_stack(desk, wine, scratch, events, verify):
     stolen = [row for row in xlog.read_text().splitlines()[before_x:] if " ButtonPress " in row]
     verify("wine_click_over_focused_x11", f"DOWN {x},{y}" in rows and f"UP {x},{y}" in rows and not stolen)
     verify("wine_click_x11_focus_kept", desk.window(other.address).focused)
+
+
+def calibrate_x_stack_move(desk, output, compositor, verify):
+    """A floating X11 window that moves itself away from a press's point while the press waits on the X stack. Its move
+    request reaches the window manager while the press raises the target there, so handling it moves the window before
+    the press goes out. The check after the raise must see the move and refuse the press as covered, not send it to the
+    point the window has left. Stopping the private compositor holds the press and the move until both are pending, so
+    the press runs first on its return."""
+    scratch = output.parent / "x-stack-calibration"
+    scratch.mkdir(parents=True, exist_ok=True)
+    subprocess.run(["keeper", "claim", str(scratch)], check=True, capture_output=True)
+    binary = scratch / "xi2-probe"
+    subprocess.run(
+        ["cc", str(ROOT / "scripts/xi2_raw_probe.c"), "-lXi", "-lX11", "-o", str(binary)],
+        check=True,
+        capture_output=True,
+    )
+    logs = [scratch / "under.log", scratch / "mover.log"]
+    pidfile = scratch / "mover.pid"
+    under = desk.launch(["sh", "-c", 'exec "$0" > "$1"', str(binary), str(logs[0])])
+    mover = desk.launch(["sh", "-c", 'echo $$ > "$2"; exec "$0" > "$1"', str(binary), str(logs[1]), str(pidfile)])
+    hypr = desk.hypr
+    for win in (under, mover):
+        hypr._dispatch(
+            f'hl.dsp.window.move({{workspace="8", follow=false, window="address:{win.address}"}})',
+            f"movetoworkspacesilent 8,address:{win.address}",
+        )
+    hypr._dispatch('hl.dsp.focus({workspace="8"})', "workspace 8")
+    hypr._dispatch(
+        f'hl.dsp.window.float({{action="enable", window="address:{mover.address}"}})',
+        f"setfloating address:{mover.address}",
+    )
+    desk.focus(under.address)
+    deadline = time.monotonic() + 5
+    while time.monotonic() < deadline:
+        m, u = desk.window(mover.address), desk.window(under.address)
+        gx, gy = m.x + m.width // 2, m.y + m.height // 2
+        if u.focused and m.visible and u.x < gx < u.x + u.width and u.y < gy < u.y + u.height:
+            break
+        time.sleep(0.05)
+    verify("x11_mover_floats_over_focused_x11", u.focused and m.visible and u.x < gx < u.x + u.width)
+    with concurrent.futures.ThreadPoolExecutor(1) as pool:
+        started = time.monotonic()
+        click = pool.submit(desk.plugin.path, mover.address, "plain", [f"m{gx},{gy}", "d1000", "p272", "r272"])
+        time.sleep(0.3)
+        # The enter raised the mover in the X stack; focusing it and then the window under it puts that one back on top.
+        desk.focus(mover.address)
+        desk.focus(under.address)
+        os.kill(compositor, signal.SIGSTOP)
+        try:
+            # Past the press's due time, so its timer is ready before the move request arrives.
+            time.sleep(max(0.0, started + 1.5 - time.monotonic()))
+            os.kill(int(pidfile.read_text()), signal.SIGUSR1)
+            time.sleep(0.3)
+        finally:
+            os.kill(compositor, signal.SIGCONT)
+        try:
+            outcome = click.result(timeout=10)
+        except PluginError as error:
+            outcome = {"error": str(error), "code": error.code}
+    time.sleep(0.3)
+    pressed = [log.name for log in logs if " ButtonPress " in log.read_text()]
+    moved = "move" in logs[1].read_text()
+    verify("x11_self_move_pending", moved)
+    verify("x11_self_move_press_refused", outcome.get("code") == "covered" and not pressed)
 
 
 def keyboard_control(output, *args):
@@ -722,6 +790,7 @@ def main() -> int:  # noqa: PLR0915 - a bounded, sequential live calibration wit
             calibrate_x11_pointer(desk, chrome, target.address, verify, args.output)
         if args.wine:
             calibrate_wine(desk, args.output, verify)
+            calibrate_x_stack_move(desk, args.output, private_pid, verify)
     except Exception as error:
         checks["error"] = f"{type(error).__name__}: {error}"
         if desk and "target" in locals():
