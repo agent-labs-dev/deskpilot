@@ -308,6 +308,26 @@ def calibrate_native_seat_keys(desk, chrome, browser, verify, output):  # noqa: 
             ime.stdin.flush()
             ime.wait(timeout=5)
 
+        # A grab clears no client's modifiers, so a Ctrl Chrome got before an input method grabbed the keyboard is still
+        # Chrome's. With the plugin loaded after the grab and before anything changes them, it has no record of what
+        # Chrome holds, and the action's click on a sibling window must still not carry that Ctrl.
+        desk.focus(companion.address)
+        tabs = page_tabs(desk, trigger.address)
+        ime, forward = start_ime("later")
+        send("key 29 1")
+        send("mods 4")
+        forward("grab")
+        desk.plugin.unload()
+        desk.plugin.load()
+        desk.click(trigger.address, None, None, element=link.id)
+        grabbed_ctrl_unrecorded = link_click_isolated(desk, trigger.address, tabs, 3)
+        send("mods 0")
+        send("key 29 0")
+        stop_ime(ime)
+        # The input method took that release, so Chrome is given a Ctrl press and release of its own.
+        for command in ("key 29 1", "mods 4", "mods 0", "key 29 0"):
+            send(command)
+
         # The same, with the plugin loaded after the Ctrl was kept and before the input method forwarded anything, so it
         # has no record of what Chrome was sent. The input method grabs once the user's keyboard has made itself the
         # seat's keyboard (a Shift), as an input method does when a text field takes focus, so the seat's keyboard is
@@ -349,6 +369,7 @@ def calibrate_native_seat_keys(desk, chrome, browser, verify, output):  # noqa: 
         verify("chrome_seat_pointer_ctrl_held", pressed is not None and '"ctrlKey":false' in pressed.text, stop=False)
         verify("chrome_seat_pointer_prior_ctrl_isolated", prior_ctrl, stop=False)
         verify("chrome_seat_pointer_other_keyboard_ctrl_isolated", other_keyboard_ctrl, stop=False)
+        verify("chrome_seat_pointer_grabbed_ctrl_isolated_unrecorded", grabbed_ctrl_unrecorded, stop=False)
         verify("chrome_ime_kept_ctrl_not_restored_unrecorded", ime_ctrl_kept_unrecorded, stop=False)
         verify("chrome_ime_kept_ctrl_not_restored", ime_ctrl_kept)
     finally:

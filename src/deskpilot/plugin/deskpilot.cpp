@@ -89,7 +89,6 @@
 // {"ok":true,"pending":<ticket>}, collected with `hyprctl deskpilot wait <ticket>`, since hyprctl stops reading a
 // reply after five seconds. Replies are JSON. `hyprctl deskpilot status` reports the plugin's version and queue.
 
-#include <hyprland/src/protocols/InputMethodV2.hpp>
 #include <hyprland/src/protocols/PrimarySelection.hpp>
 #include <hyprland/src/plugins/PluginAPI.hpp>
 
@@ -644,31 +643,34 @@ namespace {
         }
     }
 
-    // Hyprland keeps no record of what it sent before the plugin loaded, so a keyboard sent nothing since gets what the
-    // seat's routing sends a client now. A client without keyboard focus was sent setKeyboardFocus's leave. Under an input
-    // method's keyboard grab, onKeyboardMod gives the user's keyboards to the input method and sends the focused client
-    // only the modifiers of the input method's own keyboard, as they are. Only that path makes such a keyboard the seat's
-    // keyboard, so while the seat's keyboard is another, the input method has forwarded no modifiers and the client has
-    // been sent none of the user's since the grab: it gets none. Otherwise onKeyboardMod merges in the user's other
-    // keyboards.
-    SClientMods sentMods(const SP<CWLKeyboardResource>& resource) {
+    // What a keyboard was sent, or nothing when Hyprland has sent it no modifiers since the plugin loaded. That state is
+    // unknown, not empty: nothing records what a client was sent before (not CWLKeyboardResource, CSeatManager or
+    // libwayland), and the seat's state now cannot stand in for it, since an input method's grab, taken after the
+    // client got a modifier, leaves the client holding it while the seat's routing would send it none. So each use
+    // takes the outcome that cannot make a shortcut: isolation treats it as possibly held (modsMayBeHeld) and clears it,
+    // and restoring gives back no held modifiers (restoredMods); a modifier the user really holds reaches the client
+    // again with their next modifier change. It lasts until Hyprland sends that keyboard modifiers, on its next
+    // modifier change or keyboard focus change, and until then a pointer action on a sibling window of the focused
+    // client holds the user's keys as for a held modifier.
+    std::optional<SClientMods> sentMods(const SP<CWLKeyboardResource>& resource) {
         if (const auto SENT = std::ranges::find_if(g_sentMods, [&resource](const auto& sent) { return sent.keyboard.get() == resource.get(); }); SENT != g_sentMods.end())
             return SENT->mods;
+        return std::nullopt;
+    }
+
+    bool modsMayBeHeld(const SP<CWLKeyboardResource>& resource) {
+        const auto MODS = sentMods(resource);
+        return !MODS || (MODS->depressed | MODS->latched) != 0;
+    }
+
+    // An unknown keyboard gets the seat keyboard's locks and layout group, which hold no key down.
+    SClientMods restoredMods(const SP<CWLKeyboardResource>& resource) {
+        if (const auto MODS = sentMods(resource))
+            return *MODS;
         const auto KEYBOARD = g_pSeatManager->m_keyboard.lock();
         if (!KEYBOARD)
             return {};
-        auto       mods  = KEYBOARD->m_modifiersState;
-        const auto FOCUS = g_pSeatManager->m_state.keyboardFocus.lock();
-        if (!FOCUS || !resource->m_owner || resource->m_owner->client() != FOCUS->client())
-            return {0, mods.latched, mods.locked, mods.group};
-        const auto IME = g_pInputManager->m_relay.m_inputMethod.lock();
-        if (IME && IME->hasGrab()) {
-            if (KEYBOARD->isVirtual() && g_pInputManager->shouldIgnoreVirtualKeyboard(KEYBOARD))
-                return {mods.depressed, mods.latched, mods.locked, mods.group};
-            return {0, 0, mods.locked, mods.group};
-        }
-        mods.depressed |= g_pInputManager->hyprlandModsToXkb(KEYBOARD, g_pInputManager->getModsFromAllKBs());
-        return {mods.depressed, mods.latched, mods.locked, mods.group};
+        return {0, 0, KEYBOARD->m_modifiersState.locked, KEYBOARD->m_modifiersState.group};
     }
 
     // The plugin's own modifiers for a keyboard, which leave the record of Hyprland's alone.
@@ -1823,15 +1825,14 @@ namespace {
         const auto KEYBOARDS = keyboardsOf(CLIENT);
         const bool HELD      = std::ranges::any_of(KEYBOARDS, [](const auto& weak) {
             const auto RESOURCE = weak.lock();
-            const auto MODS     = RESOURCE ? sentMods(RESOURCE) : SClientMods{};
-            return (MODS.depressed | MODS.latched) != 0;
+            return RESOURCE && modsMayBeHeld(RESOURCE);
         });
         if (!WINDOW->backend().isX11() && (!FOCUS || FOCUS->client() != CLIENT || !HELD))
             return;
         op.modifierKeyboards = KEYBOARDS;
         for (const auto& weak : op.modifierKeyboards) {
             if (const auto resource = weak.lock()) {
-                const auto MODS = sentMods(resource);
+                const auto MODS = restoredMods(resource);
                 sendOwnMods(*resource, {0, 0, MODS.locked, MODS.group});
             }
         }
@@ -1840,7 +1841,7 @@ namespace {
     void restorePointerMods(SOp& op) {
         for (const auto& weak : op.modifierKeyboards) {
             if (const auto resource = weak.lock())
-                sendOwnMods(*resource, sentMods(resource));
+                sendOwnMods(*resource, restoredMods(resource));
         }
     }
 
@@ -2784,7 +2785,7 @@ namespace {
     void sendRealMods(SKeyOp& op) {
         for (const auto& weak : op.keyboards) {
             if (const auto resource = weak.lock())
-                sendOwnMods(*resource, sentMods(resource));
+                sendOwnMods(*resource, restoredMods(resource));
         }
     }
 
