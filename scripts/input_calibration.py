@@ -65,8 +65,60 @@ def calibrate_wine(desk, output, verify):
     desk.click(target.address, 100, 100, hidden=True)
     time.sleep(0.2)
     rows = events.read_text().splitlines()
-    verify("wine_pointer_buttons", "DOWN" in rows and "UP" in rows)
+    verify("wine_pointer_buttons", "DOWN 100,100" in rows and "UP 100,100" in rows)
     verify("wine_raw_pointer_buttons", "RAW_DOWN" in rows and "RAW_UP" in rows)
+    calibrate_wine_x_stack(desk, target, scratch, events, verify)
+
+
+def calibrate_wine_x_stack(desk, wine, scratch, events, verify):
+    """A floating Wine window over a tiled X11 window that has focus: Hyprland draws Wine on top, but focusing the tiled
+    window raised it to the top of the X stack, and Xwayland gives a press to the X window on top there. A default click
+    on Wine must reach Wine at its point, as the Wine log shows, not the X window under it, and keep focus where it
+    was."""
+    binary = scratch / "xi2-probe"
+    subprocess.run(
+        ["cc", str(ROOT / "scripts/xi2_raw_probe.c"), "-lXi", "-lX11", "-o", str(binary)],
+        check=True,
+        capture_output=True,
+    )
+    xlog = scratch / "xi2.log"
+    other = desk.launch(["sh", "-c", 'exec "$0" > "$1"', str(binary), str(xlog)])
+    hypr = desk.hypr
+    # Both alone on a workspace of their own, so the tiled X11 window fills it and the floating Wine one is over it.
+    for win in (other, wine):
+        hypr._dispatch(
+            f'hl.dsp.window.move({{workspace="9", follow=false, window="address:{win.address}"}})',
+            f"movetoworkspacesilent 9,address:{win.address}",
+        )
+    hypr._dispatch('hl.dsp.focus({workspace="9"})', "workspace 9")
+    hypr._dispatch(
+        f'hl.dsp.window.float({{action="enable", window="address:{wine.address}"}})',
+        f"setfloating address:{wine.address}",
+    )
+    desk.focus(other.address)
+    deadline = time.monotonic() + 5
+    while time.monotonic() < deadline:
+        w, o = desk.window(wine.address), desk.window(other.address)
+        left, top = max(w.x, o.x), max(w.y, o.y)
+        right, bottom = min(w.x + w.width, o.x + o.width), min(w.y + w.height, o.y + o.height)
+        if o.focused and w.visible and right - left > 20 and bottom - top > 20:
+            break
+        time.sleep(0.05)
+    verify("wine_floats_over_focused_x11", o.focused and right - left > 20 and bottom - top > 20)
+    x, y = (left + right) // 2 - w.x, (top + bottom) // 2 - w.y
+    before_wine = len(events.read_text().splitlines())
+    before_x = len(xlog.read_text().splitlines())
+    desk.shot(wine.address)
+    desk.click(wine.address, x, y, scale=1.0)
+    deadline = time.monotonic() + 3
+    while time.monotonic() < deadline:
+        rows = events.read_text().splitlines()[before_wine:]
+        if f"UP {x},{y}" in rows:
+            break
+        time.sleep(0.05)
+    stolen = [row for row in xlog.read_text().splitlines()[before_x:] if " ButtonPress " in row]
+    verify("wine_click_over_focused_x11", f"DOWN {x},{y}" in rows and f"UP {x},{y}" in rows and not stolen)
+    verify("wine_click_x11_focus_kept", desk.window(other.address).focused)
 
 
 def keyboard_control(output, *args):

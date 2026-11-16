@@ -1318,17 +1318,20 @@ namespace {
         return true;
     }
 
+    bool xTargetAt(); // defined with the X helpers, below
+
     // The target must be clear at the point and still hold the seat's pointer focus (where a press goes) before
-    // anything is sent to it.
+    // anything is sent to it, and for an XWayland window be the X window the X server gives input at that point to.
     bool targetUnderPointer() {
         if (!clearAt())
             return false;
         const auto UNDER = windowUnderPointer();
-        if (UNDER && reinterpret_cast<uintptr_t>(UNDER.get()) == g_op->window)
-            return true;
-        g_op->error = std::format("the pointer focus is on {}, not the target, at {},{}", UNDER ? describe(UNDER) : "no window", g_op->target.x, g_op->target.y);
-        g_op->code  = "covered";
-        return false;
+        if (!UNDER || reinterpret_cast<uintptr_t>(UNDER.get()) != g_op->window) {
+            g_op->error = std::format("the pointer focus is on {}, not the target, at {},{}", UNDER ? describe(UNDER) : "no window", g_op->target.x, g_op->target.y);
+            g_op->code  = "covered";
+            return false;
+        }
+        return xTargetAt();
     }
 
     // `pos` in the coordinates of `surface`, as mouseMoveUnified computes them: from the surface's global box, in buffer
@@ -1401,6 +1404,10 @@ namespace {
                 hiddenEnter(*g_op, pos);
             return;
         }
+        // An XWayland target is raised in the X stack before the pointer enters it, or Xwayland gives the enter to the X
+        // window that was on top there. targetUnderPointer checks it again after.
+        if (clearAt())
+            xTargetAt();
         Pointer::mgr()->warpTo(pos);
         enterUnderPointer();
         if (targetUnderPointer())
@@ -1435,7 +1442,8 @@ namespace {
         sendMotion();
     }
 
-    // The seat call processMouseDownNormal ends with, without its refocus and raise before it.
+    // The seat call processMouseDownNormal ends with, without its refocus before it. An XWayland target gets its raise
+    // (see xTargetAt) from targetUnderPointer.
     void press(uint32_t button) {
         if (!onElementSurface(*g_op, g_op->target))
             return;
@@ -1684,6 +1692,52 @@ namespace {
             xcb_disconnect(g_x);
         g_x = xcb_connect(std::getenv("DISPLAY"), nullptr); // Hyprland exports its Xwayland display to itself
         return !xcb_connection_has_error(g_x);
+    }
+
+    // Whether the X server gives pointer input at the action's point to the target's X window, raising it there first
+    // when it does not. Xwayland sends a press to the X window on top at its pointer in X stacking order, and Hyprland
+    // changes that order only when a window takes focus: an X window focused after the target is above it in X even
+    // where Hyprland draws the target on top, a floating window over a tiled one, so a press sent as it is reaches that
+    // other window. processMouseDownNormal raises the window it refocuses before every press of the user's; this does
+    // that raise alone, with no focus change. In rootless Xwayland the X stack only routes input, so the raise changes
+    // nothing on screen, and it stays: the X stack then agrees with what the user sees, as it does after their own
+    // click there, and putting it back would send their next click at that point to the window they cannot see. False,
+    // with the action's error set, when the X server cannot be asked or another X window is still on top there.
+    bool xTargetAt() {
+        const auto WINDOW = windowOf(*g_op);
+        if (!WINDOW || !WINDOW->backend().isX11())
+            return true;
+        const auto XID   = xidOf(WINDOW);
+        const auto LOCAL = localOn(WINDOW->wlSurface()->resource(), g_op->target);
+        if (!XID || !LOCAL || !xOpen()) {
+            g_op->error = "cannot reach the X server for this XWayland window";
+            return false;
+        }
+        const auto ROOT  = xcb_setup_roots_iterator(xcb_get_setup(g_x)).data->root;
+        const auto UNDER = [&] {
+            auto* reply = xcb_translate_coordinates_reply(
+                g_x, xcb_translate_coordinates(g_x, XID, ROOT, static_cast<int16_t>(LOCAL->x), static_cast<int16_t>(LOCAL->y)), nullptr);
+            const uint32_t CHILD = reply ? reply->child : XCB_WINDOW_NONE;
+            free(reply);
+            return CHILD;
+        };
+        auto under = UNDER();
+        if (under == XID)
+            return true;
+        if (!WINDOW->backend().traits().overrideRedirect) {
+            // Hyprland's raise keeps its window manager's own stacking record and client list right. It goes over the
+            // window manager's connection, so the same raise goes over this one too, which the server then answers the
+            // check after.
+            WINDOW->backend().restackToTop();
+            const uint32_t ABOVE = XCB_STACK_MODE_ABOVE;
+            xcb_configure_window(g_x, XID, XCB_CONFIG_WINDOW_STACK_MODE, &ABOVE);
+            under = UNDER();
+            if (under == XID)
+                return true;
+        }
+        g_op->error = std::format("X window 0x{:x} is on top of the target in the X stack at {},{}", under, g_op->target.x, g_op->target.y);
+        g_op->code  = "covered";
+        return false;
     }
 
     uint32_t xFocus() {
