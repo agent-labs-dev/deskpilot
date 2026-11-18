@@ -5,21 +5,14 @@ own pointer and keyboard focus where they were. The CLI and the MCP server are t
 
 ## Checks
 
-```sh
-uv sync --locked
-uv run ruff check . && uv run ruff format --check .
-uv run ty check
-uv run pytest
-python3 scripts/changelog.py --check
-claude plugin validate --strict .   # if the Claude Code CLI is installed
-```
-
-CI also runs actionlint, zizmor and gitleaks. The plugin is not built in CI: it needs the exact Hyprland it loads
-into, so check a change to `plugin/deskpilot.cpp` with `deskpilot plugin load` on a real session. To check one
-without touching the user's screen, `python3 scripts/nested.py start` runs a throwaway Hyprland inside theirs, its
-window on the hidden `special:dptest` workspace, with a headless output to act on and capture
-(`HYPRLAND_INSTANCE_SIGNATURE=<signature>` for deskpilot, `WAYLAND_DISPLAY=<wayland> grim -o DPTEST` to see it);
-`python3 scripts/nested.py stop <signature>` ends it.
+- `scripts/gate`: ruff, ty, pytest and the changelog check. `scripts/gate --changed` lints only files changed against
+  `origin/main`. Run `claude plugin validate --strict .` too when the Claude Code CLI is installed.
+- CI also runs actionlint, zizmor and gitleaks. The plugin is not built in CI: it needs the exact Hyprland it loads
+  into, so check a change to `plugin/deskpilot.cpp` with `deskpilot plugin load` on a real session. To check one
+  without touching the user's screen, `python3 scripts/nested.py start` runs a throwaway Hyprland inside theirs, its
+  window on the hidden `special:dptest` workspace, with a headless output to act on and capture
+  (`HYPRLAND_INSTANCE_SIGNATURE=<signature>` for deskpilot, `WAYLAND_DISPLAY=<wayland> grim -o DPTEST` to see it);
+  `python3 scripts/nested.py stop <signature>` ends it.
 
 ## Layout
 
@@ -78,4 +71,4 @@ window on the hidden `special:dptest` workspace, with a headless output to act o
 
 ## Standards
 
-- `repo-standards`: the RS-* requirements every cjber repo meets (repo, Actions and security settings, rulesets, CI hardening, community files), a skill in cjber/skills whose `audit.py` checks this repo
+- `repo-standards`: the RS-* requirements every cjber and agent-labs-dev repo meets; its `audit.py` checks this repo.

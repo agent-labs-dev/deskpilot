@@ -1,0 +1,17 @@
+#!/bin/sh
+# The fast local check. `scripts/gate --changed` lints only the Python files this branch changed against
+# origin/main; the type check and the tests (seconds) always run whole.
+set -eu
+cd "$(dirname "$0")/.."
+uv sync --locked --quiet
+if [ "${1:-}" = "--changed" ]; then
+  files=$(git diff --name-only --diff-filter=d "$(git merge-base origin/main HEAD)" -- '*.py')
+  [ -z "$files" ] || { uv run ruff check $files && uv run ruff format --check $files; }
+  uv run ty check
+  uv run pytest
+else
+  uv run ruff check . && uv run ruff format --check .
+  uv run ty check
+  uv run pytest
+fi
+python3 scripts/changelog.py --check
