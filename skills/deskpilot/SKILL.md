@@ -72,9 +72,10 @@ For an app that needs its own X server or clipboard, set `DESKPILOT_AGENT=NAME` 
 separate from the user's desktop. `--hidden` may focus a window inside it without changing the user's view.
 Use a stable agent name to reuse its persistent profile. Stop it with `deskpilot --session stop` when done.
 For browsers, prefer fastbrowse. A new isolated profile does not contain the user's signed-in browser sessions.
-`eval "$(deskpilot --session env)"` exports that desktop's `WAYLAND_DISPLAY`, `HYPRLAND_INSTANCE_SIGNATURE`, bus
-addresses and profile directories for other tools, such as `wf-recorder`. In a container with no compositor
-(`DESKPILOT_STANDALONE=1`, as in deskpilot's image) `--session` runs the desktop on the host's vkms display instead.
+`eval "$(deskpilot --session env)"` exports that desktop's `WAYLAND_DISPLAY`, `HYPRLAND_INSTANCE_SIGNATURE`,
+runtime directory and bus addresses for other tools, such as `wf-recorder`; stop what you start that way yourself.
+In a container with no compositor (`DESKPILOT_STANDALONE=1`, as in deskpilot's image) `--session` runs the desktop
+on the host's vkms display instead.
 
 For native GTK 4 apps, `key` and `type` support `--agent-keyboard` (`agent_keyboard` over MCP). This uses the
 independent seat's keyboard and the active keymap, including while the user's keyboard focus is in the same app.

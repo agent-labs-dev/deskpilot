@@ -128,9 +128,9 @@ starting with `DESKPILOT_AGENT=NAME deskpilot --session launch APP`. End it with
 [Hidden-window behaviour, adoption and private desktops](docs/input-routing.md)
 
 `eval "$(deskpilot --session env)"` starts that desktop if needed and exports what reaches it (`WAYLAND_DISPLAY`,
-`HYPRLAND_INSTANCE_SIGNATURE`, `DBUS_SESSION_BUS_ADDRESS`, `AT_SPI_BUS_ADDRESS`, `XDG_RUNTIME_DIR`, the profile
-directories and the session token), so other tools such as `grim` or `wf-recorder` can use it; `--json` prints it as
-JSON.
+`HYPRLAND_INSTANCE_SIGNATURE`, `XDG_RUNTIME_DIR`, `DBUS_SESSION_BUS_ADDRESS` and `AT_SPI_BUS_ADDRESS`), so other tools
+such as `grim` or `wf-recorder` can use it; `--json` prints it as JSON. Your shell keeps its own profile, and `stop`
+leaves what you started this way running.
 
 ### With no desktop: a container
 

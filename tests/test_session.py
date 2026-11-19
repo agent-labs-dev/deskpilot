@@ -830,16 +830,29 @@ def test_standalone_needs_no_parent_compositor(monkeypatch):
     assert session._parent() == ""
 
 
-def test_env_prints_the_session_environment_as_shell_exports(monkeypatch, capsys):
+def test_env_prints_only_what_reaches_the_desktop_as_shell_exports(monkeypatch, capsys):
     from deskpilot import cli
 
-    for name in ("WAYLAND_DISPLAY", "HOME"):  # restored after main() puts the session's values in os.environ
-        monkeypatch.setenv(name, "")
-    monkeypatch.setattr(session, "environment", lambda: {"WAYLAND_DISPLAY": "wayland-1", "HOME": "/a b"})
+    for name in ("WAYLAND_DISPLAY", "DBUS_SESSION_BUS_ADDRESS", "HOME", session.TOKEN_ENV):
+        monkeypatch.setenv(name, "")  # restored after main() puts the session's values in os.environ
+    full = {
+        "WAYLAND_DISPLAY": "wayland-1",
+        "DBUS_SESSION_BUS_ADDRESS": "unix:path=/run/a b",
+        "HOME": "/private/home",
+        session.TOKEN_ENV: "secret",
+    }
+    monkeypatch.setattr(session, "environment", lambda: full)
     assert cli.main(["--session", "env"]) == 0
-    assert capsys.readouterr().out.splitlines() == ["export HOME='/a b'", "export WAYLAND_DISPLAY=wayland-1"]
+    # The token would make `stop` end the caller's shell, and the profile would move its HOME.
+    assert capsys.readouterr().out.splitlines() == [
+        "export WAYLAND_DISPLAY=wayland-1",
+        "export DBUS_SESSION_BUS_ADDRESS='unix:path=/run/a b'",
+    ]
     assert cli.main(["--session", "--json", "env"]) == 0
-    assert json.loads(capsys.readouterr().out) == {"WAYLAND_DISPLAY": "wayland-1", "HOME": "/a b"}
+    assert json.loads(capsys.readouterr().out) == {
+        "WAYLAND_DISPLAY": "wayland-1",
+        "DBUS_SESSION_BUS_ADDRESS": "unix:path=/run/a b",
+    }
 
 
 def test_env_without_a_session_is_refused(capsys):

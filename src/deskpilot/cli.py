@@ -319,8 +319,9 @@ def build_parser() -> argparse.ArgumentParser:
     sub.add_parser("stop", help="close this agent's launched apps and return its adopted windows")
     sub.add_parser(
         "env",
-        help="with --session, start this agent's private desktop if it is not running and print the environment that"
-        " reaches it, as shell exports (or JSON with --json)",
+        help="with --session, start this agent's private desktop if it is not running and print what another tool needs"
+        " to reach it: its Wayland display, Hyprland instance, runtime directory and buses, as shell exports (or JSON"
+        " with --json)",
     )
 
     sub.add_parser("cursor", help="print the cursor's global position")
@@ -498,7 +499,8 @@ def main(argv: list[str] | None = None) -> int:
         except EXPECTED as error:
             return _fail(error_code(error), str(error), args.json)
         if args.cmd == "env":
-            _print(env if args.json else [f"export {k}={shlex.quote(v)}" for k, v in sorted(env.items())], args.json)
+            reach = {k: env[k] for k in session.REACH_ENV if k in env}
+            _print(reach if args.json else [f"export {k}={shlex.quote(v)}" for k, v in reach.items()], args.json)
             return 0
     elif args.cmd == "env":
         return _fail("invalid", "env needs --session", args.json)

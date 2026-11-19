@@ -238,6 +238,16 @@ def parent_instance() -> str:
         raise
 
 
+# What another tool needs to reach the session's desktop, as `deskpilot --session env` prints it. Never the token:
+# `stop` ends every process carrying it, which would include the caller's own shell, nor the profile directories,
+# which would move the caller's HOME.
+REACH_ENV = (
+    "WAYLAND_DISPLAY",
+    "HYPRLAND_INSTANCE_SIGNATURE",
+    "XDG_RUNTIME_DIR",
+    "DBUS_SESSION_BUS_ADDRESS",
+    "AT_SPI_BUS_ADDRESS",
+)
 VERIFIED_ENV = (
     TOKEN_ENV,
     "WAYLAND_DISPLAY",
