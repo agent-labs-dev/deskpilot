@@ -85,6 +85,10 @@ jobs:
           done
           defaults write com.apple.TextEdit NSShowAppCentricOpenPanelInsteadOfUntitledFile -bool false
           uv run --no-sync python -c 'import ApplicationServices as a, Quartz as q; print("accessibility", a.AXIsProcessTrusted(), "screen", q.CGPreflightScreenCaptureAccess(), "post", q.CGPreflightPostEventAccess())'
+      - name: Probe macOS event routes
+        if: runner.os == 'macOS'
+        continue-on-error: true
+        run: uv run --no-sync python scripts/probe_macos.py
       - name: Drive a real window through the CLI
         run: uv run --no-sync python scripts/smoke_native.py
 
