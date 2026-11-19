@@ -84,6 +84,7 @@ jobs:
             sudo sqlite3 "/Library/Application Support/com.apple.TCC/TCC.db" "INSERT OR REPLACE INTO access VALUES($row);"
           done
           defaults write com.apple.TextEdit NSShowAppCentricOpenPanelInsteadOfUntitledFile -bool false
+          uv run --no-sync python -c 'import ApplicationServices as a, Quartz as q; print("accessibility", a.AXIsProcessTrusted(), "screen", q.CGPreflightScreenCaptureAccess(), "post", q.CGPreflightPostEventAccess())'
       - name: Drive a real window through the CLI
         run: uv run --no-sync python scripts/smoke_native.py
 

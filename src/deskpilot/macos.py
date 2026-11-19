@@ -85,7 +85,11 @@ class MacDriver:
         found: list[Window] = []
         focused_done = False
         for entry in info:
-            if entry.get(q.kCGWindowLayer, 1) != 0 or not entry.get(q.kCGWindowAlpha, 1):
+            # App window levels run from normal (0) through floating and modal panels; the Dock, menu bar and
+            # desktop sit outside that range.
+            if not 0 <= entry.get(q.kCGWindowLayer, -1) <= q.kCGModalPanelWindowLevel or not entry.get(
+                q.kCGWindowAlpha, 1
+            ):
                 continue
             bounds = entry.get(q.kCGWindowBounds) or {}
             width, height = int(bounds.get("Width", 0)), int(bounds.get("Height", 0))
@@ -184,6 +188,12 @@ class MacDriver:
     # Input
 
     def _post(self, window: Window, event: Any, seat: bool) -> None:
+        # macOS drops posted events without a word when this app may not post them, so check first.
+        if not self.q.CGPreflightPostEventAccess():
+            raise Unavailable(
+                f"macOS has not given this app permission to send input: allow it in {SETTINGS} > Accessibility, "
+                "then run deskpilot again"
+            )
         if seat:
             self.q.CGEventPost(self.q.kCGHIDEventTap, event)
         else:
