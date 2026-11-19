@@ -37,12 +37,17 @@ NULL_PATH = "/org/a11y/atspi/null"
 MAX_ANCESTORS = 200
 CALL_TIMEOUT = 2.0
 # D-Bus errors meaning the element's app or object no longer exists, so an id that named it is stale. Any other
-# failure, such as a timeout, is the bus being unavailable.
+# failure, such as a timeout, is the bus being unavailable. GDBus, which GTK serves its tree over, answers a call on
+# the path of an accessible it has unregistered with UnknownMethod ("No such interface org.a11y.atspi.Accessible"),
+# not UnknownObject: a dialog's button read just after its click closed the dialog failed so. Every method called here
+# is one the object listed in GetInterfaces or that all accessibles have, so UnknownMethod means the object went.
 GONE_ERRORS = frozenset(
     {
         "org.freedesktop.DBus.Error.ServiceUnknown",
         "org.freedesktop.DBus.Error.NameHasNoOwner",
         "org.freedesktop.DBus.Error.UnknownObject",
+        "org.freedesktop.DBus.Error.UnknownInterface",
+        "org.freedesktop.DBus.Error.UnknownMethod",
     }
 )
 TEXT_LIMIT = 4000
@@ -98,8 +103,9 @@ _STATE_NAMES = (
 class A11yError(RuntimeError):
     """An accessibility operation failed with an actionable message. `code` is its kind: no_tree (the app exposes
     none), ambiguous (several toplevels could be the window, or several popups the element's), stale (the element or
-    its popup is gone, changed, or from an older snapshot), offscreen (it is not showing), refused (it has no
-    position) or unavailable (the accessibility bus failed)."""
+    its popup is gone, changed, or from an older snapshot), gone (the window's toplevel closed while its tree was
+    read), offscreen (it is not showing), refused (it has no position) or unavailable (the accessibility bus
+    failed)."""
 
     def __init__(self, message: str, code: str = "unavailable"):
         super().__init__(message)
@@ -534,8 +540,14 @@ def _choose_toplevel(bus: _Bus, app_bus: str, app_path: str, window: Window) -> 
     candidates = []
     names = []
     for ref in _children(bus, app_bus, app_path):
-        role = _role(bus, *ref)
-        name = _name(bus, *ref)
+        try:
+            role = _role(bus, *ref)
+            name = _name(bus, *ref)
+        except A11yError as exc:
+            if exc.code != "stale":
+                raise
+            # Another toplevel of the app, such as a dialog that just closed, went while the list was read.
+            continue
         names.append(name)
         if role.casefold() in {"frame", "window", "dialog"}:
             candidates.append((ref, role, name))
@@ -611,6 +623,16 @@ class _Placer:
         return (round(popup.sx + x), round(popup.sy + y), width, height), keys
 
 
+def _leave_out(exc: A11yError, records: dict[str, dict[str, str]], recorded: int) -> None:
+    """Drop the records a walk of an element added after the first `recorded`, when the app removed that element while
+    the tree was read, as a dialog's button goes once a click on it closes the dialog: it is no longer in the tree.
+    Any other failure is raised."""
+    if exc.code != "stale":
+        raise exc
+    for gone in list(records)[recorded:]:
+        del records[gone]
+
+
 def snapshot(
     window: Window,
     max_depth: int = 30,
@@ -665,10 +687,19 @@ def snapshot(
                         if node_count >= max_nodes:
                             truncated = True
                             break
-                        children.append(walk(child_bus, child_path, depth + 1, keys))
+                        recorded = len(records)
+                        try:
+                            children.append(walk(child_bus, child_path, depth + 1, keys))
+                        except A11yError as exc:
+                            _leave_out(exc, records, recorded)
             return Element(element_id, role, name, states, text, *bounds, tuple(children))
 
-        root = walk(root_bus, root_path, 0)
+        try:
+            root = walk(root_bus, root_path, 0)
+        except A11yError as exc:
+            if exc.code != "stale":
+                raise
+            raise A11yError(f"The window's accessible closed while its tree was read: {exc}", "gone") from exc
         # Ids are numbered afresh by each snapshot, so an id is checked against the snapshot it came from.
         if peek:
             return replace(root, truncated=truncated)

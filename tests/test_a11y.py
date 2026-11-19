@@ -383,3 +383,43 @@ def test_an_element_with_a_negative_size_has_no_bounds(tmp_path, monkeypatch):
     with pytest.raises(a11y.A11yError) as error:
         a11y.locate(window(), "e2", bus=fake)
     assert error.value.code == "offscreen"
+
+
+def _dbus_error(name):
+    return DBusErrorResponse(SimpleNamespace(header=SimpleNamespace(fields={HeaderFields.error_name: name}), body=()))
+
+
+def test_an_element_gdbus_no_longer_serves_is_stale(tmp_path, monkeypatch):
+    # GDBus answers a call on an unregistered accessible's path with UnknownMethod, "No such interface
+    # org.a11y.atspi.Accessible", as GNOME Text Editor's Save button did once its click closed the dialog (#128).
+    monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path))
+    fake = FakeBus()
+    a11y.snapshot(window(), bus=fake)
+    fake.failure = _dbus_error("org.freedesktop.DBus.Error.UnknownMethod")
+    with pytest.raises(a11y.A11yError, match="is gone") as error:
+        a11y.locate(window(), "e2", bus=fake)
+    assert error.value.code == "stale"
+
+
+def test_an_element_that_vanishes_while_the_tree_is_read_is_left_out(tmp_path, monkeypatch):
+    monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path))
+    fake = FakeBus()
+    fake.failure = _dbus_error("org.freedesktop.DBus.Error.UnknownMethod")
+    tree = a11y.snapshot(window(), bus=fake)
+    assert tree.children == ()
+    records = json.loads((tmp_path / "deskpilot" / "elements" / "0xabc.json").read_text())["elements"]
+    assert list(records) == ["e1"]
+
+
+def test_a_toplevel_that_vanishes_while_the_tree_is_read_is_gone(tmp_path, monkeypatch):
+    monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path))
+
+    class Closing(FakeBus):
+        def call(self, destination, object_path, interface, method, signature, body):
+            if object_path == "/frame" and method == "GetState":
+                raise _dbus_error("org.freedesktop.DBus.Error.UnknownMethod")
+            return super().call(destination, object_path, interface, method, signature, body)
+
+    with pytest.raises(a11y.A11yError) as error:
+        a11y.snapshot(window(), bus=Closing())
+    assert error.value.code == "gone"

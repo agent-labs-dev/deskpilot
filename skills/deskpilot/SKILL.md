@@ -138,8 +138,8 @@ result's structured `code`. An MCP tool refuses an argument it does not take.
 - `owns_clipboard`: the paste's target app holds the user's clipboard and would paste that instead. Use `type` if the
   text has no newlines or the box takes Return safely (type sends each newline as Return), or ask the user to copy
   something in another app. Never set the clipboard to get around it.
-- `stale`: the element id is from a replaced snapshot, the element's role or name changed, or the popup it is on
-  closed. Run `elements`
+- `stale`: the element id is from a replaced snapshot, the element's role or name changed, or the element or the popup
+  it is on closed, as a dialog's button does once a click on it closes the dialog. Run `elements`
   again and pick the id anew; pass ids as `SNAPSHOT:e5` so an old one cannot match a renumbered tree. To look
   again without invalidating the ids you hold, use `elements --peek`.
 - `offscreen`: the element is not showing, as in a collapsed menu or a scrolled-away row.
