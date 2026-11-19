@@ -16,7 +16,14 @@ from .backend import open_desk, owner_from_env
 from .batch import MAX_ACTIONS, Action
 from .errors import EXPECTED, error_code
 
-mcp = MCPServer("deskpilot", version=version("deskpilot"))
+mcp = MCPServer(
+    "deskpilot",
+    version=version("deskpilot"),
+    instructions=(
+        "Desktop control on Linux (Hyprland), Windows and macOS. Hidden windows (hidden, launch out of view, adopt), "
+        "paste_text and sessions are Hyprland only and return the code unavailable elsewhere."
+    ),
+)
 # The server is the agent's owner process: its apps close when it exits, unless DESKPILOT_OWNER_PID names another.
 desk = open_desk(owner=owner_from_env() or os.getpid())
 
