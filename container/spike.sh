@@ -49,8 +49,9 @@ if ! kill -0 $hypr 2>/dev/null; then
     cp "$XDG_RUNTIME_DIR"/hypr/*/hyprland.log "$OUT/hyprland-full.log"
     tail -80 "$OUT/hyprland-full.log"
     cp ~/.cache/hyprland/hyprlandCrashReport*.txt "$OUT/" 2>/dev/null
-    cat ~/.cache/hyprland/hyprlandCrashReport*.txt 2>/dev/null | head -80
-    grep -E "execve|CRIT|ssert|/dev/dri|gbm|dri\.so|EGL" "$OUT/strace.txt" | grep -v ENOENT | tail -60
+    sed -n '/Log tail/,$p' ~/.cache/hyprland/hyprlandCrashReport*.txt 2>/dev/null | tail -40
+    grep -v ENOENT "$OUT/strace.txt" | grep -v "/dev/dri\", O_RDONLY" | tail -40
+    chmod -R a+rX "$OUT"
     exit 1
 fi
 export HYPRLAND_INSTANCE_SIGNATURE=$sig
