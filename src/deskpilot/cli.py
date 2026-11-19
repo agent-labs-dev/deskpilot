@@ -214,10 +214,19 @@ def _batch_command(sub) -> None:
     s.add_argument("--hidden", action="store_true", help="act on a window this agent launched or adopted, out of view")
 
 
+class _Parser(argparse.ArgumentParser):
+    """Reports a bad command line as the same `{"code", "message"}` JSON as any other failure when --json is given."""
+
+    json_errors = False
+
+    def error(self, message: str):
+        if not _Parser.json_errors:
+            super().error(message)
+        self.exit(_fail("invalid", message, True))
+
+
 def _parser() -> argparse.ArgumentParser:
-    p = argparse.ArgumentParser(
-        prog="deskpilot", description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
-    )
+    p = _Parser(prog="deskpilot", description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("--session", action="store_true", help="use this agent's private compositor, clipboard and bus")
     p.add_argument("--json", action="store_true", help="print JSON")
     return p
@@ -461,6 +470,7 @@ def run(args: argparse.Namespace, desk: Desk) -> object:
 
 
 def main(argv: list[str] | None = None) -> int:
+    _Parser.json_errors = "--json" in (sys.argv[1:] if argv is None else argv)
     args = build_parser().parse_args(argv)
     if args.session:
         from . import session
