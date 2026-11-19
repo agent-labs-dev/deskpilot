@@ -37,6 +37,15 @@ def _print(data, as_json: bool) -> None:
         print(data if isinstance(data, str) else json.dumps(data))
 
 
+def _fail(code: str, message: str, as_json: bool) -> int:
+    """Report an expected failure on stderr, as `{"code", "message"}` with --json, and give the exit status."""
+    if as_json:
+        print(json.dumps({"code": code, "message": message}), file=sys.stderr)
+    else:
+        print(f"deskpilot: {code}: {message}", file=sys.stderr)
+    return 2
+
+
 def _view_args(s: argparse.ArgumentParser) -> None:
     """How the command reaches a window that may be off screen."""
     group = s.add_mutually_exclusive_group()
@@ -465,8 +474,7 @@ def main(argv: list[str] | None = None) -> int:
                 return 0
             os.environ.update(session.environment())
         except EXPECTED as error:
-            print(f"deskpilot: {error_code(error)}: {error}", file=sys.stderr)
-            return 2
+            return _fail(error_code(error), str(error), args.json)
     if args.cmd == "mcp":
         from .mcp_server import serve
 
@@ -478,11 +486,9 @@ def main(argv: list[str] | None = None) -> int:
         _print(output, args.json)
         if args.cmd == "batch" and isinstance(output, dict) and not output["ok"]:
             failed = output["failed"]
-            print(f"deskpilot: {failed['code']}: {failed['message']} ({failed['action']})", file=sys.stderr)
-            return 2
+            return _fail(failed["code"], f"{failed['message']} ({failed['action']})", args.json)
     except EXPECTED as error:
-        print(f"deskpilot: {error_code(error)}: {error}", file=sys.stderr)
-        return 2
+        return _fail(error_code(error), str(error), args.json)
     finally:
         desk.close()
     return 0

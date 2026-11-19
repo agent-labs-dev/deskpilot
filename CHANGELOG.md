@@ -7,6 +7,15 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+- `launch`, `clipboard` and a private XWayland paste now start their app, wl-paste or wl-copy on the Hyprland instance deskpilot drives, the one `HYPRLAND_INSTANCE_SIGNATURE` selects, whatever `WAYLAND_DISPLAY` says. Before, an app could open on another compositor, such as the user's own session while deskpilot drove a nested one, and `launch` timed out.
+- `key "ctrl++"` presses Ctrl and the `+` key, with the modifiers that key needs on the user's keymap (Ctrl+Shift+= on a US layout). Before, it pressed Ctrl alone and reported success. A chord with an empty key, such as `ctrl+`, is an error. A chord's character that no key gives unmodified is pressed with the modifiers it needs instead of refused.
+- `release` of a window the agent has not adopted fails with `not_found`, not `gone`, which means the window closed.
+- `elements` reports an element whose extents the app gives a negative size, such as a GTK 4 tab panel for a page that is not realized, with zero bounds instead of a nonsense rectangle, and clicking it is refused `offscreen`.
+- With `--json`, an error is printed as `{"code": ..., "message": ...}` on stderr instead of the plain `deskpilot: CODE: message` line.
+- `paste ""` is refused, as `type ""` is.
+- An MCP tool refuses an argument it does not take instead of ignoring it, so `wait_for` with `hidden` is an error, as `wait-for --hidden` without `--changed` is in the CLI. Each tool's schema says so with `additionalProperties: false`.
+- Coordinates refused against a shot of an earlier window at the same address now say so, and `wait-for --changed` refuses such a shot instead of comparing against it.
+
 ## [0.7.4] - 2026-11-16
 
 - A window that Hyprland gives a closed window's address, such as a freshly launched app, is no longer refused as changed since the closed window's shot. Shots and accessibility snapshots are matched to the window by its compositor, process and stable id as well as its address, so a new window at a reused address simply has none yet, while a window that changed since its own shot is still refused, and so are coordinates given without a shot id or scale, which are in the closed window's shot.

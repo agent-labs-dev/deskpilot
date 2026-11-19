@@ -194,7 +194,7 @@ def test_the_cli_exits_2_on_a_failed_step_with_the_partial_output(tmp_path, monk
     captured = capsys.readouterr()
     out = json.loads(captured.out)
     assert out["completed"] == 1 and out["failed"]["index"] == 1 and out["failed"]["code"] == "stale"
-    assert "stale" in captured.err
+    assert json.loads(captured.err)["code"] == "stale"
 
 
 @pytest.mark.parametrize("stdin", ["not json", "{}", "[1]", '[{"action": "click"}]', ""])
@@ -202,14 +202,22 @@ def test_the_cli_maps_bad_input_to_invalid_without_a_traceback(tmp_path, monkeyp
     desk, _, _, plugin = make_desk(tmp_path, monkeypatch)
     assert run_cli(monkeypatch, desk, ["battle"], stdin) == 2
     captured = capsys.readouterr()
-    assert captured.err.startswith("deskpilot: invalid:") and "Traceback" not in captured.err
+    assert json.loads(captured.err)["code"] == "invalid" and "Traceback" not in captured.err
     assert plugin.calls == []
 
 
 def test_the_cli_reports_a_missing_file_as_invalid(tmp_path, monkeypatch, capsys):
     desk, _, _, _ = make_desk(tmp_path, monkeypatch)
     assert run_cli(monkeypatch, desk, ["battle", str(tmp_path / "nope.json")]) == 2
-    assert "deskpilot: invalid: cannot read" in capsys.readouterr().err
+    error = json.loads(capsys.readouterr().err)
+    assert error["code"] == "invalid" and error["message"].startswith("cannot read")
+
+
+def test_a_cli_error_without_json_is_one_plain_line(tmp_path, monkeypatch, capsys):
+    desk, _, _, _ = make_desk(tmp_path, monkeypatch)
+    monkeypatch.setattr(cli, "Desk", lambda: desk)
+    assert cli.main(["batch", "battle", str(tmp_path / "nope.json")]) == 2
+    assert capsys.readouterr().err.startswith("deskpilot: invalid: cannot read")
 
 
 def test_the_mcp_batch_tool_schema_lists_every_step_with_its_fields():

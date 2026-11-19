@@ -168,27 +168,36 @@ class Hyprland:
         value = state.get("locked") if isinstance(state, dict) else None
         return value if isinstance(value, bool) else None
 
+    def _query(self, instance: str, name: str):
+        """`hyprctl -j name` on `instance`, pinned so several queries read one compositor. A fake runner gets no
+        instance."""
+        if self._run is not run_hyprctl:
+            return self._json(name)
+        out = run_hyprctl(["-j", name], instance=instance)
+        return json.loads(out) if out.strip() else None
+
+    def _socket(self, instance: str) -> str:
+        listed = self._query(instance, "instances") or []
+        wayland = next((i["wl_socket"] for i in listed if i["instance"] == instance), "")
+        if not wayland:
+            raise HyprctlError(f"no Wayland socket for Hyprland {instance or 'instance'}")
+        return wayland
+
+    def client_env(self) -> dict[str, str]:
+        """The environment for a Wayland client deskpilot starts (an app, grim, wl-clipboard): the caller's, with
+        WAYLAND_DISPLAY naming the Hyprland instance deskpilot drives, since the caller's may name another."""
+        instance = current_instance() if self._run is run_hyprctl else ""
+        return {**os.environ, "WAYLAND_DISPLAY": self._socket(instance)}
+
     def windows(self) -> list[Window]:
         instance, wayland = "", ""
-        real = self._run is run_hyprctl
-        if real:
+        if self._run is run_hyprctl:
             instance = current_instance()
-
-        def query(name: str):
-            if not real:
-                return self._json(name)
-            out = run_hyprctl(["-j", name], instance=instance)
-            return json.loads(out) if out.strip() else None
-
-        if real:
-            listed = query("instances") or []
-            wayland = next((i["wl_socket"] for i in listed if i["instance"] == instance), "")
-            if not wayland:
-                raise HyprctlError(f"no Wayland socket for Hyprland {instance}")
-        active = query("activewindow") or {}
-        monitors = [Monitor.from_json(m) for m in query("monitors") or [] if not m.get("disabled")]
+            wayland = self._socket(instance)
+        active = self._query(instance, "activewindow") or {}
+        monitors = [Monitor.from_json(m) for m in self._query(instance, "monitors") or [] if not m.get("disabled")]
         found = []
-        for c in query("clients") or []:
+        for c in self._query(instance, "clients") or []:
             if not c.get("mapped", True) or c.get("hidden"):
                 continue
             x, y = c["at"]

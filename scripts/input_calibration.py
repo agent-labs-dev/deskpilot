@@ -745,7 +745,7 @@ def main() -> int:  # noqa: PLR0915 - a bounded, sequential live calibration wit
         desk.key("ctrl+a", target.address, hidden=True)
         desk.paste("EXACT_PRIVATE_PASTE", target.address, hidden=True)
         expect_text("gtk_paste_exact", target.address, "EXACT_PRIVATE_PASTE")
-        verify("paste_preserves_clipboard", clipboard.read() == "DESKPILOT_CALIBRATION_SENTINEL")
+        verify("paste_preserves_clipboard", desk.clipboard() == "DESKPILOT_CALIBRATION_SENTINEL")
         if args.chrome:
             chrome = shutil.which("google-chrome-stable") or shutil.which("chromium")
             if not chrome:
@@ -763,7 +763,7 @@ def main() -> int:  # noqa: PLR0915 - a bounded, sequential live calibration wit
             desk.focus(target.address)
             desk.paste("CHROME_EXACT_PASTE", browser.address)
             expect_text("chrome_private_paste", browser.address, "CHROME_EXACT_PASTE")
-            verify("chrome_paste_preserves_clipboard", clipboard.read() == "DESKPILOT_CALIBRATION_SENTINEL")
+            verify("chrome_paste_preserves_clipboard", desk.clipboard() == "DESKPILOT_CALIBRATION_SENTINEL")
             desk.key("ctrl+a", browser.address)
             desk.key("BackSpace", browser.address)
             expect_text("chrome_private_select_delete", browser.address, "")

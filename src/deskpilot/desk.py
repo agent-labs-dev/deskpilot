@@ -221,7 +221,8 @@ class Desk:
             "WINEPREFIX",
             "XDG_RUNTIME_DIR",
         )
-        argv = ["env", "--chdir", os.getcwd(), *[f"{k}={os.environ[k]}" for k in names if k in os.environ], *command]
+        env = self.hypr.client_env()
+        argv = ["env", "--chdir", os.getcwd(), *[f"{k}={env[k]}" for k in names if k in env], *command]
         shell_command = shlex.join(argv)
         self.hypr._dispatch(f"hl.dsp.exec_cmd({json.dumps(shell_command)})", f"exec {shell_command}")
         deadline = time.monotonic() + timeout
@@ -252,7 +253,7 @@ class Desk:
         workspace = agent["workspace"]
         # Hyprland reuses a closed window's address, so a window is known by its stable id too.
         before = {(w.address, w.stable_id) for w in self.hypr.windows()}
-        env = {**os.environ, "HL_EXEC_RULE_TOKEN": agent["token"]}
+        env = {**self.hypr.client_env(), "HL_EXEC_RULE_TOKEN": agent["token"]}
         # Hyprland places a window carrying this on the workspace its launcher was started from, ahead of rules.
         env.pop("HL_INITIAL_WORKSPACE_TOKEN", None)
         self._launched = [p for p in self._launched if p.poll() is None]
@@ -635,6 +636,8 @@ class Desk:
     ) -> None:
         """Type text as written, on the user's own keymap. Each key is held `delay` seconds, and the next follows
         `delay` seconds later."""
+        if not text:
+            raise ValueError("no text to type")
         if agent_keyboard and query is None:
             raise ValueError("agent keyboard needs a named window")
         target = self._key_target(query, take_focus, show, hidden, focus_private=not agent_keyboard)
@@ -653,20 +656,22 @@ class Desk:
     ) -> None:
         """Paste text into a window: it becomes that window's clipboard alone, never the user's, and `combo` (the app's
         paste chord, ctrl+shift+v in most terminals) is pressed there. Any text pastes, whatever the keymap types."""
+        if not text:
+            raise ValueError("no text to paste")
         target = self._key_target(query, take_focus, show, hidden)
         if self._isolated() and target.xwayland:
-            clipboard.write(text)
+            clipboard.write(text, self.hypr.client_env())
             self.plugin.keys(target.address, keys.chord_words(combo), mode="plain")
         else:
             self.plugin.keys(target.address, keys.chord_words(combo), paste=text, mode=self._mode(hidden, cursor=False))
 
     def clipboard(self) -> str:
         """The user's clipboard text."""
-        return clipboard.read()
+        return clipboard.read(self.hypr.client_env())
 
     def set_clipboard(self, text: str) -> None:
         """Replace the user's clipboard with text."""
-        clipboard.write(text)
+        clipboard.write(text, self.hypr.client_env())
 
     def _key_target(
         self,
@@ -764,6 +769,7 @@ class Desk:
         base = screen.load(shot)
         if win.address != base.address:
             raise screen.StaleShot(f"shot {shot} is of window {base.address}, not {win.address}")
+        base.check_identity(win)
         x, y, w, h = region or (0, 0, base.width, base.height)
         if w <= 0 or h <= 0 or x < 0 or y < 0 or x + w > base.width or y + h > base.height:
             raise ValueError(f"region {x},{y} {w}x{h} is not inside shot {shot} ({base.width}x{base.height})")

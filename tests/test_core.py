@@ -62,6 +62,9 @@ class FakeHyprctl:
             )
         if args[:2] == ["-j", "activewindow"]:
             return json.dumps(self.clients[0] if self.clients else {})
+        if args[:2] == ["-j", "instances"]:
+            # A fake runner is asked for no instance, so its one instance has the empty signature.
+            return json.dumps([{"instance": "", "wl_socket": "wayland-driven"}])
         if args[0] == "dispatch":
             is_lua = args[1].startswith("hl.")
             if "focus" in args[1]:
@@ -231,6 +234,14 @@ def test_chords_name_keys_and_text_names_characters():
     assert all(not w.startswith("-") or w[1:].isdigit() for w in words)
     with pytest.raises(ValueError, match="unknown key 'hyper'"):
         keys.chord_words("ctrl+hyper")
+
+
+def test_a_chord_ending_in_plus_presses_plus_and_an_empty_key_is_an_error():
+    assert keys.chord_words("ctrl++") == ["+29", "p2b", "r2b", "-29"]
+    assert keys.chord_words("ctrl+shift++") == ["+29", "+42", "p2b", "r2b", "-42", "-29"]
+    for combo in ("ctrl+", "++", "", "ctrl++a", "+a", "ctrl+++"):
+        with pytest.raises(ValueError, match="empty key"):
+            keys.chord_words(combo)
 
 
 def test_hyprland_parses_clients_and_uses_lua_dispatch():
@@ -1023,9 +1034,9 @@ def test_clipboard_reads_plain_text_and_not_another_text_type(monkeypatch):
 
     monkeypatch.setattr(clipboard.subprocess, "run", wl_paste)
     with pytest.raises(clipboard.ClipboardError, match="no plain text; it offers text/x-moz-url, text/html"):
-        clipboard.read()
+        clipboard.read({})
     offered.append("text/plain")
-    assert clipboard.read() == "café" and asked == ["text/plain"]
+    assert clipboard.read({}) == "café" and asked == ["text/plain"]
 
 
 def test_wait_for_returns_once_the_window_has_the_title_and_size_asked(tmp_path, monkeypatch):
@@ -1192,7 +1203,8 @@ def test_shot_refuses_reused_addresses(tmp_path, monkeypatch, changed):
     fake_grim(monkeypatch, (100, 50))
     window = win(w=100, h=50)
     shot = screen.capture(window)
-    with pytest.raises(screen.StaleShot, match="has changed"):
+    earlier = "pid" in changed or "stable_id" in changed
+    with pytest.raises(screen.StaleShot, match="of an earlier window at 0x1" if earlier else "has changed"):
         shot.check(replace(window, **changed))
     shot.check(replace(window, title="A title changed by navigation"))
 
@@ -1217,9 +1229,9 @@ def test_isolated_paste_uses_only_private_xwayland_clipboard(tmp_path, monkeypat
     monkeypatch.setenv("DESKPILOT_ISOLATED", "private")
     monkeypatch.setattr(session, "verify_current", lambda: "private")
     written = []
-    monkeypatch.setattr(clipboard, "write", written.append)
+    monkeypatch.setattr(clipboard, "write", lambda text, env: written.append((text, env["WAYLAND_DISPLAY"])))
     desk.paste("private text", "0xabc", hidden=True)
-    assert written == ["private text"]
+    assert written == [("private text", "wayland-driven")]
     assert plugin.calls == [("keys", "0xabc", keys.chord_words("ctrl+v"), {"mode": "plain"})]
 
 
@@ -1227,7 +1239,7 @@ def test_isolation_marker_cannot_enable_private_clipboard_on_another_compositor(
     desk, _, _, plugin = make_desk(tmp_path, monkeypatch)
     monkeypatch.setenv("HYPRLAND_INSTANCE_SIGNATURE", "user")
     monkeypatch.setenv("DESKPILOT_ISOLATED", "private")
-    monkeypatch.setattr(clipboard, "write", lambda text: pytest.fail("user clipboard changed"))
+    monkeypatch.setattr(clipboard, "write", lambda text, env: pytest.fail("user clipboard changed"))
     with pytest.raises(HyprctlError):
         desk.paste("text", "0xabc")
     assert plugin.calls == []
@@ -1358,7 +1370,7 @@ def test_shot_coordinates_refuse_a_new_window_at_a_reused_address(tmp_path, monk
         lambda: desk.scroll("battle", 1, 1, 1),
         lambda: desk.drag("battle", (1, 1), (2, 2)),
     ):
-        with pytest.raises(screen.StaleShot, match="has changed since shot"):
+        with pytest.raises(screen.StaleShot, match="is of an earlier window at 0xabc, not the battle.net.exe there"):
             action()
     assert plugin.calls == []
     desk.click("battle", 1, 1, scale=1)
@@ -1370,3 +1382,68 @@ def test_shot_coordinates_on_a_window_never_shot_are_window_pixels(tmp_path, mon
     desk, fake, _, _ = make_desk(tmp_path, monkeypatch)
     fake.clients[0] = {**CLIENT, "address": "0xdef"}
     assert desk.click("battle", 100, 50) == (2527 + 100, 966 + 50)
+
+
+def test_every_client_deskpilot_starts_connects_to_the_instance_it_drives(tmp_path, monkeypatch):
+    # The caller's WAYLAND_DISPLAY names the user's session while deskpilot drives another instance.
+    monkeypatch.setenv("WAYLAND_DISPLAY", "wayland-user")
+    desk, fake, plugin = gated_launch(tmp_path, monkeypatch)
+    GATE.on_start = lambda: fake.clients.append({**AGENT_CLIENT, "stableId": "2"})
+    desk.launch(["gnome-calculator"])
+    assert GATE.made[0].env["WAYLAND_DISPLAY"] == "wayland-driven"
+    displays = []
+
+    def wl_clipboard(cmd, **kwargs):
+        displays.append((cmd[0], kwargs["env"]["WAYLAND_DISPLAY"]))
+        out = "text/plain" if "--list-types" in cmd else b"x"
+        return subprocess.CompletedProcess(cmd, 0, out, b"")
+
+    monkeypatch.setattr(clipboard.subprocess, "run", wl_clipboard)
+    desk.clipboard()
+    desk.set_clipboard("x")
+    assert displays == [("wl-paste", "wayland-driven")] * 2 + [("wl-copy", "wayland-driven")]
+
+
+def test_client_env_names_the_selected_instance_s_socket(monkeypatch):
+    from deskpilot import hypr
+
+    monkeypatch.setenv("WAYLAND_DISPLAY", "wayland-user")
+    monkeypatch.setattr(hypr, "current_instance", lambda: "nested")
+    listed = [{"instance": "user", "wl_socket": "wayland-user"}, {"instance": "nested", "wl_socket": "wayland-2"}]
+    monkeypatch.setattr(hypr, "run_hyprctl", lambda args, *, instance=None: json.dumps(listed))
+    assert hypr.Hyprland(hypr.run_hyprctl).client_env()["WAYLAND_DISPLAY"] == "wayland-2"
+    listed.pop()
+    with pytest.raises(HyprctlError, match="no Wayland socket for Hyprland nested"):
+        hypr.Hyprland(hypr.run_hyprctl).client_env()
+
+
+@pytest.mark.parametrize("action", ["type", "paste"])
+def test_empty_text_is_refused_by_type_and_paste_alike(tmp_path, monkeypatch, action):
+    desk, _, _, plugin = make_desk(tmp_path, monkeypatch)
+    with pytest.raises(ValueError, match=f"no text to {action}"):
+        getattr(desk, action)("", "battle")
+    assert plugin.calls == []
+
+
+def test_an_mcp_tool_refuses_an_argument_it_does_not_take(tmp_path, monkeypatch):
+    # The CLI refuses wait-for --hidden without --changed; the MCP wait_for has no hidden, so it must not drop one.
+    import asyncio
+
+    from mcp.server.mcpserver.exceptions import ToolError
+
+    from deskpilot import mcp_server
+
+    desk, *_ = make_desk(tmp_path, monkeypatch)
+    monkeypatch.setattr(mcp_server, "desk", desk)
+    monkeypatch.setattr(desk, "wait_for", lambda *a: pytest.fail("wait_for ran without the hidden it was asked for"))
+    tool = asyncio.run(mcp_server.mcp.list_tools())
+    assert all(t.input_schema.get("additionalProperties") is False for t in tool)
+    with pytest.raises(ToolError, match="hidden"):
+        asyncio.run(mcp_server.mcp.call_tool("wait_for", {"window": "battle", "hidden": True}))
+
+
+def test_wait_changed_refuses_a_shot_of_an_earlier_window_at_the_address(tmp_path, monkeypatch):
+    desk, fake, _, _ = make_desk(tmp_path, monkeypatch)
+    fake.clients[0] = {**CLIENT, "pid": 999}
+    with pytest.raises(screen.StaleShot, match="of an earlier window"):
+        desk.wait_changed("battle", "abc-1", timeout=0)
