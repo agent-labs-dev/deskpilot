@@ -27,10 +27,10 @@ def key(char: str, post) -> None:
     time.sleep(1)
 
 
-finder = next(a for a in AppKit.NSWorkspace.sharedWorkspace().runningApplications() if a.localizedName() == "Finder")
+finder = AppKit.NSRunningApplication.runningApplicationsWithBundleIdentifier_("com.apple.finder")[0]
 subprocess.run(["open", "-g", "-a", "TextEdit"], check=True)
 time.sleep(5)
-app = next(a for a in AppKit.NSWorkspace.sharedWorkspace().runningApplications() if a.localizedName() == "TextEdit")
+app = AppKit.NSRunningApplication.runningApplicationsWithBundleIdentifier_("com.apple.TextEdit")[0]
 pid = app.processIdentifier()
 
 
