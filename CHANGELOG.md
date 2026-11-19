@@ -20,6 +20,11 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 - `paste ""` is refused, as `type ""` is.
 - An MCP tool refuses an argument it does not take instead of ignoring it, so `wait_for` with `hidden` is an error, as `wait-for --hidden` without `--changed` is in the CLI. Each tool's schema says so with `additionalProperties: false`.
 - Coordinates refused against a shot of an earlier window at the same address now say so, and `wait-for --changed` refuses such a shot instead of comparing against it.
+- `--session` runs in a container with no GPU and no compositor around it: with `DESKPILOT_STANDALONE=1` its Hyprland drives the host's vkms virtual display and renders in software. `container/Dockerfile` builds an image with a pinned Hyprland and a prebuilt plugin, run with `--device /dev/dri` after `modprobe vkms` on the host.
+- `deskpilot --session env` starts the agent's private desktop if needed and prints what another tool needs to reach it (its Wayland display, Hyprland instance, runtime directory and buses), as shell exports or JSON, so other tools can capture or record it.
+- The session's seat now has a pointer as well as a keyboard, so clicks reach apps in a desktop that has no other input device.
+- The free memory a session needs is checked against the container's memory limit as well as the machine's, so a small box refuses to start one instead of running out.
+- `deskpilot plugin build` works with no Hyprland running, building against the installed headers, and also builds the `--session` keyboard.
 
 ## [0.7.4] - 2026-11-16
 

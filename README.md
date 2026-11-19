@@ -131,6 +131,28 @@ starting with `DESKPILOT_AGENT=NAME deskpilot --session launch APP`. End it with
 
 [Hidden-window behaviour, adoption and private desktops](docs/input-routing.md)
 
+`eval "$(deskpilot --session env)"` starts that desktop if needed and exports what reaches it (`WAYLAND_DISPLAY`,
+`HYPRLAND_INSTANCE_SIGNATURE`, `XDG_RUNTIME_DIR`, `DBUS_SESSION_BUS_ADDRESS` and `AT_SPI_BUS_ADDRESS`), so other tools
+such as `grim` or `wf-recorder` can use it; `--json` prints it as JSON. Your shell keeps its own profile, and `stop`
+leaves what you started this way running.
+
+### With no desktop: a container
+
+`container/Dockerfile` builds an image whose `--session` desktop needs no GPU and no compositor around it: with
+`DESKPILOT_STANDALONE=1` and `DESKPILOT_AGENT=agent` (set in the image) Hyprland runs on its own DRM backend on the
+kernel's virtual display, vkms, rendered in software by Mesa. On the host, load vkms and pass its display node in:
+
+```sh
+sudo modprobe vkms
+docker build -f container/Dockerfile -t deskpilot .
+docker run --rm --device /dev/dri deskpilot bash -c 'eval "$(deskpilot --session env)"; deskpilot --session launch APP'
+```
+
+The entrypoint gives the image's `agent` user the display node's group and runs the command as that user, since
+Hyprland refuses to run as root. The image's plugin is prebuilt against its pinned Hyprland. `container/smoke.sh` is
+the check CI runs in it: it launches a GTK app, clicks its entry, types and reads the text back, recording a clip.
+GitHub's `ubuntu-24.04` runners can load vkms; a runner without the module cannot run it.
+
 ## Your input stays yours
 
 The plugin sends input to the target client directly where supported. Some clients, including XWayland,
