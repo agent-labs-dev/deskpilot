@@ -139,12 +139,25 @@ class MacDriver:
         return round(point.x), round(point.y)
 
     def top_at(self, x: int, y: int) -> str | None:
-        """The window a click at this point would reach, as AppKit hit-tests it, so a window that lets clicks
-        through (the Dock's full-screen layer) never counts as covering the point. AppKit's screen origin is the
-        bottom left of the main display."""
-        height = self.appkit.NSScreen.screens()[0].frame().size.height
-        number = self.appkit.NSWindow.windowNumberAtPoint_belowWindowWithWindowNumber_((x, height - y), 0)
-        return hex(int(number)) if number else None
+        """The window a click at this point would reach, as the accessibility hit test finds it, so a window that
+        lets clicks through (the Dock's full-screen layer) never counts as covering the point. Quartz lists window
+        rectangles only, and AppKit's own hit test answers only inside a running app."""
+        self._trusted()
+        system = self.ax.AXUIElementCreateSystemWide()
+        error, element = self.ax.AXUIElementCopyElementAtPosition(system, float(x), float(y), None)
+        if error != 0 or element is None:
+            return None
+        _, pid = self.ax.AXUIElementGetPid(element, None)
+        found = element if self._attr(element, "AXRole") == "AXWindow" else self._attr(element, "AXWindow")
+        if found is None:
+            return f"pid {pid}"
+        frame = self.describe(found)
+        for window in self.windows():
+            if window.pid == pid and (window.x, window.y, window.width, window.height) == (
+                frame.x, frame.y, frame.width, frame.height,
+            ):  # fmt: skip
+                return window.address
+        return f"pid {pid}"
 
     # Capture
 
