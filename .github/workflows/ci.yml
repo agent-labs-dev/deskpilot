@@ -72,6 +72,18 @@ jobs:
           enable-cache: false
       - run: uv sync --locked
       - run: uv run --no-sync pytest -q tests/test_native.py
+      # The image grants Accessibility and Screen Recording to /bin/bash and its own agent, as runner-images'
+      # configure-tccdb-macos.sh does; grant the same to the venv's interpreter, which every deskpilot call runs as.
+      - name: Grant Accessibility and Screen Recording on macOS
+        if: runner.os == 'macOS'
+        run: |
+          python="$(uv run --no-sync python -c 'import os, sys; print(os.path.realpath(sys.executable))')"
+          for service in kTCCServiceAccessibility kTCCServiceScreenCapture kTCCServicePostEvent; do
+            row="'$service','$python',1,2,4,1,NULL,NULL,0,'UNUSED',NULL,0,$(date +%s),NULL,NULL,'UNUSED',$(date +%s)"
+            sqlite3 "$HOME/Library/Application Support/com.apple.TCC/TCC.db" "INSERT OR REPLACE INTO access VALUES($row);"
+            sudo sqlite3 "/Library/Application Support/com.apple.TCC/TCC.db" "INSERT OR REPLACE INTO access VALUES($row);"
+          done
+          defaults write com.apple.TextEdit NSShowAppCentricOpenPanelInsteadOfUntitledFile -bool false
       - name: Drive a real window through the CLI
         run: uv run --no-sync python scripts/smoke_native.py
 
