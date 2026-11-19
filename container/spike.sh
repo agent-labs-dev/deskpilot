@@ -34,7 +34,7 @@ hl.config({
     animations = { enabled = false },
 })
 EOF
-AQ_TRACE=1 HYPRLAND_NO_SD_NOTIFY=1 HYPRLAND_NO_CRASHREPORTER=1 Hyprland -c ~/.config/hypr/hyprland.lua > "$OUT/hyprland.log" 2>&1 &
+EGL_LOG_LEVEL=debug AQ_TRACE=1 HYPRLAND_NO_SD_NOTIFY=1 Hyprland -c ~/.config/hypr/hyprland.lua > "$OUT/hyprland.log" 2>&1 &
 hypr=$!
 for _ in $(seq 150); do
     sig=$(ls "$XDG_RUNTIME_DIR/hypr" 2>/dev/null | head -1)
@@ -46,6 +46,9 @@ if ! kill -0 $hypr 2>/dev/null; then
     echo "Hyprland exited"
     cp "$XDG_RUNTIME_DIR"/hypr/*/hyprland.log "$OUT/hyprland-full.log"
     tail -80 "$OUT/hyprland-full.log"
+    cp ~/.cache/hyprland/hyprlandCrashReport*.txt "$OUT/" 2>/dev/null
+    cat ~/.cache/hyprland/hyprlandCrashReport*.txt 2>/dev/null | head -80
+    ls -l /usr/lib/dri /usr/lib/gbm 2>/dev/null
     exit 1
 fi
 export HYPRLAND_INSTANCE_SIGNATURE=$sig
