@@ -184,6 +184,7 @@ class _Film:
     def __init__(self, desk: Desk, address: str, path: Path, fps: int, hidden: bool) -> None:
         self.path = path.expanduser().resolve()
         self._stop = threading.Event()
+        self._finishing = False
         self._started = threading.Event()
         self._result: recording.Result | None = None
         self._error: Exception | None = None
@@ -205,10 +206,11 @@ class _Film:
     @property
     def ended_early(self) -> bool:
         """The recording stopped by itself, at its length limit, before the run asked it to."""
-        return not self._thread.is_alive() and not self._stop.is_set()
+        return self._stop.is_set() and not self._finishing
 
     def finish(self) -> dict:
         """Stop filming and report the clip. A recording that captured nothing raises the capture's own error."""
+        self._finishing = True
         self._stop.set()
         self._thread.join()
         if self._error:
@@ -294,19 +296,44 @@ def _pinned(desk: Desk, window: Window) -> Window:
     return now
 
 
+def _names(desk: Desk, query: str | None, window: Window) -> bool:
+    """Whether a step's window is the pinned one: it names none, or what it names is at the pinned address."""
+    if not query:
+        return True
+    try:
+        return desk.window(query).address == window.address
+    except WindowNotFound:
+        return False
+
+
+def _wait_pinned(desk: Desk, window: Window, step: Any) -> Window:
+    """Wait on the pinned window itself: losing it, or finding another at its address, ends the wait as not found
+    rather than running out the timeout or passing for it."""
+    deadline = time.monotonic() + step.timeout
+    while True:
+        _pinned(desk, window)
+        try:
+            found = desk.wait_for(window.address, 0, False, step.focused, step.title, _size(step.size))
+        except TimeoutError:
+            if time.monotonic() >= deadline:
+                raise
+            time.sleep(0.5)
+            continue
+        return _pinned(desk, found or window)
+
+
 def _do(desk: Desk, step: Any, window: Window, hidden: bool) -> dict:
     """One step through the Desk action of the same name, aimed at the pinned window."""
     if isinstance(step, Pause):
         _pause(desk, window, step.seconds)
         return {"seconds": step.seconds}
     if isinstance(step, Wait):
-        own = not step.window and not step.gone
-        if own:
-            _pinned(desk, window)
-        target = step.window or window.address
-        win = desk.wait_for(target, step.timeout, step.gone, step.focused, step.title, _size(step.size))
-        if own and win is not None and (win.pid, win.stable_id) != (window.pid, window.stable_id):
-            raise WindowNotFound(f"window {window.address} is no longer the {window.cls} the recipe started on")
+        if not step.gone and _names(desk, step.window, window):
+            win = _wait_pinned(desk, window, step)
+        else:
+            win = desk.wait_for(
+                step.window or window.address, step.timeout, step.gone, step.focused, step.title, _size(step.size)
+            )
         return {"window": None if win is None else win.to_dict()}
     if isinstance(step, Shot):
         _pinned(desk, window)

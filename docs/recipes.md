@@ -90,7 +90,8 @@ are filmed, so nothing else on the monitor is in the clip.
 
 It starts once the window is found, and the first step runs after the first frame, so a clip begins on the first
 action. It stops after the last step, on failure too. A window that gives no frame fails the run instead of leaving an
-empty MP4.
+empty MP4. A recording is bounded at 600 seconds, as `deskpilot record` is: a recipe still running when it ends fails
+(`failed.step` is the end of the steps, action `record`) and keeps the clip, so a longer demo is split into recipes.
 
 ## Running one on a Hyprland machine
 

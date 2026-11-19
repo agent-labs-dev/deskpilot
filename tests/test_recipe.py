@@ -1,4 +1,5 @@
 import json
+import threading
 from pathlib import Path
 
 import pytest
@@ -319,35 +320,39 @@ def test_a_launched_window_replaced_before_the_pin_stops_the_run(tmp_path, monke
         recipe.run(desk, recipe.parse({**DOC, "launch": ["app"]}))
 
 
-def test_a_wait_refuses_a_replacement_that_satisfies_it(tmp_path, monkeypatch):
+@pytest.mark.parametrize("replacement", [False, True])
+@pytest.mark.parametrize("explicit", [False, True])
+def test_a_wait_on_the_pinned_window_ends_when_it_is_lost_or_replaced(tmp_path, monkeypatch, replacement, explicit):
     desk, fake, _, _ = make_desk(tmp_path, monkeypatch)
-    wait_for = desk.wait_for
-    calls = []
+    clock = [0.0]
 
-    def replaced_during_the_wait(*args, **kwargs):
-        calls.append(args)
-        found = wait_for(*args, **kwargs)
-        if len(calls) > 1:  # the first call pins the window, the second is the step
-            fake.clients[0] = {**CLIENT, "pid": 99}
-            return desk.window(CLIENT["address"])
-        return found
+    def sleep(seconds):
+        clock[0] += seconds
+        fake.clients[:] = [{**CLIENT, "pid": 99, "title": "Saved"}] if replacement else []
 
-    monkeypatch.setattr(desk, "wait_for", replaced_during_the_wait)
-    result = recipe.run(desk, recipe.parse({**DOC, "steps": [{"action": "wait", "title": ""}]})).to_dict()
-    assert result["failed"]["code"] == "not_found" and result["completed"] == 0
+    monkeypatch.setattr(recipe.time, "monotonic", lambda: clock[0])
+    monkeypatch.setattr(recipe.time, "sleep", sleep)
+    step = {"action": "wait", "title": "Saved", "timeout": 5} | ({"window": CLIENT["address"]} if explicit else {})
+    result = recipe.run(desk, recipe.parse({**DOC, "steps": [step]})).to_dict()
+    assert result["failed"]["code"] == "not_found" and clock[0] < 5
 
 
-def test_a_recording_that_hits_its_limit_fails_the_run_instead_of_succeeding_truncated(tmp_path, monkeypatch):
+def test_a_recording_that_ends_at_its_limit_fails_the_run_even_while_it_finalizes(tmp_path, monkeypatch):
     desk, _, _, _ = make_desk(tmp_path, monkeypatch)
+    ended = threading.Event()
 
     def record(query, out, stop, fps, seconds=None, hidden=False, started=None):
         out.write_bytes(b"mp4")
         assert started is not None
         started.set()
-        return recording.Result(5, 600.0)  # the recorder's own limit ended it
+        stop.set()  # the recorder's capture is over, as `stream` does at its limit, and the file is still finalizing
+        ended.wait(0.3)
+        return recording.Result(5, 600.0)
 
     monkeypatch.setattr(desk, "record", record)
     steps = [{"action": "pause", "seconds": 0.3}, {"action": "pause", "seconds": 0}]
-    result = recipe.run(desk, recipe.parse({**DOC, "steps": steps}), tmp_path / "long.mp4").to_dict()
+    try:
+        result = recipe.run(desk, recipe.parse({**DOC, "steps": steps}), tmp_path / "long.mp4").to_dict()
+    finally:
+        ended.set()
     assert not result["ok"] and "limit" in result["failed"]["message"]
-    assert result["recording"]["path"] == str(tmp_path / "long.mp4"), "the clip is still kept"

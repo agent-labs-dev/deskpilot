@@ -58,9 +58,10 @@ def stream(
     seconds: float | None = None,
     started: threading.Event | None = None,
 ) -> Result:
-    """Take frames from `take` at a steady `fps` into `sink` until `stop` is set or `seconds` pass. A failed capture,
-    and the slots a slow one overran, repeat the last frame, so the stream keeps the real time of the run and no
-    longer than it. `started` is set once the first frame is in the sink, for a caller that must not act before it."""
+    """Take frames from `take` at a steady `fps` into `sink` until `stop` is set or `seconds` pass, then set `stop`.
+    A failed capture, and the slots a slow one overran, repeat the last frame, so the stream keeps the real time of
+    the run and no longer than it. `started` is set once the first frame is in the sink, for a caller that must not
+    act before it."""
     limit = min(seconds, MAX_SECONDS) if seconds else MAX_SECONDS
     total = max(1, round(limit * fps))
     start = time.monotonic()
@@ -87,6 +88,7 @@ def stream(
         while written < total and start + written / fps <= time.monotonic():
             sink(last)
             written += 1
+    stop.set()  # capture is over, however it ended: a caller that holds the event sees it before the file is finalized
     return Result(written, time.monotonic() - start, str(failure) if failure else None, failure)
 
 
