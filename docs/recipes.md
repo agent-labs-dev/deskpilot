@@ -41,8 +41,8 @@ each step.
 | `name` | What the demo is; the run's report repeats it. |
 | `window` | The window every step acts on: an address, a class, or part of a class or title. A name matching several windows is refused with the list. |
 | `size` | Optional `WIDTHxHEIGHT` in window pixels the window must reach before the steps start. |
-| `launch` | Optional command started first, from the current directory, with our environment plus `env`. The app it starts is stopped when the run ends, pass or fail. A window already open under `window` refuses the run. To aim the app at another compositor, set `WAYLAND_DISPLAY` in `env`. |
-| `env` | Extra environment for the launched app only. |
+| `launch` | Optional command started first, as `deskpilot launch` does: on the agent's hidden workspace on the Hyprland instance deskpilot drives, out of your view and focus. Every step then acts hidden and the recording shows the agent cursor, so `move` is refused in such a recipe. `window` must name the app's first window. The agent's apps are stopped when the run ends, pass or fail. |
+| `env` | Extra environment for the launched app only, put in front of the command with `env`. |
 | `timeout` | Seconds to wait for the window to appear (default 60). |
 | `steps` | 1 to 200 steps, run in order. |
 | `record` | Optional MP4: `output` (required) and `fps` (1 to 60, default 25). |

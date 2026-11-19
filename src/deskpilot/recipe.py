@@ -20,21 +20,19 @@ from __future__ import annotations
 
 import json
 import os
-import signal
-import subprocess
-import tempfile
 import threading
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import IO, TYPE_CHECKING, Annotated, Any, Literal
+from typing import TYPE_CHECKING, Annotated, Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, ValidationError
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
 
 from . import batch, screen
 from . import record as recording
 from .desk import EXPECTED, error_code
-from .hypr import Window, WindowNotFound
+from .hypr import Window, WindowNotFound, find_window
+from .plugin import PluginError
 
 if TYPE_CHECKING:
     from .desk import Desk
@@ -43,6 +41,8 @@ if TYPE_CHECKING:
 MAX_STEPS = 200
 # How often a pause checks the window is still the one pinned, so an app that died fails the run at once.
 PAUSE_TICK = 0.25
+# How often a launch retries while the agent of an earlier run is still being stopped.
+BUSY_RETRY = 0.5
 
 
 class _Step(BaseModel):
@@ -101,6 +101,12 @@ class Recipe(_Step):
     size: str | None = Field(None, pattern=r"^\d+x\d+$", description="the window's size in window pixels, waited for")
     steps: list[Step] = Field(min_length=1, max_length=MAX_STEPS)
     record: Record | None = None
+
+    @model_validator(mode="after")
+    def _launched_is_hidden(self):
+        if self.launch and any(isinstance(step, batch.Move) for step in self.steps):
+            raise ValueError("move only shows the agent cursor, which a launched app's hidden window never shows")
+        return self
 
 
 def _size(text: str | None) -> tuple[int, int] | None:
@@ -175,7 +181,7 @@ class RunResult:
 class _Film:
     """`Desk.record` of the pinned window on a thread of its own, from its first frame until `stop`."""
 
-    def __init__(self, desk: Desk, address: str, path: Path, fps: int) -> None:
+    def __init__(self, desk: Desk, address: str, path: Path, fps: int, hidden: bool) -> None:
         self.path = path.expanduser().resolve()
         self._stop = threading.Event()
         self._started = threading.Event()
@@ -184,7 +190,7 @@ class _Film:
 
         def film() -> None:
             try:
-                self._result = desk.record(address, self.path, self._stop, fps, started=self._started)
+                self._result = desk.record(address, self.path, self._stop, fps, hidden=hidden, started=self._started)
             except Exception as caught:  # re-raised by finish(), on the thread that owns the run
                 self._error = caught
 
@@ -207,96 +213,60 @@ class _Film:
         return {"path": str(self.path), **self._result.to_dict()}
 
 
-def _spawn(recipe: Recipe, stderr: IO[bytes]) -> subprocess.Popen:
-    """Start the recipe's app the way the user's own shell would, in its own process group so stop ends its children."""
+def _launch(desk: Desk, recipe: Recipe) -> Window:
+    """Start the recipe's app through `Desk.launch`, as `deskpilot launch` does: on the agent's hidden workspace, out of
+    the user's view and focus, on the compositor Desk drives. `env` goes in front of the command."""
     command = [os.path.expanduser(part) for part in recipe.launch or []]
-    try:
-        return subprocess.Popen(
-            command,
-            env={**os.environ, **recipe.env},
-            stdout=subprocess.DEVNULL,
-            stderr=stderr,
-            start_new_session=True,
-        )
-    except OSError as error:
-        raise ValueError(f"cannot start {command[0]}: {error.strerror or error}") from error
-
-
-def _refuse_open(desk: Desk, recipe: Recipe) -> None:
-    """A recipe that launches its app needs the window to be its own: one already open would be pinned instead."""
-    try:
-        open_now = desk.window(recipe.window)
-    except WindowNotFound:
-        return
-    raise ValueError(f"{recipe.window!r} is already open as {open_now.address}; close it so the recipe pins its own")
-
-
-def _stop_app(process: subprocess.Popen | None) -> None:
-    if process is None or process.poll() is not None:
-        return
-    os.killpg(process.pid, signal.SIGTERM)
-    try:
-        process.wait(timeout=10)
-    except subprocess.TimeoutExpired:
-        os.killpg(process.pid, signal.SIGKILL)
-        process.wait()
-
-
-def _await_window(desk: Desk, recipe: Recipe, app: subprocess.Popen | None, stderr: IO[bytes]) -> Window:
-    """The recipe's window, as soon as it is there at its size. An app that failed before showing one fails the run
-    with its own exit status and last words, instead of the run waiting out the whole timeout. A launcher that hands
-    off and exits 0 is fine: its window is still waited for."""
+    if recipe.env:
+        command = ["env", *(f"{key}={value}" for key, value in recipe.env.items()), *command]
     deadline = time.monotonic() + recipe.timeout
     while True:
         try:
-            window = desk.wait_for(recipe.window, timeout=min(1.0, max(0.0, deadline - time.monotonic())),
-                                   size=_size(recipe.size))  # fmt: skip
-            assert window is not None
-            return window
-        except TimeoutError:
-            if app is not None and app.poll():
-                stderr.seek(0)
-                said = stderr.read().decode(errors="replace").strip().splitlines()[-3:]
-                command = (recipe.launch or [""])[0]
-                raise ValueError(
-                    f"{command} exited with status {app.returncode} before {recipe.window!r} appeared"
-                    + (": " + " / ".join(said) if said else "")
-                ) from None
-            if time.monotonic() >= deadline:
+            window = desk.launch(command, recipe.timeout)
+            break
+        except PluginError as error:
+            # The agent of the recipe before this one is still being stopped; the plugin says so with `busy`.
+            if error.code != "busy" or time.monotonic() >= deadline:
                 raise
+            time.sleep(BUSY_RETRY)
+    find_window([window], recipe.window)  # the first window the app opens must be the one the recipe names
+    return window
 
 
 def run(desk: Desk, recipe: Recipe, record: Path | None = None) -> RunResult:
     """Replay the recipe, recording it too when the recipe or `record` names an MP4.
 
-    The window is looked up and pinned before anything is recorded, every step is aimed at that pinned window, and
-    the app the recipe launched is stopped on the way out, as is the recording.
+    The window is pinned before anything is recorded and every step is aimed at that pinned window. An app the recipe
+    launches runs hidden, so nothing moves the user's focus, and is stopped on the way out, as is the recording.
     """
     result = RunResult(name=recipe.name)
-    app = film = None
-    with tempfile.TemporaryFile() as stderr:
-        try:
-            if recipe.launch:
-                _refuse_open(desk, recipe)
-                app = _spawn(recipe, stderr)
-            window = _await_window(desk, recipe, app, stderr)
-            result.window = window.to_dict()
-            output = record or (Path(recipe.record.output) if recipe.record else None)
-            if output is not None:
-                film = _Film(desk, window.address, output, recipe.record.fps if recipe.record else recording.FPS)
-            for index, step in enumerate(recipe.steps):
-                try:
-                    result.results.append({"index": index, "action": step.action, **_do(desk, step, recipe, window)})
-                except EXPECTED as error:
-                    result.failed = Failure(index, step.action, error_code(error), str(error))
-                    return result
-        finally:
-            # The clip is kept whatever happened, so a failed demo can be watched; the app it started is not.
+    hidden = bool(recipe.launch)
+    film = None
+    try:
+        window = _launch(desk, recipe) if hidden else None
+        # The size is waited for as the app settles; a launched window is waited for by address, never by name.
+        window = desk.wait_for(window.address if window else recipe.window, timeout=recipe.timeout,
+                               size=_size(recipe.size))  # fmt: skip
+        assert window is not None
+        result.window = window.to_dict()
+        output = record or (Path(recipe.record.output) if recipe.record else None)
+        if output is not None:
+            fps = recipe.record.fps if recipe.record else recording.FPS
+            film = _Film(desk, window.address, output, fps, hidden)
+        for index, step in enumerate(recipe.steps):
             try:
-                if film is not None:
-                    result.recording = film.finish()
-            finally:
-                _stop_app(app)
+                result.results.append({"index": index, "action": step.action, **_do(desk, step, window, hidden)})
+            except EXPECTED as error:
+                result.failed = Failure(index, step.action, error_code(error), str(error))
+                return result
+    finally:
+        # The clip is kept whatever happened, so a failed demo can be watched; the app it started is not.
+        try:
+            if film is not None:
+                result.recording = film.finish()
+        finally:
+            if hidden:
+                desk.stop()
     return result
 
 
@@ -308,7 +278,7 @@ def _pinned(desk: Desk, window: Window) -> Window:
     return now
 
 
-def _do(desk: Desk, step: Any, recipe: Recipe, window: Window) -> dict:
+def _do(desk: Desk, step: Any, window: Window, hidden: bool) -> dict:
     """One step through the Desk action of the same name, aimed at the pinned window."""
     if isinstance(step, Pause):
         _pause(desk, window, step.seconds)
@@ -319,7 +289,9 @@ def _do(desk: Desk, step: Any, recipe: Recipe, window: Window) -> dict:
         return {"window": None if win is None else win.to_dict()}
     if isinstance(step, Shot):
         _pinned(desk, window)
-        return desk.shot(window.address, Path(step.out).expanduser() if step.out else None, step.max_width).to_dict()
+        return desk.shot(
+            window.address, Path(step.out).expanduser() if step.out else None, step.max_width, hidden=hidden
+        ).to_dict()
     _pinned(desk, window)
     address = window.address
     # A point is in window pixels, or in the shot the step names: a shot taken earlier never moves it.
@@ -328,23 +300,25 @@ def _do(desk: Desk, step: Any, recipe: Recipe, window: Window) -> dict:
         case batch.Click():
             point = desk.click(
                 address, step.x, step.y, step.button, 2 if step.double else 1, scale, shot=step.shot,
-                element=step.element,
+                element=step.element, hidden=hidden,
             )  # fmt: skip
         case batch.Move():
             point = desk.move(address, step.x, step.y, scale, shot=step.shot, element=step.element)
         case batch.Scroll():
-            point = desk.scroll(address, step.x, step.y, step.dy, scale, shot=step.shot, element=step.element)
+            point = desk.scroll(
+                address, step.x, step.y, step.dy, scale, shot=step.shot, element=step.element, hidden=hidden
+            )
         case batch.Drag():
             point = desk.drag(address, (step.x1, step.y1), (step.x2, step.y2), step.button, step.duration,
-                              scale, shot=step.shot)  # fmt: skip
+                              scale, shot=step.shot, hidden=hidden)  # fmt: skip
         case batch.Key():
-            desk.key(step.combo, address, hold=step.hold)
+            desk.key(step.combo, address, hold=step.hold, hidden=hidden)
             return {}
         case batch.Type():
-            desk.type(step.text, address, step.delay)
+            desk.type(step.text, address, step.delay, hidden=hidden)
             return {}
         case batch.Paste():
-            desk.paste(step.text, address, combo=step.keys)
+            desk.paste(step.text, address, combo=step.keys, hidden=hidden)
             return {}
         case _:  # pragma: no cover - every member of Step is above, and parse refuses anything else
             raise AssertionError(step.action)

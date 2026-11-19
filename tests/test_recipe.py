@@ -6,6 +6,7 @@ from test_core import CLIENT, fake_grim, make_desk
 
 from deskpilot import batch, cli, recipe
 from deskpilot import record as recording
+from deskpilot.plugin import PluginError
 from deskpilot.recipe import Pause, Recipe, Shot, Wait
 
 DOC = {
@@ -138,14 +139,6 @@ def test_a_pause_fails_at_once_when_the_window_has_gone(tmp_path, monkeypatch):
     assert not result["ok"] and result["failed"]["index"] == 0 and result["completed"] == 0
 
 
-class FakeApp:
-    def __init__(self, status=None):
-        self.returncode = status
-
-    def poll(self):
-        return self.returncode
-
-
 def fake_film(desk, monkeypatch, frames=3, order=None):
     """`Desk.record` without a compositor: it films until stopped, as the real one does, and says when it began."""
     calls = []
@@ -165,27 +158,30 @@ def fake_film(desk, monkeypatch, frames=3, order=None):
     return calls
 
 
-def launch_into(fake, monkeypatch, app):
-    """No window until the recipe's app starts, as on a real desktop."""
-    shown = list(fake.clients)
-    fake.clients[:] = []
+def fake_launch(desk, fake, monkeypatch, fail=None):
+    """`Desk.launch` and `Desk.stop` without a compositor: the app's window opens when it is launched."""
+    commands: list[list[str]] = []
+    stops: list[bool] = []
 
-    def spawn(loaded, stderr):
-        fake.clients[:] = shown
-        return app
+    def launch(command, timeout=60):
+        commands.append(command)
+        if fail:
+            raise fail
+        return desk.window(fake.clients[0]["address"])
 
-    monkeypatch.setattr(recipe, "_spawn", spawn)
-    return shown
+    def stop():
+        stops.append(True)
+
+    monkeypatch.setattr(desk, "launch", launch)
+    monkeypatch.setattr(desk, "stop", stop)
+    return {"launch": commands, "stop": stops}
 
 
 def test_run_films_the_pinned_window_through_desk_record_and_stops_what_it_launched(tmp_path, monkeypatch):
     desk, fake, _, _ = make_desk(tmp_path, monkeypatch)
     order = []
     calls = fake_film(desk, monkeypatch, order=order)
-    app = FakeApp()
-    launch_into(fake, monkeypatch, app)
-    stopped = []
-    monkeypatch.setattr(recipe, "_stop_app", stopped.append)
+    launched = fake_launch(desk, fake, monkeypatch)
     real_do = recipe._do
     monkeypatch.setattr(recipe, "_do", lambda *a: order.append("step") or real_do(*a))
     output = tmp_path / "out" / "demo.mp4"
@@ -195,7 +191,7 @@ def test_run_films_the_pinned_window_through_desk_record_and_stops_what_it_launc
     assert result["recording"] == {"path": str(output), "frames": 3, "seconds": 0.12}
     assert calls == [("0xabc", output, 30)], "the pinned window's address, at the recipe's fps"
     assert order == ["first frame", "step"], "no step runs before the first frame"
-    assert stopped == [app], "the app a recipe starts is stopped on the way out"
+    assert launched == {"launch": [["walkthrough_app.py"]], "stop": [True]}, "Desk.launch, then stopped on the way out"
 
 
 def test_a_failed_step_keeps_the_recording(tmp_path, monkeypatch):
@@ -219,33 +215,53 @@ def test_a_recording_that_captured_nothing_fails_the_run(tmp_path, monkeypatch):
         recipe.run(desk, recipe.parse(DOC), tmp_path / "none.mp4")
 
 
-def test_an_app_that_dies_before_its_window_fails_at_once_with_its_own_words(tmp_path, monkeypatch):
+def test_a_launch_goes_through_desk_launch_with_its_env_in_front_and_runs_hidden(tmp_path, monkeypatch):
     desk, fake, _, _ = make_desk(tmp_path, monkeypatch)
-    fake.clients[:] = []
-
-    def spawn(loaded, stderr):
-        stderr.write(b"Traceback\nFileNotFoundError: no such app\n")
-        return FakeApp(status=2)
-
-    def never(*args, **kwargs):
-        raise TimeoutError("window did not appear")
-
-    monkeypatch.setattr(recipe, "_spawn", spawn)
-    monkeypatch.setattr(desk, "wait_for", never)
-    with pytest.raises(ValueError, match=r"exited with status 2 before .*FileNotFoundError: no such app"):
-        recipe.run(desk, recipe.parse({**DOC, "launch": ["missing"]}))
+    launched = fake_launch(desk, fake, monkeypatch)
+    seen = {}
+    monkeypatch.setattr(desk, "click", lambda *a, **k: seen.update(k) or (1, 2))
+    doc = {**DOC, "launch": ["app", "--flag"], "env": {"A": "1"}, "steps": [{"action": "click", "x": 1, "y": 1}]}
+    assert recipe.run(desk, recipe.parse(doc)).ok
+    assert launched["launch"] == [["env", "A=1", "app", "--flag"]]
+    assert seen["hidden"] is True, "a launched app is out of view, so a recipe never takes the user's focus"
 
 
-def test_a_window_already_open_is_refused_rather_than_pinned_for_a_launch(tmp_path, monkeypatch):
-    desk, _, _, _ = make_desk(tmp_path, monkeypatch)
-    monkeypatch.setattr(recipe, "_spawn", lambda *a: pytest.fail("launched over an open window"))
-    with pytest.raises(ValueError, match="already open as 0xabc"):
+def test_a_launch_waits_out_the_agent_of_the_run_before_it_still_stopping(tmp_path, monkeypatch):
+    desk, fake, _, _ = make_desk(tmp_path, monkeypatch)
+    launched = fake_launch(desk, fake, monkeypatch)
+    real = desk.launch
+    refusals = [PluginError("agent DESKPILOT is stopping", "busy")]
+
+    def launch(command, timeout=60):
+        if refusals:
+            raise refusals.pop()
+        return real(command, timeout)
+
+    monkeypatch.setattr(desk, "launch", launch)
+    monkeypatch.setattr(recipe, "BUSY_RETRY", 0)
+    steps = [{"action": "pause", "seconds": 0}]
+    assert recipe.run(desk, recipe.parse({**DOC, "launch": ["app"], "steps": steps})).ok
+    assert len(launched["launch"]) == 1
+
+
+def test_a_launch_that_fails_still_stops_the_agent_and_says_why(tmp_path, monkeypatch):
+    desk, fake, _, _ = make_desk(tmp_path, monkeypatch)
+    launched = fake_launch(desk, fake, monkeypatch, fail=RuntimeError("app exited 2 before opening a window"))
+    with pytest.raises(RuntimeError, match="exited 2"):
         recipe.run(desk, recipe.parse({**DOC, "launch": ["app"]}))
+    assert launched["stop"] == [True]
 
 
-def test_a_launch_that_cannot_start_is_a_coded_failure(tmp_path):
-    with pytest.raises(ValueError, match="cannot start /no/such/app"):
-        recipe._spawn(recipe.parse({**DOC, "launch": ["/no/such/app"]}), (tmp_path / "err").open("wb"))
+def test_the_first_window_of_a_launch_must_be_the_one_the_recipe_names(tmp_path, monkeypatch):
+    desk, fake, _, _ = make_desk(tmp_path, monkeypatch)
+    fake_launch(desk, fake, monkeypatch)
+    with pytest.raises(recipe.WindowNotFound):
+        recipe.run(desk, recipe.parse({**DOC, "window": "other-app", "launch": ["app"]}))
+
+
+def test_a_move_in_a_launching_recipe_is_refused_since_hidden_shows_no_cursor():
+    with pytest.raises(ValueError, match="move only shows the agent cursor"):
+        recipe.parse({**DOC, "launch": ["app"], "steps": [{"action": "move", "x": 1, "y": 1}]})
 
 
 def test_a_shot_refuses_a_window_replaced_under_the_pinned_address(tmp_path, monkeypatch):
