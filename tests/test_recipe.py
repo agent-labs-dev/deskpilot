@@ -150,6 +150,7 @@ def fake_film(desk, monkeypatch, frames=3, order=None):
         if order is not None:
             order.append("first frame")
         assert started is not None
+        assert started is not None
         started.set()
         stop.wait(5)
         return recording.Result(frames, 0.12)
@@ -316,3 +317,37 @@ def test_a_launched_window_replaced_before_the_pin_stops_the_run(tmp_path, monke
     monkeypatch.setattr(desk, "wait_for", replaced)
     with pytest.raises(recipe.WindowNotFound):
         recipe.run(desk, recipe.parse({**DOC, "launch": ["app"]}))
+
+
+def test_a_wait_refuses_a_replacement_that_satisfies_it(tmp_path, monkeypatch):
+    desk, fake, _, _ = make_desk(tmp_path, monkeypatch)
+    wait_for = desk.wait_for
+    calls = []
+
+    def replaced_during_the_wait(*args, **kwargs):
+        calls.append(args)
+        found = wait_for(*args, **kwargs)
+        if len(calls) > 1:  # the first call pins the window, the second is the step
+            fake.clients[0] = {**CLIENT, "pid": 99}
+            return desk.window(CLIENT["address"])
+        return found
+
+    monkeypatch.setattr(desk, "wait_for", replaced_during_the_wait)
+    result = recipe.run(desk, recipe.parse({**DOC, "steps": [{"action": "wait", "title": ""}]})).to_dict()
+    assert result["failed"]["code"] == "not_found" and result["completed"] == 0
+
+
+def test_a_recording_that_hits_its_limit_fails_the_run_instead_of_succeeding_truncated(tmp_path, monkeypatch):
+    desk, _, _, _ = make_desk(tmp_path, monkeypatch)
+
+    def record(query, out, stop, fps, seconds=None, hidden=False, started=None):
+        out.write_bytes(b"mp4")
+        assert started is not None
+        started.set()
+        return recording.Result(5, 600.0)  # the recorder's own limit ended it
+
+    monkeypatch.setattr(desk, "record", record)
+    steps = [{"action": "pause", "seconds": 0.3}, {"action": "pause", "seconds": 0}]
+    result = recipe.run(desk, recipe.parse({**DOC, "steps": steps}), tmp_path / "long.mp4").to_dict()
+    assert not result["ok"] and "limit" in result["failed"]["message"]
+    assert result["recording"]["path"] == str(tmp_path / "long.mp4"), "the clip is still kept"

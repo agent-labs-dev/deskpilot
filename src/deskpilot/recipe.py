@@ -202,6 +202,11 @@ class _Film:
                 self.finish()
                 raise RuntimeError(f"the recording of {address} stopped before its first frame")
 
+    @property
+    def ended_early(self) -> bool:
+        """The recording stopped by itself, at its length limit, before the run asked it to."""
+        return not self._thread.is_alive() and not self._stop.is_set()
+
     def finish(self) -> dict:
         """Stop filming and report the clip. A recording that captured nothing raises the capture's own error."""
         self._stop.set()
@@ -258,10 +263,18 @@ def run(desk: Desk, recipe: Recipe, record: Path | None = None) -> RunResult:
             _pinned(desk, window)  # the film found the window by address: it must still be the pinned one
         for index, step in enumerate(recipe.steps):
             try:
+                if film is not None and film.ended_early:
+                    raise RuntimeError(
+                        f"the recording ended at its {recording.MAX_SECONDS}s limit before the recipe did"
+                    )
                 result.results.append({"index": index, "action": step.action, **_do(desk, step, window, hidden)})
             except EXPECTED as error:
                 result.failed = Failure(index, step.action, error_code(error), str(error))
                 return result
+        if film is not None and film.ended_early:
+            result.failed = Failure(
+                len(recipe.steps), "record", "refused", "the recording ended at its limit before the recipe did"
+            )
     finally:
         # The clip is kept whatever happened, so a failed demo can be watched; the app it started is not.
         try:
@@ -287,10 +300,13 @@ def _do(desk: Desk, step: Any, window: Window, hidden: bool) -> dict:
         _pause(desk, window, step.seconds)
         return {"seconds": step.seconds}
     if isinstance(step, Wait):
-        if not step.window and not step.gone:
+        own = not step.window and not step.gone
+        if own:
             _pinned(desk, window)
         target = step.window or window.address
         win = desk.wait_for(target, step.timeout, step.gone, step.focused, step.title, _size(step.size))
+        if own and win is not None and (win.pid, win.stable_id) != (window.pid, window.stable_id):
+            raise WindowNotFound(f"window {window.address} is no longer the {window.cls} the recipe started on")
         return {"window": None if win is None else win.to_dict()}
     if isinstance(step, Shot):
         _pinned(desk, window)
