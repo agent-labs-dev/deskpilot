@@ -139,15 +139,12 @@ class MacDriver:
         return round(point.x), round(point.y)
 
     def top_at(self, x: int, y: int) -> str | None:
-        q = self.q
-        for entry in q.CGWindowListCopyWindowInfo(q.kCGWindowListOptionOnScreenOnly, q.kCGNullWindowID) or []:
-            bounds = entry.get(q.kCGWindowBounds) or {}
-            left, top = bounds.get("X", 0), bounds.get("Y", 0)
-            if not entry.get(q.kCGWindowAlpha, 1) or entry.get(q.kCGWindowLayer, 0) >= 1000:
-                continue
-            if left <= x < left + bounds.get("Width", 0) and top <= y < top + bounds.get("Height", 0):
-                return hex(int(entry[q.kCGWindowNumber]))
-        return None
+        """The window a click at this point would reach, as AppKit hit-tests it, so a window that lets clicks
+        through (the Dock's full-screen layer) never counts as covering the point. AppKit's screen origin is the
+        bottom left of the main display."""
+        height = self.appkit.NSScreen.screens()[0].frame().size.height
+        number = self.appkit.NSWindow.windowNumberAtPoint_belowWindowWithWindowNumber_((x, height - y), 0)
+        return hex(int(number)) if number else None
 
     # Capture
 

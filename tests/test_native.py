@@ -248,3 +248,10 @@ def test_a_posted_messages_key_state_holds_exactly_its_buttons_and_modifiers():
     assert all(state[vk] & 0x80 for vk in (0x01, 0x11, 0xA2)), "the button, Ctrl and left Ctrl are down"
     assert not any(state[vk] & 0x80 for vk in (0x02, 0x10, 0xA0, 0x12)), "other buttons and modifiers are up"
     assert state[0x41] == 0x80, "keys it does not track keep their state"
+
+
+def test_only_the_key_state_deskpilot_set_is_put_back():
+    saved, wanted = bytes([0x80, 0, 0]), bytes([0, 0x80, 0x80])
+    now = bytes([0, 0x80, 0])  # the user released key 2 while the message was handled
+    assert win32.restore_state(saved, wanted, now) == bytes([0x80, 0, 0])
+    assert win32.restore_state(saved, wanted, bytes([0x80, 0x80, 0x80])) == bytes([0x80, 0, 0])

@@ -110,6 +110,12 @@ def key_state(state: bytes, down: set[int]) -> bytes:
     return bytes(out)
 
 
+def restore_state(saved: bytes, wanted: bytes, now: bytes) -> bytes:
+    """The key state after a posted message: each byte deskpilot changed goes back to what it was, unless the user's
+    own input has changed it since."""
+    return bytes(s if w != s and n == w else n for s, w, n in zip(saved, wanted, now, strict=True))
+
+
 def key_lparam(scan: int, down: bool, extended: bool, alt: bool = False) -> int:
     """The lParam of a posted WM_KEYDOWN or WM_KEYUP: repeat count 1, the scan code, and the transition bits."""
     value = 1 | (scan & 0xFF) << 16
@@ -405,17 +411,11 @@ class Win32Driver:
         """Post a message with the buttons and keys in `down` held in the target thread's key state until the app has
         handled it. Apps such as Tk read buttons and modifiers with GetKeyState, not from the message, so the state
         must agree with it. deskpilot attaches to the thread's input queue, sets the state, posts, waits and puts the
-        state back, as AutoHotkey's ControlSend does. The foreground thread's state is the user's own keyboard and is
-        never changed: a modifier for it is refused, and a button message is posted as it is."""
+        state back, as AutoHotkey's ControlSend does. Only the bytes it set are put back, and only while they still
+        hold what it set: in the foreground app the state follows the user's real keyboard, and a key the user pressed
+        meanwhile stays as the system recorded it. A key the user holds is up for the message, so their Ctrl never
+        turns the agent's click into a Ctrl-click."""
         thread = self.user32.GetWindowThreadProcessId(target, None)
-        if not down or thread == self.user32.GetWindowThreadProcessId(self.user32.GetForegroundWindow(), None):
-            if down & set(MODIFIER_SIDES):
-                raise Unavailable(
-                    f"{window.cls} has the user's keyboard, so a posted chord would arrive without its modifiers: pass "
-                    "take_focus to send it through the system"
-                )
-            self._post(window, target, message, wparam, lparam)
-            return
         me = self.kernel32.GetCurrentThreadId()
         if not self.user32.AttachThreadInput(me, thread, True):
             raise RuntimeError(  # refused
@@ -425,7 +425,8 @@ class Win32Driver:
         try:
             saved = (ctypes.c_ubyte * 256)()
             self.user32.GetKeyboardState(saved)
-            self.user32.SetKeyboardState((ctypes.c_ubyte * 256).from_buffer_copy(key_state(bytes(saved), set(down))))
+            wanted = key_state(bytes(saved), set(down))
+            self.user32.SetKeyboardState((ctypes.c_ubyte * 256).from_buffer_copy(wanted))
             try:
                 self._post(window, target, message, wparam, lparam)
                 # A sent message is handled the next time the thread reads its queue. The first returns once the
@@ -433,7 +434,10 @@ class Win32Driver:
                 for _ in range(2):
                     self.user32.SendMessageTimeoutW(target, WM_NULL, 0, 0, SMTO_ABORTIFHUNG, 2000, None)
             finally:
-                self.user32.SetKeyboardState(saved)
+                now = (ctypes.c_ubyte * 256)()
+                self.user32.GetKeyboardState(now)
+                restored = restore_state(bytes(saved), wanted, bytes(now))
+                self.user32.SetKeyboardState((ctypes.c_ubyte * 256).from_buffer_copy(restored))
         finally:
             self.user32.AttachThreadInput(me, thread, False)
 
