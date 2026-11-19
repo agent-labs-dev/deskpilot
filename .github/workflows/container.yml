@@ -14,34 +14,23 @@ concurrency:
 
 jobs:
   smoke:
-    name: Container smoke (${{ matrix.runner }})
-    runs-on: ${{ matrix.runner }}
+    name: Container smoke
+    runs-on: ubuntu-24.04
     timeout-minutes: 30
-    strategy:
-      fail-fast: false
-      matrix:
-        runner: [ubuntu-24.04, blacksmith-16vcpu-ubuntu-2404]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
       - name: Load vkms
-        run: |
-          uname -a
-          ls /dev/dri /sys/class/drm || true
-          ls "/lib/modules/$(uname -r)" || true
-          ls "/lib/modules/$(uname -r)/kernel/drivers/gpu/drm" || true
-          { zcat /proc/config.gz 2>/dev/null || cat "/boot/config-$(uname -r)" 2>/dev/null; } | grep -E "^CONFIG_(DRM|DRM_VKMS|DRM_VGEM|UDMABUF|DMABUF_HEAPS)=" || true
-          sudo modprobe vkms || { sudo apt-get update -q && sudo apt-get install -yq "linux-modules-extra-$(uname -r)" && sudo modprobe vkms; }
-          ls -l /dev/dri
+        run: sudo modprobe vkms || { sudo apt-get update -q && sudo apt-get install -yq "linux-modules-extra-$(uname -r)" && sudo modprobe vkms; }
       - name: Build image
-        run: docker build -f container/Dockerfile -t deskpilot-spike .
-      - name: Run spike
+        run: docker build -f container/Dockerfile -t deskpilot .
+      - name: Smoke
         run: |
-          mkdir -p out
-          docker run --rm --device /dev/dri -v /run/udev:/run/udev:ro -v "$PWD/out:/out" deskpilot-spike deskpilot-spike
+          mkdir -p out && chmod 777 out
+          docker run --rm --device /dev/dri -v "$PWD/out:/out" deskpilot /opt/deskpilot/container/smoke.sh
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: always()
         with:
-          name: spike-${{ matrix.runner }}
+          name: smoke
           path: out

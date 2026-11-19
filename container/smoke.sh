@@ -5,11 +5,14 @@ set -euo pipefail
 OUT=${OUT:-/out}
 TEXT="hello from deskpilot"
 
+logs() { cp "$XDG_RUNTIME_DIR"/deskpilot/sessions/*/*.log "$OUT/" 2>/dev/null || true; }
 fail() {
     echo "smoke: $*" >&2
-    cat "$XDG_RUNTIME_DIR"/deskpilot/sessions/*/worker.log "$XDG_RUNTIME_DIR"/deskpilot/sessions/*/seatd.log 2>/dev/null >&2 || true
+    logs
+    tail -n 40 "$OUT"/*.log >&2 || true
     exit 1
 }
+trap 'fail "failed at line $LINENO"' ERR
 field() { python3 -c 'import json, sys; print(json.load(sys.stdin)[sys.argv[1]])' "$1"; }
 
 eval "$(deskpilot --session env)" || fail "the session did not start"
@@ -17,7 +20,8 @@ echo "session: HYPRLAND_INSTANCE_SIGNATURE=$HYPRLAND_INSTANCE_SIGNATURE WAYLAND_
 hyprctl monitors | tee "$OUT/monitors.txt"
 deskpilot --session plugin status
 
-wf-recorder -o Virtual-1 -f "$OUT/smoke.mp4" > "$OUT/wf-recorder.log" 2>&1 &
+output=$(hyprctl -j monitors | python3 -c 'import json, sys; print(json.load(sys.stdin)[0]["name"])')
+wf-recorder -o "$output" -f "$OUT/smoke.mp4" > "$OUT/wf-recorder.log" 2>&1 &
 recorder=$!
 sleep 1
 
@@ -39,5 +43,6 @@ sleep 1
 kill -INT "$recorder"
 wait "$recorder" || true
 [ -s "$OUT/smoke.mp4" ] || fail "wf-recorder wrote no clip"
+logs
 deskpilot --session stop
 echo "smoke: ok"

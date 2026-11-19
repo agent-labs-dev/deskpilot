@@ -466,11 +466,25 @@ def served(tmp_path, monkeypatch):
         calls.append(("publish", dict(env)))
         (p / "ready.json").write_text("{}")
 
+    def start_standalone(p, env, overrides, children):
+        calls.append(("standalone", dict(env), dict(overrides), json.loads((p / "starting.json").read_text())))
+        env["WAYLAND_DISPLAY"], env["HYPRLAND_INSTANCE_SIGNATURE"] = "wl", "standalone"
+        return 501, "comp", "standalone", "wl"
+
+    class Plugin:
+        def __init__(self, run):
+            self.run = run
+
+        def load(self):
+            calls.append(("plugin", session.build_dir()))
+
     monkeypatch.setattr(session, "keyboard_binary", keyboard_binary)
+    monkeypatch.setattr(session, "Plugin", Plugin)
     monkeypatch.setattr(session, "_start_compositor", start_compositor)
+    monkeypatch.setattr(session, "_start_standalone", start_standalone)
     monkeypatch.setattr(session, "_start_services", start_services)
     monkeypatch.setattr(session, "_publish_record", publish)
-    monkeypatch.setattr(session, "_ctl", lambda *a: "")
+    monkeypatch.setattr(session, "_ctl", lambda *a: calls.append(("ctl", a)) or "")
     monkeypatch.setattr(session, "_dispatch", lambda *a: "ok")
     monkeypatch.setattr(session, "_session_loop", lambda *a: None)
     monkeypatch.setattr(session.signal, "signal", lambda *a: None)
@@ -484,10 +498,11 @@ def served(tmp_path, monkeypatch):
 def test_profile_and_token_are_decided_once_before_compositor_and_services(served):
     path, calls, _ = served
     session.serve(path, "parent")
+    calls[:] = [c for c in calls if c[0] != "ctl"]
     names = [c[0] for c in calls]
-    assert names == ["keyboard", "compositor", "services", "publish", "apps"]
+    assert names == ["keyboard", "compositor", "plugin", "services", "publish", "apps"]
     compositor_env, overrides, starting = calls[1][1:]
-    services_env, published_env = calls[2][1], calls[3][1]
+    services_env, published_env = calls[3][1], calls[4][1]
     token = overrides[session.TOKEN_ENV]
     assert session._token_ok(token) and token != "inherited"
     assert starting["token"] == token  # recorded before the compositor launched
@@ -495,6 +510,22 @@ def test_profile_and_token_are_decided_once_before_compositor_and_services(serve
         assert {k: env[k] for k in overrides} == overrides
     assert calls[0][1] == session.build_dir()  # keyboard cache is not under the profile
     assert calls[-1] == ("apps", token)
+
+
+def test_plugin_loads_from_the_worker_build_directory_not_the_agent_profile(served):
+    path, calls, _ = served
+    session.serve(path, "parent")
+    assert ("plugin", session.build_dir()) in calls
+
+
+def test_standalone_session_starts_its_own_compositor_on_its_own_output(served):
+    path, calls, _ = served
+    session.serve(path, "")
+    names = [c[0] for c in calls if c[0] != "ctl"]
+    assert names == ["keyboard", "standalone", "plugin", "services", "publish", "apps"]
+    controlled = [c[1] for c in calls if c[0] == "ctl"]
+    assert ("standalone", "dismissnotify") in controlled
+    assert not any("output" in args for args in controlled)  # the vkms output is its desktop: no headless one
 
 
 def test_records_are_kept_until_apps_and_services_have_stopped(served):
@@ -722,3 +753,110 @@ def test_failed_keyboard_build_leaves_no_binary_and_is_retried(build):
     build["fail"] = False
     assert session.keyboard_binary().exists()
     assert len(build["seen"]) == 2
+
+
+# --- standalone: the vkms display, the display node, never as root ---------------------------------------------------
+
+
+def _drm(tmp_path, cards: dict[str, str]) -> Path:
+    root = tmp_path / "sys"
+    for card, device in cards.items():
+        target = root / "devices" / device
+        target.mkdir(parents=True, exist_ok=True)
+        (root / "class" / card).mkdir(parents=True)
+        (root / "class" / card / "device").symlink_to(target)
+    return root / "class"
+
+
+@pytest.mark.parametrize("device", ["faux/vkms", "platform/vkms"])
+def test_vkms_card_is_found_by_its_device_and_a_real_display_is_never_taken(tmp_path, monkeypatch, device):
+    drm = _drm(tmp_path, {"card0": "pci0000:00/0000:00:02.0", "card1": device})
+    monkeypatch.setattr(session, "Path", lambda p: drm if p == "/sys/class/drm" else Path(p))
+    assert session.vkms_card() == "/dev/dri/card1"
+
+
+def test_no_vkms_is_an_error_naming_the_fix(tmp_path, monkeypatch):
+    drm = _drm(tmp_path, {"card0": "pci0000:00/0000:00:02.0"})
+    monkeypatch.setattr(session, "Path", lambda p: drm if p == "/sys/class/drm" else Path(p))
+    with pytest.raises(session.HyprctlError, match="modprobe vkms"):
+        session.vkms_card()
+
+
+def test_standalone_refuses_root_before_starting_anything(tmp_path, monkeypatch):
+    monkeypatch.setattr(session.os, "geteuid", lambda: 0)
+    monkeypatch.setattr(session.subprocess, "Popen", lambda *a, **kw: pytest.fail("started as root"))
+    with pytest.raises(session.HyprctlError, match="root"):
+        session._start_standalone(tmp_path, {}, {}, [])
+
+
+def test_standalone_refuses_a_display_node_it_cannot_open(tmp_path, monkeypatch):
+    card = tmp_path / "card1"
+    card.touch(mode=0o400)
+    monkeypatch.setattr(session, "vkms_card", lambda: str(card))
+    monkeypatch.setattr(session.subprocess, "Popen", lambda *a, **kw: pytest.fail("started without the node"))
+    with pytest.raises(session.HyprctlError, match="add the user to its group"):
+        session._start_standalone(tmp_path, {}, {}, [])
+
+
+def test_standalone_runs_hyprland_on_the_vkms_node_with_the_noop_seat(tmp_path, monkeypatch):
+    card = tmp_path / "card1"
+    card.touch()
+    monkeypatch.setattr(session, "vkms_card", lambda: str(card))
+    started = []
+
+    class Compositor:
+        def __init__(self, argv, **kw):
+            started.append(argv)
+
+        def poll(self):
+            return None
+
+    monkeypatch.setattr(session.subprocess, "Popen", Compositor)
+    monkeypatch.setattr(session, "_launched", lambda path, ask, fail: (fail(), (7, "b", "sig", "wayland-1"))[1])
+    env: dict[str, str] = {}
+    children: list = []
+    assert session._start_standalone(tmp_path, env, {}, children) == (7, "b", "sig", "wayland-1")
+    assert env == {"HYPRLAND_INSTANCE_SIGNATURE": "sig", "WAYLAND_DISPLAY": "wayland-1"}
+    assert started == [[str(tmp_path / "launch.py")]] and len(children) == 1
+    launcher = (tmp_path / "launch.py").read_text()
+    assert "'LIBSEAT_BACKEND': 'noop'" in launcher and f"'AQ_DRM_DEVICES': '{card}'" in launcher
+
+
+def test_standalone_needs_no_parent_compositor(monkeypatch):
+    monkeypatch.setenv(session.STANDALONE_ENV, "1")
+    monkeypatch.setattr(session, "parent_instance", lambda: pytest.fail("asked for a parent"))
+    assert session._parent() == ""
+
+
+def test_env_prints_the_session_environment_as_shell_exports(monkeypatch, capsys):
+    from deskpilot import cli
+
+    for name in ("WAYLAND_DISPLAY", "HOME"):  # restored after main() puts the session's values in os.environ
+        monkeypatch.setenv(name, "")
+    monkeypatch.setattr(session, "environment", lambda: {"WAYLAND_DISPLAY": "wayland-1", "HOME": "/a b"})
+    assert cli.main(["--session", "env"]) == 0
+    assert capsys.readouterr().out.splitlines() == ["export HOME='/a b'", "export WAYLAND_DISPLAY=wayland-1"]
+    assert cli.main(["--session", "--json", "env"]) == 0
+    assert json.loads(capsys.readouterr().out) == {"WAYLAND_DISPLAY": "wayland-1", "HOME": "/a b"}
+
+
+def test_env_without_a_session_is_refused(capsys):
+    from deskpilot import cli
+
+    assert cli.main(["env"]) == 2
+    assert "needs --session" in capsys.readouterr().err
+
+
+def test_available_memory_is_capped_by_the_cgroup_limit(tmp_path):
+    proc, cgroups = tmp_path / "proc", tmp_path / "cgroup"
+    (proc / "self").mkdir(parents=True)
+    (proc / "meminfo").write_text("MemTotal: 16000000 kB\nMemAvailable: 12582912 kB\n")
+    (proc / "self" / "cgroup").write_text("0::/docker/abc\n")
+    assert session.available_mb(proc, cgroups) == 12288
+    group = cgroups / "docker" / "abc"
+    group.mkdir(parents=True)
+    (group / "memory.max").write_text("max\n")
+    (group / "memory.current").write_text(str(2**30))
+    assert session.available_mb(proc, cgroups) == 12288
+    (group / "memory.max").write_text(str(4 * 2**30))
+    assert session.available_mb(proc, cgroups) == 3072
