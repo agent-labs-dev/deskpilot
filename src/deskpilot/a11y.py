@@ -50,6 +50,8 @@ GONE_ERRORS = frozenset(
         "org.freedesktop.DBus.Error.UnknownMethod",
     }
 )
+# The app's whole bus name is gone, not one of its objects: its tree cannot be read on with some elements left out.
+APP_GONE_ERRORS = frozenset({"org.freedesktop.DBus.Error.ServiceUnknown", "org.freedesktop.DBus.Error.NameHasNoOwner"})
 TEXT_LIMIT = 4000
 
 _STATE_NAMES = (
@@ -538,27 +540,40 @@ def _app_for_pid(bus: _Bus, pid: int) -> tuple[str, str]:
     )
 
 
+def _object_gone(exc: A11yError) -> bool:
+    """Whether the app removed one accessible, rather than the app's bus name or anything else failing."""
+    cause = exc.__cause__
+    return exc.code == "stale" and not (isinstance(cause, DBusErrorResponse) and cause.name in APP_GONE_ERRORS)
+
+
 def _choose_toplevel(bus: _Bus, app_bus: str, app_path: str, window: Window) -> tuple[str, str]:
     candidates = []
     names = []
+    skipped = False
     for ref in _children(bus, app_bus, app_path):
         try:
             role = _role(bus, *ref)
             name = _name(bus, *ref)
         except A11yError as exc:
-            if exc.code != "stale":
+            if not _object_gone(exc):
                 raise
-            # Another toplevel of the app, such as a dialog that just closed, went while the list was read.
+            # A toplevel of the app, such as a dialog that just closed, went while the list was read.
+            skipped = True
             continue
         names.append(name)
         if role.casefold() in {"frame", "window", "dialog"}:
             candidates.append((ref, role, name))
 
-    if len(candidates) == 1:
+    # The one toplevel left after another went may not be this window's: only its title can say it is.
+    if len(candidates) == 1 and not skipped:
         return candidates[0][0]
     exact = [candidate for candidate in candidates if candidate[2] == window.title]
     if len(exact) == 1:
         return exact[0][0]
+    if skipped:
+        raise A11yError(
+            f"A toplevel of the app closed while {window.title!r} was looked for, and no other has that title.", "gone"
+        )
     listed = ", ".join(repr(name) for name in names) or "none"
     raise A11yError(
         f"Could not choose an accessibility toplevel for {window.title!r}: candidates are {listed}. "
@@ -628,8 +643,8 @@ class _Placer:
 def _leave_out(exc: A11yError, records: dict[str, dict[str, str]], recorded: int) -> None:
     """Drop the records a walk of an element added after the first `recorded`, when the app removed that element while
     the tree was read, as a dialog's button goes once a click on it closes the dialog: it is no longer in the tree.
-    Any other failure is raised."""
-    if exc.code != "stale":
+    Any other failure, the app's bus name going among them, is raised."""
+    if not _object_gone(exc):
         raise exc
     for gone in list(records)[recorded:]:
         del records[gone]

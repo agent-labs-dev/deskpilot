@@ -424,3 +424,32 @@ def test_a_toplevel_that_vanishes_while_the_tree_is_read_is_gone(tmp_path, monke
     with pytest.raises(a11y.A11yError) as error:
         a11y.snapshot(window(), bus=Closing())
     assert error.value.code == "gone"
+
+
+def test_an_app_that_leaves_the_bus_while_its_tree_is_read_is_gone(tmp_path, monkeypatch):
+    # A child read failing because the app's bus name went is the whole tree gone, not one element left out.
+    monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path))
+    fake = FakeBus()
+    fake.failure = _dbus_error("org.freedesktop.DBus.Error.NameHasNoOwner")
+    with pytest.raises(a11y.A11yError) as error:
+        a11y.snapshot(window(), bus=fake)
+    assert error.value.code == "gone"
+
+
+def test_the_one_toplevel_left_after_another_closed_must_have_the_title(tmp_path, monkeypatch):
+    monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path))
+
+    class Closing(FakeBus):
+        def __init__(self, title):
+            super().__init__(duplicate_title=True)
+            self.names["/dialog"] = title
+
+        def call(self, destination, object_path, interface, method, signature, body):
+            if object_path == "/frame":
+                raise _dbus_error("org.freedesktop.DBus.Error.UnknownMethod")
+            return super().call(destination, object_path, interface, method, signature, body)
+
+    with pytest.raises(a11y.A11yError) as error:
+        a11y.snapshot(window(), bus=Closing("Preferences"))
+    assert error.value.code == "gone"
+    assert a11y.snapshot(window(), bus=Closing("Editor")).role == "dialog"
