@@ -820,6 +820,8 @@ def test_standalone_runs_hyprland_on_the_vkms_node_with_the_noop_seat(tmp_path, 
     assert started == [[str(tmp_path / "launch.py")]] and len(children) == 1
     launcher = (tmp_path / "launch.py").read_text()
     assert "'LIBSEAT_BACKEND': 'noop'" in launcher and f"'AQ_DRM_DEVICES': '{card}'" in launcher
+    # The vkms connector's number varies by host, so the desktop rule names no output.
+    assert 'hl.monitor({ output = "", mode = "1280x800"' in (tmp_path / "hyprland.lua").read_text()
 
 
 def test_standalone_needs_no_parent_compositor(monkeypatch):

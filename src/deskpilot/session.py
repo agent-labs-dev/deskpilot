@@ -39,14 +39,15 @@ IDLE_SECONDS = 1800
 START_TIMEOUT = 30
 NATIVE = Path(__file__).with_name("native")
 STANDALONE_ENV = "DESKPILOT_STANDALONE"
+# `{desktop}` is the agent's output: nested, the headless DESKPILOT; standalone, "" for every output, which there are
+# only the vkms card's connectors, whose number varies by host.
 CONFIG = """
-hl.monitor({ output = "WAYLAND-1", disabled = true })
-hl.monitor({ output = "DESKPILOT", mode = "1280x800", position = "0x0", scale = 1 })
-hl.monitor({ output = "Virtual-1", mode = "1280x800", position = "0x0", scale = 1 })
-hl.config({
-    misc = { disable_hyprland_logo = true, disable_splash_rendering = true },
-    animations = { enabled = false },
-})
+hl.monitor({{ output = "WAYLAND-1", disabled = true }})
+hl.monitor({{ output = "{desktop}", mode = "1280x800", position = "0x0", scale = 1 }})
+hl.config({{
+    misc = {{ disable_hyprland_logo = true, disable_splash_rendering = true }},
+    animations = {{ enabled = false }},
+}})
 """
 
 
@@ -541,10 +542,10 @@ def _dispatch(signature: str, lua: str, legacy: str) -> str:
     return _ctl(signature, "dispatch", *legacy.split(" ", 1))
 
 
-def _launcher(path: Path, overrides: dict[str, str], seat: dict[str, str]) -> Path:
+def _launcher(path: Path, overrides: dict[str, str], seat: dict[str, str], desktop: str) -> Path:
     """A script that records its own pid and birth in starting.json, then becomes Hyprland with the session's
     environment. `seat` is how Hyprland gets (or is kept from) a DRM seat."""
-    (path / "hyprland.lua").write_text(CONFIG)
+    (path / "hyprland.lua").write_text(CONFIG.format(desktop=desktop))
     launcher = path / "launch.py"
     launcher.write_text(
         f"#!{sys.executable}\nimport os, json\nfrom pathlib import Path\n"
@@ -588,7 +589,7 @@ def _start_compositor(
     path: Path, parent: str, env: dict[str, str], overrides: dict[str, str]
 ) -> tuple[int, str, str, str]:
     # A seat backend libseat does not have, so the DRM backend fails at once instead of asking for the user's seat.
-    launcher = _launcher(path, overrides, {"LIBSEAT_BACKEND": "deskpilot-no-drm"})
+    launcher = _launcher(path, overrides, {"LIBSEAT_BACKEND": "deskpilot-no-drm"}, "DESKPILOT")
     command = json.dumps(str(launcher))
     workspace = json.dumps(f"special:agent-{agent_from_env()} silent")
     legacy = f"exec [workspace {workspace.strip(chr(34))}] {launcher}"
@@ -621,7 +622,7 @@ def _start_standalone(
         raise HyprctlError(
             f"{card} is not writable by this user: add the user to its group (gid {os.stat(card).st_gid})"
         )
-    launcher = _launcher(path, overrides, {"LIBSEAT_BACKEND": "noop", "AQ_DRM_DEVICES": card})
+    launcher = _launcher(path, overrides, {"LIBSEAT_BACKEND": "noop", "AQ_DRM_DEVICES": card}, "")
     compositor = subprocess.Popen([str(launcher)], env=env, stdin=subprocess.DEVNULL)
     children.append(compositor)
 
