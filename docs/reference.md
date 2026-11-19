@@ -65,9 +65,10 @@ when the popup cannot be told exactly the action is refused (`stale` once it clo
 it) and `elements` reports the item with zero bounds, as it does an element whose app gives it a negative size (GTK 4
 does for a tab panel whose page is not realized), which a click refuses `offscreen`. An element's click is also refused `covered` when another
 surface, such as a submenu over its menu, takes the point. GTK and Qt apps expose a tree; Chromium, Electron and
-Firefox expose one only when started with accessibility on, and Wine games expose none. Chromium and Electron need
-both `ACCESSIBILITY_ENABLED=1` in their environment, which `launch` sets, and `--force-renderer-accessibility`: the
-first puts the app on the accessibility bus, the second its pages in the tree. An app with no tree is an error saying so, never a guessed one.
+Firefox expose one only when started with accessibility on, and Wine games expose none. Chromium and Electron join
+the accessibility bus when it is already enabled as they start (its `org.a11y.Status.IsEnabled` property is true) or
+when `ACCESSIBILITY_ENABLED=1` is in their environment, which `launch` sets; `--force-renderer-accessibility` puts
+their pages in the tree. An app with no tree is an error saying so, never a guessed one.
 
 A shell started before Hyprland restarted keeps a stale `HYPRLAND_INSTANCE_SIGNATURE`. deskpilot then talks to
 the one instance whose socket answers, and with several live instances it stops and names them.
