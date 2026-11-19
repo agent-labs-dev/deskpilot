@@ -35,9 +35,8 @@ hl.config({
     debug = { enable_stdout_logs = true },
 })
 EOF
-EGL_LOG_LEVEL=debug LIBGL_DEBUG=verbose MESA_DEBUG=1 AQ_TRACE=1 HYPRLAND_NO_SD_NOTIFY=1 DEBUGINFOD_URLS=https://debuginfod.archlinux.org \
-    gdb -q -batch -ex "set debuginfod enabled on" -ex run -ex "thread apply all bt" \
-    --args Hyprland -c ~/.config/hypr/hyprland.lua > "$OUT/hyprland.log" 2>&1 &
+EGL_LOG_LEVEL=debug LIBGL_DEBUG=verbose MESA_DEBUG=1 AQ_TRACE=1 HYPRLAND_NO_SD_NOTIFY=1 \
+    strace -f -s 600 -e trace=execve,write,openat -o "$OUT/strace.txt" Hyprland -c ~/.config/hypr/hyprland.lua > "$OUT/hyprland.log" 2>&1 &
 hypr=$!
 for _ in $(seq 900); do
     sig=$(ls "$XDG_RUNTIME_DIR/hypr" 2>/dev/null | head -1)
@@ -51,7 +50,7 @@ if ! kill -0 $hypr 2>/dev/null; then
     tail -80 "$OUT/hyprland-full.log"
     cp ~/.cache/hyprland/hyprlandCrashReport*.txt "$OUT/" 2>/dev/null
     cat ~/.cache/hyprland/hyprlandCrashReport*.txt 2>/dev/null | head -80
-    grep -n -A60 "received signal\|Thread 1" "$OUT/hyprland.log" | head -120
+    grep -E "execve|CRIT|ssert|/dev/dri|gbm|dri\.so|EGL" "$OUT/strace.txt" | grep -v ENOENT | tail -60
     exit 1
 fi
 export HYPRLAND_INSTANCE_SIGNATURE=$sig

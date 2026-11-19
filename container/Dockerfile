@@ -8,7 +8,7 @@ RUN echo "Server = https://archive.archlinux.org/repos/${ARCH_SNAPSHOT}/\$repo/o
     && pacman -Syyuu --noconfirm --needed \
         hyprland seatd mesa grim wf-recorder wl-clipboard at-spi2-core dbus glib2 \
         gcc make pkgconf wayland libxkbcommon cairo pixman libdrm libxcb \
-        python uv zenity ttf-dejavu gdb debuginfod \
+        python uv zenity ttf-dejavu strace \
     && pacman -Scc --noconfirm
 
 COPY . /opt/deskpilot
