@@ -165,12 +165,25 @@ def fake_film(desk, monkeypatch, frames=3, order=None):
     return calls
 
 
+def launch_into(fake, monkeypatch, app):
+    """No window until the recipe's app starts, as on a real desktop."""
+    shown = list(fake.clients)
+    fake.clients[:] = []
+
+    def spawn(loaded, stderr):
+        fake.clients[:] = shown
+        return app
+
+    monkeypatch.setattr(recipe, "_spawn", spawn)
+    return shown
+
+
 def test_run_films_the_pinned_window_through_desk_record_and_stops_what_it_launched(tmp_path, monkeypatch):
-    desk, _, _, _ = make_desk(tmp_path, monkeypatch)
+    desk, fake, _, _ = make_desk(tmp_path, monkeypatch)
     order = []
     calls = fake_film(desk, monkeypatch, order=order)
     app = FakeApp()
-    monkeypatch.setattr(recipe, "_spawn", lambda loaded, stderr: app)
+    launch_into(fake, monkeypatch, app)
     stopped = []
     monkeypatch.setattr(recipe, "_stop_app", stopped.append)
     real_do = recipe._do
@@ -207,7 +220,8 @@ def test_a_recording_that_captured_nothing_fails_the_run(tmp_path, monkeypatch):
 
 
 def test_an_app_that_dies_before_its_window_fails_at_once_with_its_own_words(tmp_path, monkeypatch):
-    desk, _, _, _ = make_desk(tmp_path, monkeypatch)
+    desk, fake, _, _ = make_desk(tmp_path, monkeypatch)
+    fake.clients[:] = []
 
     def spawn(loaded, stderr):
         stderr.write(b"Traceback\nFileNotFoundError: no such app\n")
@@ -220,6 +234,33 @@ def test_an_app_that_dies_before_its_window_fails_at_once_with_its_own_words(tmp
     monkeypatch.setattr(desk, "wait_for", never)
     with pytest.raises(ValueError, match=r"exited with status 2 before .*FileNotFoundError: no such app"):
         recipe.run(desk, recipe.parse({**DOC, "launch": ["missing"]}))
+
+
+def test_a_window_already_open_is_refused_rather_than_pinned_for_a_launch(tmp_path, monkeypatch):
+    desk, _, _, _ = make_desk(tmp_path, monkeypatch)
+    monkeypatch.setattr(recipe, "_spawn", lambda *a: pytest.fail("launched over an open window"))
+    with pytest.raises(ValueError, match="already open as 0xabc"):
+        recipe.run(desk, recipe.parse({**DOC, "launch": ["app"]}))
+
+
+def test_a_launch_that_cannot_start_is_a_coded_failure(tmp_path):
+    with pytest.raises(ValueError, match="cannot start /no/such/app"):
+        recipe._spawn(recipe.parse({**DOC, "launch": ["/no/such/app"]}), (tmp_path / "err").open("wb"))
+
+
+def test_a_shot_refuses_a_window_replaced_under_the_pinned_address(tmp_path, monkeypatch):
+    desk, fake, _, _ = make_desk(tmp_path, monkeypatch)
+    fake_grim(monkeypatch, (1266, 684))
+    wait_for = desk.wait_for
+
+    def pin_then_replace(*args, **kwargs):
+        pinned = wait_for(*args, **kwargs)
+        fake.clients[0] = {**CLIENT, "pid": 99}  # Hyprland reused the address for another process
+        return pinned
+
+    monkeypatch.setattr(desk, "wait_for", pin_then_replace)
+    result = recipe.run(desk, recipe.parse({**DOC, "steps": [{"action": "shot"}]})).to_dict()
+    assert result["failed"]["code"] == "not_found" and result["completed"] == 0
 
 
 def test_the_cli_checks_a_recipe_without_a_compositor_and_exits_2_on_a_bad_one(tmp_path, capsys):

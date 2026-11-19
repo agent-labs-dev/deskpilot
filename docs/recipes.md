@@ -41,7 +41,7 @@ each step.
 | `name` | What the demo is; the run's report repeats it. |
 | `window` | The window every step acts on: an address, a class, or part of a class or title. A name matching several windows is refused with the list. |
 | `size` | Optional `WIDTHxHEIGHT` in window pixels the window must reach before the steps start. |
-| `launch` | Optional command started first, from the current directory, with our environment plus `env`. The app it starts is stopped when the run ends, pass or fail. |
+| `launch` | Optional command started first, from the current directory, with our environment plus `env`. The app it starts is stopped when the run ends, pass or fail. A window already open under `window` refuses the run. To aim the app at another compositor, set `WAYLAND_DISPLAY` in `env`. |
 | `env` | Extra environment for the launched app only. |
 | `timeout` | Seconds to wait for the window to appear (default 60). |
 | `steps` | 1 to 200 steps, run in order. |

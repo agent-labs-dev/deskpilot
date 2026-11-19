@@ -210,13 +210,25 @@ class _Film:
 def _spawn(recipe: Recipe, stderr: IO[bytes]) -> subprocess.Popen:
     """Start the recipe's app the way the user's own shell would, in its own process group so stop ends its children."""
     command = [os.path.expanduser(part) for part in recipe.launch or []]
-    return subprocess.Popen(
-        command,
-        env={**os.environ, **recipe.env},
-        stdout=subprocess.DEVNULL,
-        stderr=stderr,
-        start_new_session=True,
-    )
+    try:
+        return subprocess.Popen(
+            command,
+            env={**os.environ, **recipe.env},
+            stdout=subprocess.DEVNULL,
+            stderr=stderr,
+            start_new_session=True,
+        )
+    except OSError as error:
+        raise ValueError(f"cannot start {command[0]}: {error.strerror or error}") from error
+
+
+def _refuse_open(desk: Desk, recipe: Recipe) -> None:
+    """A recipe that launches its app needs the window to be its own: one already open would be pinned instead."""
+    try:
+        open_now = desk.window(recipe.window)
+    except WindowNotFound:
+        return
+    raise ValueError(f"{recipe.window!r} is already open as {open_now.address}; close it so the recipe pins its own")
 
 
 def _stop_app(process: subprocess.Popen | None) -> None:
@@ -265,6 +277,7 @@ def run(desk: Desk, recipe: Recipe, record: Path | None = None) -> RunResult:
     with tempfile.TemporaryFile() as stderr:
         try:
             if recipe.launch:
+                _refuse_open(desk, recipe)
                 app = _spawn(recipe, stderr)
             window = _await_window(desk, recipe, app, stderr)
             result.window = window.to_dict()
@@ -305,6 +318,7 @@ def _do(desk: Desk, step: Any, recipe: Recipe, window: Window) -> dict:
         win = desk.wait_for(target, step.timeout, step.gone, step.focused, step.title, _size(step.size))
         return {"window": None if win is None else win.to_dict()}
     if isinstance(step, Shot):
+        _pinned(desk, window)
         return desk.shot(window.address, Path(step.out).expanduser() if step.out else None, step.max_width).to_dict()
     _pinned(desk, window)
     address = window.address
