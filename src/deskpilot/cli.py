@@ -338,8 +338,6 @@ def run(args: argparse.Namespace, desk: Desk) -> object:
             return desk.focus(args.window).to_dict()
         case "shot":
             return desk.shot(args.window, args.out, args.max_width, args.show, args.hidden).to_dict()
-        case "record":
-            return _record(desk, args)
         case "move":
             if args.hidden:
                 raise ValueError("move only shows the agent cursor, which a hidden action never shows")
@@ -507,7 +505,7 @@ def main(argv: list[str] | None = None) -> int:
         return 0
     desk = Desk()
     try:
-        output = run(args, desk)
+        output = _record(desk, args) if args.cmd == "record" else run(args, desk)
         if output is not None:
             _print(output, args.json)
         if args.cmd == "batch" and isinstance(output, dict) and not output["ok"]:
