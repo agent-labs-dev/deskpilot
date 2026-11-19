@@ -1370,7 +1370,7 @@ def test_shot_coordinates_refuse_a_new_window_at_a_reused_address(tmp_path, monk
         lambda: desk.scroll("battle", 1, 1, 1),
         lambda: desk.drag("battle", (1, 1), (2, 2)),
     ):
-        with pytest.raises(screen.StaleShot, match="is of an earlier window at 0xabc, not the battle.net.exe there"):
+        with pytest.raises(screen.StaleShot, match=r"is of an earlier window at 0xabc, not the battle\.net\.exe there"):
             action()
     assert plugin.calls == []
     desk.click("battle", 1, 1, scale=1)
@@ -1387,7 +1387,7 @@ def test_shot_coordinates_on_a_window_never_shot_are_window_pixels(tmp_path, mon
 def test_every_client_deskpilot_starts_connects_to_the_instance_it_drives(tmp_path, monkeypatch):
     # The caller's WAYLAND_DISPLAY names the user's session while deskpilot drives another instance.
     monkeypatch.setenv("WAYLAND_DISPLAY", "wayland-user")
-    desk, fake, plugin = gated_launch(tmp_path, monkeypatch)
+    desk, fake, _ = gated_launch(tmp_path, monkeypatch)
     GATE.on_start = lambda: fake.clients.append({**AGENT_CLIENT, "stableId": "2"})
     desk.launch(["gnome-calculator"])
     assert GATE.made[0].env["WAYLAND_DISPLAY"] == "wayland-driven"

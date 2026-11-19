@@ -38,7 +38,8 @@ def read(env: dict[str, str]) -> str:
 
 
 def write(text: str, env: dict[str, str]) -> None:
-    """Replace the clipboard on the compositor `env` names with text. wl-copy stays behind to serve it, so its output is not waited on."""
+    """Replace the clipboard on the compositor `env` names with text. wl-copy stays behind to serve it, so its output
+    is not waited on."""
     result = _run(
         ["wl-copy", "--type", "text/plain;charset=utf-8"],
         input=text.encode(),

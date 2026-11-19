@@ -19,7 +19,7 @@ import subprocess
 import time
 from pathlib import Path
 
-from deskpilot import clipboard, keys, session
+from deskpilot import keys, session
 from deskpilot.a11y import A11yError
 from deskpilot.desk import Desk
 from deskpilot.hypr import AmbiguousWindow
