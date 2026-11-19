@@ -124,6 +124,8 @@ class Monitor:
     height: int
     showing: frozenset[str]
     id: int = -1
+    # What Hyprland calls the output, such as DP-1: what `wf-recorder -o` and `grim -o` take.
+    name: str = ""
 
     @classmethod
     def from_json(cls, m: dict) -> Monitor:
@@ -134,7 +136,7 @@ class Monitor:
         # A special workspace covers the monitor's normal one while it is open.
         special = str((m.get("specialWorkspace") or {}).get("name") or "")
         shown = special or str((m.get("activeWorkspace") or {}).get("name", ""))
-        return cls(m["x"], m["y"], width, height, frozenset({shown}), m.get("id", -1))
+        return cls(m["x"], m["y"], width, height, frozenset({shown}), m.get("id", -1), str(m.get("name") or ""))
 
     def overlaps(self, x: int, y: int, width: int, height: int) -> bool:
         return x < self.x + self.width and self.x < x + width and y < self.y + self.height and self.y < y + height
@@ -250,6 +252,10 @@ class Hyprland:
                 )
             )
         return found
+
+    def monitors(self) -> list[Monitor]:
+        """The enabled monitors, as Hyprland reports them."""
+        return [Monitor.from_json(m) for m in self._json("monitors") or [] if not m.get("disabled")]
 
     def find(self, query: str) -> Window:
         return find_window(self.windows(), query)

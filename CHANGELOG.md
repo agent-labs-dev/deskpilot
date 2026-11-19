@@ -18,6 +18,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 - `paste ""` is refused, as `type ""` is.
 - An MCP tool refuses an argument it does not take instead of ignoring it, so `wait_for` with `hidden` is an error, as `wait-for --hidden` without `--changed` is in the CLI. Each tool's schema says so with `additionalProperties: false`.
 - Coordinates refused against a shot of an earlier window at the same address now say so, and `wait-for --changed` refuses such a shot instead of comparing against it.
+- `deskpilot recipe run FILE` replays a saved recipe: one JSON file naming a window, 1 to 200 steps and optionally the app it launches, with `pause`, `wait` and `shot` steps between the batch actions. `--record MP4` records the monitor showing the window with `wf-recorder`, so the video holds the agent cursor deskpilot draws; the recording is stopped and kept even when a step fails, which exits 2. `deskpilot recipe check` validates a file without touching the desktop, and `deskpilot recipe schema` prints the format as JSON Schema. `recipes/export-an-asset.json` records the README walkthrough. A recipe never uses `--show`, `--take-focus` or `--take-pointer`.
 
 ## [0.7.4] - 2026-11-16
 

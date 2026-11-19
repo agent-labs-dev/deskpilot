@@ -132,6 +132,29 @@ claude mcp add deskpilot -- deskpilot mcp
 - `drag` stays within one window: a drag and drop into another app is not supported.
 - Hyprland only, Linux only.
 
+## Recipes
+
+`deskpilot recipe run FILE` replays a saved recipe: one window, 1 to 200 steps, an optional launched app and an
+optional MP4 of the run. `deskpilot recipe check FILE` validates one and prints it with defaults filled in, and
+`deskpilot recipe schema` prints the format as JSON Schema. `--record MP4` overrides the recipe's own output and
+`--log FILE` keeps wf-recorder's output. The steps are the batch actions, where a point is in window pixels (or in
+the pixels of the shot it names), plus three the batch does not have:
+
+| Action | Required fields | Optional fields |
+|---|---|---|
+| `pause` | none | `seconds` (0 to 60, default 0.6) |
+| `wait` | none | `window`, `timeout`, `focused`, `title`, `size`, `gone` |
+| `shot` | none | `out`, `max_width` |
+
+The document holds `version` (1), `name`, `window`, and `steps`, plus optional `description`, `launch`, `env`,
+`timeout` and `size` in window pixels to wait for, and a `record` object of `output`, `fps` and `monitor`. The
+window is pinned once, so a window Hyprland replaces under the same address stops the run. Results have `ok`,
+`name`, `window`, `completed`, `results`, `failed` and `recording`; a failure carries the step's `index`, `action`,
+`code` and `message`. The recording is stopped and kept on failure too. A recipe never takes the user's pointer,
+focus or view: it has no `show`, `take_focus` or `take_pointer`.
+
+[Recipes](recipes.md) has the format, the recording and its limits.
+
 ## Batch
 
 `deskpilot batch WINDOW [FILE]` reads a JSON array from `FILE`, or from stdin when omitted or `-`.

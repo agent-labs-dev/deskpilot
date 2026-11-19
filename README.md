@@ -27,6 +27,7 @@ A local demo app, operated by Deskpilot with its real cursor and click feedback.
 | Send input | Click, scroll, hover, drag, type, key chords and private paste |
 | Work out of sight | Launch your own native Wayland apps on an agent's hidden workspace |
 | Reduce round trips | CLI and MCP actions, plus a sequence of known steps in one batch |
+| Record a demo | A saved recipe of steps replayed as an MP4, with reading beats between them |
 
 ## Install
 
@@ -103,6 +104,22 @@ earlier actions stay done. Other agents and the user can act between steps.
 
 [Batch format and results](docs/reference.md#batch)
 
+## Record a demo from a recipe
+
+A recipe is a saved sequence of steps for one window, with the beats a viewer needs, recorded in one run:
+
+```sh
+deskpilot recipe check recipes/export-an-asset.json
+deskpilot recipe run recipes/export-an-asset.json --record demo.mp4
+```
+
+The steps are the batch actions plus `pause`, `wait` and `shot`; a recipe may also start its own app and name the
+MP4 it records. `wf-recorder` records the monitor showing the window, so the video holds the agent cursor deskpilot
+draws. `deskpilot recipe schema` prints the format as JSON Schema. Nothing is launched or clicked until the whole
+file validates, and a failed step stops the run, keeps the recording and exits 2.
+
+[Recipe format and recording](docs/recipes.md)
+
 ## Work on your own hidden window
 
 Set an agent name and launch a native Wayland app of your own:
@@ -150,6 +167,7 @@ user input. A private paste preserves your clipboard; apps that cannot receive o
 ## Documentation and contributing
 
 - [Command guide](docs/reference.md): actions, screenshots, accessibility, MCP and error codes.
+- [Recipes](docs/recipes.md): a demo as data, replayed in order and recorded to an MP4.
 - [Input routing](docs/input-routing.md): dedicated seats, keymaps, agent cursors and hidden windows.
 - [Live calibration](docs/calibration.md): isolated input checks and cleanup verification.
 - [Contributing](CONTRIBUTING.md): setup, checks and bug reports.
