@@ -10,6 +10,12 @@ if [ "$(id -u)" = 0 ]; then
     for c in /sys/class/drm/card*; do
         [ -e "$c/device" ] && echo "$c $(readlink -f "$c/device")"
     done
+    for c in /sys/class/drm/card*; do
+        case "$c" in *-*) continue ;; esac
+        [ "$(basename "$(readlink -f "$c/device")")" = vkms ] || continue
+        echo "== eglprobe /dev/dri/$(basename "$c")"; EGL_LOG_LEVEL=debug eglprobe "/dev/dri/$(basename "$c")" 2>&1 | cut -c1-400
+        echo "== eglprobe software"; LIBGL_ALWAYS_SOFTWARE=1 EGL_LOG_LEVEL=debug eglprobe "/dev/dri/$(basename "$c")" 2>&1 | cut -c1-400
+    done
     SEATD_VTBOUND=0 seatd -g agent -l debug > "$OUT/seatd.log" 2>&1 &
     for _ in $(seq 50); do [ -S /run/seatd.sock ] && break; sleep 0.1; done
     ls -l /run/seatd.sock

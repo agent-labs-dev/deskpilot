@@ -13,6 +13,7 @@ RUN echo "Server = https://archive.archlinux.org/repos/${ARCH_SNAPSHOT}/\$repo/o
 
 COPY . /opt/deskpilot
 RUN uv pip install --system --break-system-packages /opt/deskpilot
+RUN gcc -o /usr/local/bin/eglprobe /opt/deskpilot/container/eglprobe.c -lEGL -lGLESv2 -lgbm
 
 COPY container/spike.sh /usr/local/bin/deskpilot-spike
 RUN useradd --create-home --uid 1000 agent
