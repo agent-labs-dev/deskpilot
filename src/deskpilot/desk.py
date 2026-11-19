@@ -256,6 +256,12 @@ class Desk:
         env = {**self.hypr.client_env(), "HL_EXEC_RULE_TOKEN": agent["token"]}
         # Hyprland places a window carrying this on the workspace its launcher was started from, ahead of rules.
         env.pop("HL_INITIAL_WORKSPACE_TOKEN", None)
+        # GTK hands a file chooser to xdg-desktop-portal on the session bus, and the user's portal process draws it on
+        # the user's compositor: on their workspace, and off the instance driven when that is nested. These switches
+        # make GTK 4 and GTK 3 draw it in the app, so it is one of the app's windows, placed with it. The bus stays
+        # the user's, since a bus of the app's own would start its own accessibility bus and hide its tree.
+        env["GDK_DEBUG"] = ",".join(filter(None, (env.get("GDK_DEBUG"), "no-portals")))
+        env["GTK_USE_PORTAL"] = "0"
         self._launched = [p for p in self._launched if p.poll() is None]
         if shutil.which(command[0], path=env.get("PATH")) is None:
             raise ValueError(f"cannot start {command[0]}: No such file or directory")

@@ -30,7 +30,10 @@ unnamed cursor. Actions still run one at a time; the cursors show whose each one
 
 An agent can run apps of its own out of the user's sight. `DESKPILOT_AGENT=NAME deskpilot launch CMD...` starts
 an app on the hidden special workspace `special:agent-NAME` and prints its first window. Every window the app opens,
-then or later, lands there without taking focus, so a dialog never pops up on the user's screen. `deskpilot show`
+then or later, lands there without taking focus, so a dialog never pops up on the user's screen. A GTK app draws its
+own file dialogs there, since launch turns off its portal (`GDK_DEBUG=no-portals`, `GTK_USE_PORTAL=0`). A file dialog
+another toolkit hands to xdg-desktop-portal, as Qt, Chromium and Electron apps may, is a window of the user's portal
+and opens on the user's screen, so avoid file dialogs in those apps. `deskpilot show`
 toggles that workspace on the focused monitor for the user to watch or step in, and `deskpilot stop` closes the
 agent's apps. They also close when the process named by `DESKPILOT_OWNER_PID` exits (the MCP server names itself),
 or with no owner after 30 minutes unused. For web pages and signed-in browsers use

@@ -20,7 +20,8 @@ If `deskpilot` is not on `PATH`, ask the user before installing it with
    window on a hidden workspace or scrolled off screen; acting on it is refused unless you pass `--show`, which
    focuses it and moves the user's view, so ask the user before `--show`.
    To work out of the user's sight, set `DESKPILOT_AGENT` to a name and start your own copy of the app with
-   `deskpilot launch CMD...`: it and every window it opens later stay on your hidden workspace, and `--hidden` acts
+   `deskpilot launch CMD...`: it and every window it opens later stay on your hidden workspace (a file dialog of a Qt,
+   Chromium or Electron app may open on the user's screen through their portal, so avoid one), and `--hidden` acts
    on them, or windows explicitly handed to you with `adopt ADDRESS`, on `shot`, `click`, `scroll`, `drag`, `hover`,
    `elements`, `key`,
    `type`, `paste` and `wait-for --changed`. An XWayland window is refused hidden. Hidden keys need `--window` and

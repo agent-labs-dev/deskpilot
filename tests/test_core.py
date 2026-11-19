@@ -1447,3 +1447,16 @@ def test_wait_changed_refuses_a_shot_of_an_earlier_window_at_the_address(tmp_pat
     fake.clients[0] = {**CLIENT, "pid": 999}
     with pytest.raises(screen.StaleShot, match="of an earlier window"):
         desk.wait_changed("battle", "abc-1", timeout=0)
+
+
+def test_a_launched_app_draws_its_own_dialogs_on_the_user_s_bus(tmp_path, monkeypatch):
+    # A portal dialog is a window of the user's portal process, on the user's compositor; the app's own is placed with
+    # the app. The bus stays the user's, so the app stays on the user's accessibility bus.
+    desk, fake, _ = gated_launch(tmp_path, monkeypatch)
+    monkeypatch.setenv("GDK_DEBUG", "events")
+    monkeypatch.setenv("DBUS_SESSION_BUS_ADDRESS", "unix:path=/run/user/1000/bus")
+    GATE.on_start = lambda: fake.clients.append(AGENT_CLIENT)
+    desk.launch(["gnome-text-editor"])
+    (gate,) = GATE.made
+    assert gate.env["GDK_DEBUG"] == "events,no-portals" and gate.env["GTK_USE_PORTAL"] == "0"
+    assert gate.env["DBUS_SESSION_BUS_ADDRESS"] == "unix:path=/run/user/1000/bus"
