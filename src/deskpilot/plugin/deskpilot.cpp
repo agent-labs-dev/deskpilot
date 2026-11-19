@@ -851,6 +851,7 @@ namespace {
             double               tagWidth = 0; // logical pixels; 0 for no tag
             CBox                 drawn;        // the global box last drawn, damaged again when it moves or goes
             bool                 filmOnly = false; // a hidden action's cursor, drawn in captures and on no output
+            PHLWINDOWREF         filmOf;           // the window a film-only cursor acts on: only its captures show it
             std::optional<Time::steady_tp> letGo; // when a visual press lets go: no earlier than it was held for, never later than its cap
         };
 
@@ -864,7 +865,7 @@ namespace {
 
         struct SState {
             std::map<std::string, SCursor> cursors;
-            std::map<uintptr_t, Time::steady_tp> filmed; // windows last captured with a cursor, by address // by agent name, "" for an unnamed agent
+            std::map<uintptr_t, std::pair<PHLWINDOWREF, Time::steady_tp>> filmed; // windows last captured with a cursor, by address, and when
             SP<CEventLoopTimer>            timer;
             CHyprSignalListener            render;
         };
@@ -1139,8 +1140,10 @@ namespace {
         void drawCapture(Render::CRenderContext& ctx, const PHLWINDOW& window, double scale) {
             const auto BOX = window->getWindowMainSurfaceBox();
             const SSurface SURFACE{BOX.pos(), scale, BOX};
-            for (auto& [name, cursor] : g_state->cursors)
-                drawOne(ctx, SURFACE, name, cursor);
+            for (auto& [name, cursor] : g_state->cursors) {
+                if (!cursor.filmOnly || cursor.filmOf.lock() == window)
+                    drawOne(ctx, SURFACE, name, cursor);
+            }
         }
 
         // How long a capture with a cursor keeps its window filmed. A recorder captures many times a second, so it
@@ -1148,15 +1151,18 @@ namespace {
         constexpr auto FILM_LEASE = std::chrono::seconds(3);
 
         void film(const PHLWINDOW& window) {
-            if (g_state)
-                g_state->filmed[reinterpret_cast<uintptr_t>(window.get())] = Time::steadyNow();
+            if (!g_state)
+                return;
+            // Forget the windows no longer filmed, so a closed window's address is not taken for a later one.
+            std::erase_if(g_state->filmed, [](const auto& entry) { return entry.second.first.expired() || Time::steadyNow() - entry.second.second >= FILM_LEASE; });
+            g_state->filmed[reinterpret_cast<uintptr_t>(window.get())] = {window, Time::steadyNow()};
         }
 
         bool filmed(const PHLWINDOW& window) {
             if (!g_state || !window)
                 return false;
             const auto IT = g_state->filmed.find(reinterpret_cast<uintptr_t>(window.get()));
-            return IT != g_state->filmed.end() && Time::steadyNow() - IT->second < FILM_LEASE;
+            return IT != g_state->filmed.end() && IT->second.first.lock() == window && Time::steadyNow() - IT->second.second < FILM_LEASE;
         }
 
         // The window a capture with a cursor is of while its frame renders, and its scale.
@@ -1232,12 +1238,14 @@ namespace {
         }
 
         // Glides `name`'s cursor to `to` (global), then runs `then`. With no position yet it appears there at once.
-        void glideTo(const std::string& name, const Vector2D& to, std::function<void()> then, bool filmOnly = false) {
+        void glideTo(const std::string& name, const Vector2D& to, std::function<void()> then, const PHLWINDOW& film = nullptr) {
+            const bool filmOnly = film != nullptr;
             auto&      cursor = cursorOf(name);
             // A cursor changing between shown and filmed-only starts again where it lands: the two are not one path.
             if (cursor.filmOnly != filmOnly)
                 cursor.placed = false;
             cursor.filmOnly = filmOnly;
+            cursor.filmOf   = film;
             const auto FROM = cursor.placed ? cursor.pos : to;
             const auto DIST   = FROM.distance(to);
             cursor.placed     = true;
@@ -1256,9 +1264,10 @@ namespace {
             wake(cursor);
         }
 
-        void moveTo(const std::string& name, const Vector2D& to, bool filmOnly = false) {
+        void moveTo(const std::string& name, const Vector2D& to, const PHLWINDOW& film = nullptr) {
             auto& cursor    = cursorOf(name);
-            cursor.filmOnly = filmOnly;
+            cursor.filmOnly = film != nullptr;
+            cursor.filmOf   = film;
             cursor.placed   = true;
             cursor.pos    = to;
             wake(cursor);
@@ -1498,7 +1507,7 @@ namespace {
         if (!onElementSurface(*g_op, pos))
             return;
         if (g_op->mode == eMode::SHOWN || g_op->film)
-            agentcursor::moveTo(g_op->agent, pos, g_op->film);
+            agentcursor::moveTo(g_op->agent, pos, g_op->film ? windowOf(*g_op) : nullptr);
         if (direct()) {
             if (clearAt())
                 hiddenEnter(*g_op, pos);
@@ -1523,7 +1532,7 @@ namespace {
         // The element's surface is that of the first point alone.
         g_op->onSurface.reset();
         if (g_op->mode == eMode::SHOWN || g_op->film)
-            agentcursor::moveTo(g_op->agent, pos, g_op->film);
+            agentcursor::moveTo(g_op->agent, pos, g_op->film ? windowOf(*g_op) : nullptr);
         if (direct()) {
             if (!g_op->down.empty() || clearAt())
                 hiddenMove(*g_op, pos);
@@ -1731,7 +1740,7 @@ namespace {
         g_gliding         = true;
         const auto START  = op.start;
         const auto AGENT  = op.agent;
-        const auto FILM   = op.film;
+        const auto FILM   = op.film ? windowOf(op) : nullptr;
         agentcursor::glideTo(
             AGENT, START,
             [op = std::move(op), ticket]() mutable {
