@@ -529,9 +529,11 @@ def _app_for_pid(bus: _Bus, pid: int) -> tuple[str, str]:
         except (A11yError, TypeError, ValueError):
             continue
     raise A11yError(
-        f"Application PID {pid} exposes no accessibility tree. Chromium, Electron and Firefox expose one only "
-        "when started with accessibility on, for example --force-renderer-accessibility, or when the a11y bus "
-        "property org.a11y.Status.IsEnabled is true before they start. Wine and XWayland games expose none.",
+        f"Application PID {pid} exposes no accessibility tree. Chromium and Electron join the accessibility bus only "
+        "when ACCESSIBILITY_ENABLED=1 is in their environment (launch sets it) or the a11y bus property "
+        "org.a11y.Status.IsEnabled is true before they start, and expose their pages only when also started with "
+        "--force-renderer-accessibility. Firefox too needs accessibility on when it starts. Wine and XWayland games "
+        "expose none.",
         "no_tree",
     )
 

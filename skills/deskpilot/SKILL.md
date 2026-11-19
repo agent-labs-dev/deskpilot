@@ -143,7 +143,9 @@ result's structured `code`. An MCP tool refuses an argument it does not take.
   again and pick the id anew; pass ids as `SNAPSHOT:e5` so an old one cannot match a renumbered tree. To look
   again without invalidating the ids you hold, use `elements --peek`.
 - `offscreen`: the element is not showing, as in a collapsed menu or a scrolled-away row.
-- `no_tree`: the app exposes no accessibility tree. Use a shot and points instead.
+- `no_tree`: the app exposes no accessibility tree. A Chromium or Electron app needs `--force-renderer-accessibility`
+  and `ACCESSIBILITY_ENABLED=1` in its environment when it starts; `launch` sets the second. Otherwise use a shot and
+  points instead.
 
 For a popup-grab regression in this checkout, run `scripts/popup_calibration.py --output /path/to/results.json`
 with an explicit parent `HYPRLAND_INSTANCE_SIGNATURE`. It uses and cleans up its own private desktop. The optional

@@ -135,6 +135,7 @@ def test_snapshot_reports_an_app_without_accessibility(tmp_path, monkeypatch):
         a11y.snapshot(window(), bus=fake)
     assert error.value.code == "no_tree"
     assert "force-renderer-accessibility" in str(error.value)
+    assert "ACCESSIBILITY_ENABLED=1" in str(error.value)
     assert "Wine and XWayland games" in str(error.value)
 
 

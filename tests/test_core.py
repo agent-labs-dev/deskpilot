@@ -1465,6 +1465,16 @@ def test_a_launched_app_draws_its_own_dialogs_on_the_user_s_bus(tmp_path, monkey
     assert gate.env["DBUS_SESSION_BUS_ADDRESS"] == "unix:path=/run/user/1000/bus"
 
 
+def test_a_launched_app_is_told_accessibility_is_on(tmp_path, monkeypatch):
+    # Chromium and Electron stay off the accessibility bus without it, even with --force-renderer-accessibility.
+    desk, fake, _ = gated_launch(tmp_path, monkeypatch)
+    monkeypatch.delenv("ACCESSIBILITY_ENABLED", raising=False)
+    GATE.on_start = lambda: fake.clients.append(AGENT_CLIENT)
+    desk.launch(["google-chrome-stable", "--force-renderer-accessibility"])
+    (gate,) = GATE.made
+    assert gate.env["ACCESSIBILITY_ENABLED"] == "1"
+
+
 def test_client_env_names_the_selected_instance_s_x_display_or_none(tmp_path, monkeypatch):
     # The caller's DISPLAY is the user's X server; an X11 app given it would open on the user's screen.
     from deskpilot import hypr

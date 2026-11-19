@@ -7,6 +7,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+- `launch` starts its app with `ACCESSIBILITY_ENABLED=1`, so a Chromium or Electron app started with `--force-renderer-accessibility` has a tree. With the flag alone it never joined the accessibility bus, and `elements` failed `no_tree` with a hint that named only the flag.
+
 - `adopt` and `release` wait their turn behind the actions already running or queued, as other actions do, instead of being refused `busy` whenever any action ran. Before, an agent could be refused for as long as another agent kept acting.
 
 - An element that closed, such as a dialog's Save button read just after a click on it closed the dialog, is `stale`, and `elements` leaves out an element that went while the tree was read. GTK answers a call on a closed accessible with a D-Bus `UnknownMethod` error, which deskpilot reported as `unavailable`, as if the accessibility bus had failed. `elements` of a window whose toplevel closed while it was read fails with `gone`.
