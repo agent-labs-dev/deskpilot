@@ -1,6 +1,6 @@
 #!/bin/bash
-# Smoke test of the image: start the standalone session, launch a GTK app, click its entry, type, read the text back
-# from its accessibility tree, and record the whole run. Artifacts go to $OUT.
+# Smoke test of the image: start the standalone session, open a GTK app, type into its entry, read the text back from
+# its accessibility tree, click OK and check the app's answer, recording the whole run. Artifacts go to $OUT.
 set -euo pipefail
 OUT=${OUT:-/out}
 TEXT="hello from deskpilot"
@@ -30,19 +30,36 @@ wf-recorder -o "$output" -f "$OUT/smoke.mp4" > "$OUT/wf-recorder.log" 2>&1 &
 recorder=$!
 sleep 1
 
-window=$(deskpilot --session --json launch zenity --entry --title=Smoke --text="Type below" | field address)
-deskpilot --session wait-for "$window" --focused --timeout 10 > /dev/null || true
+# Started here rather than through `launch`, so its answer and exit status show which button the click reached.
+zenity --entry --title=Smoke --text="Type below" > "$OUT/zenity.out" 2> "$OUT/zenity.log" &
+app=$!
+window=""
+for _ in $(seq 100); do
+    window=$(deskpilot --session --json windows | python3 -c '
+import json, sys
+print(next((w["address"] for w in json.load(sys.stdin) if w["title"] == "Smoke"), ""))')
+    [ -n "$window" ] && break
+    sleep 0.1
+done
+[ -n "$window" ] || fail "zenity did not open its window"
+deskpilot --session wait-for "$window" --focused --timeout 10 > /dev/null
 deskpilot --session shot "$window" -o "$OUT/before.png" > /dev/null
 deskpilot --session elements "$window" | tee "$OUT/elements-before.txt"
-entry=$(grep -m1 -E '\beditable\b' "$OUT/elements-before.txt" | awk '{ print $1 }')
-[ -n "$entry" ] || fail "no text entry in the tree"
 
-deskpilot --session click "$window" --element "$entry"
+# The entry has focus from the start: type into it, read the text back from the tree, then click OK.
 deskpilot --session type --window "$window" "$TEXT"
 sleep 0.5
 deskpilot --session shot "$window" -o "$OUT/after.png" > /dev/null
 deskpilot --session elements "$window" | tee "$OUT/elements-after.txt"
 grep -qF "text='$TEXT'" "$OUT/elements-after.txt" || fail "the entry does not hold the typed text"
+ok=$(grep -m1 -E " button 'OK' " "$OUT/elements-after.txt" | awk '{ print $1 }')
+[ -n "$ok" ] || fail "no OK button in the tree"
+# The window closing under the click can fail its read-back (#128); the app's answer is the check.
+deskpilot --session click "$window" --element "$ok" || echo "smoke: click exited $?"
+status=0
+wait "$app" || status=$?
+[ "$status" = 0 ] || fail "zenity exited $status: the click did not reach OK"
+[ "$(cat "$OUT/zenity.out")" = "$TEXT" ] || fail "zenity answered '$(cat "$OUT/zenity.out")'"
 
 sleep 1
 kill -INT "$recorder"
