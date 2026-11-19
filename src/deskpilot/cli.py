@@ -249,7 +249,11 @@ def _recipe(args: argparse.Namespace):
     """The recipe from its file, read whole and validated before anything is launched or clicked."""
     from . import recipe
 
+    if args.action != "run" and args.record:
+        raise ValueError(f"recipe {args.action} does not take --record: only run films")
     if args.action == "schema":
+        if args.file:
+            raise ValueError("recipe schema takes no file")
         return recipe.schema()
     if not args.file:
         raise ValueError(f"recipe {args.action} needs a file")

@@ -243,16 +243,19 @@ def run(desk: Desk, recipe: Recipe, record: Path | None = None) -> RunResult:
     hidden = bool(recipe.launch)
     film = None
     try:
-        window = _launch(desk, recipe) if hidden else None
+        launched = _launch(desk, recipe) if hidden else None
         # The size is waited for as the app settles; a launched window is waited for by address, never by name.
-        window = desk.wait_for(window.address if window else recipe.window, timeout=recipe.timeout,
+        window = desk.wait_for(launched.address if launched else recipe.window, timeout=recipe.timeout,
                                size=_size(recipe.size))  # fmt: skip
         assert window is not None
+        if launched:  # Hyprland reuses an address, so what the wait found must be the window the launch opened
+            window = _pinned(desk, launched)
         result.window = window.to_dict()
         output = record or (Path(recipe.record.output) if recipe.record else None)
         if output is not None:
             fps = recipe.record.fps if recipe.record else recording.FPS
             film = _Film(desk, window.address, output, fps, hidden)
+            _pinned(desk, window)  # the film found the window by address: it must still be the pinned one
         for index, step in enumerate(recipe.steps):
             try:
                 result.results.append({"index": index, "action": step.action, **_do(desk, step, window, hidden)})
@@ -284,6 +287,8 @@ def _do(desk: Desk, step: Any, window: Window, hidden: bool) -> dict:
         _pause(desk, window, step.seconds)
         return {"seconds": step.seconds}
     if isinstance(step, Wait):
+        if not step.window and not step.gone:
+            _pinned(desk, window)
         target = step.window or window.address
         win = desk.wait_for(target, step.timeout, step.gone, step.focused, step.title, _size(step.size))
         return {"window": None if win is None else win.to_dict()}

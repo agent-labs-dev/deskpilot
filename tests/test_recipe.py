@@ -292,3 +292,27 @@ def test_the_cli_checks_a_recipe_without_a_compositor_and_exits_2_on_a_bad_one(t
 def test_the_cli_exports_the_recipe_schema(capsys):
     assert cli.main(["--json", "recipe", "schema"]) == 0
     assert json.loads(capsys.readouterr().out)["title"] == "Recipe"
+
+
+def test_the_cli_refuses_arguments_a_recipe_action_would_ignore(tmp_path, capsys):
+    path = tmp_path / "demo.json"
+    path.write_text(json.dumps(DOC))
+    assert cli.main(["--json", "recipe", "check", str(path), "--record", "x.mp4"]) == 2
+    assert cli.main(["--json", "recipe", "schema", str(path)]) == 2
+    assert cli.main(["--json", "recipe", "schema", "--record", "x.mp4"]) == 2
+    assert "takes no file" in capsys.readouterr().err
+
+
+def test_a_launched_window_replaced_before_the_pin_stops_the_run(tmp_path, monkeypatch):
+    desk, fake, _, _ = make_desk(tmp_path, monkeypatch)
+    fake_launch(desk, fake, monkeypatch)
+    wait_for = desk.wait_for
+
+    def replaced(*args, **kwargs):
+        found = wait_for(*args, **kwargs)
+        fake.clients[0] = {**CLIENT, "pid": 99}  # Hyprland reused the launched window's address
+        return found
+
+    monkeypatch.setattr(desk, "wait_for", replaced)
+    with pytest.raises(recipe.WindowNotFound):
+        recipe.run(desk, recipe.parse({**DOC, "launch": ["app"]}))
