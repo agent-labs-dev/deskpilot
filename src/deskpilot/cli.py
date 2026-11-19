@@ -248,6 +248,15 @@ def _record_parser(sub) -> None:
     s.add_argument("--hidden", action="store_true", help="film a window this agent launched or adopted, out of view")
 
 
+def _env_parser(sub) -> None:
+    sub.add_parser(
+        "env",
+        help="with --session, start this agent's private desktop if it is not running and print what another tool needs"
+        " to reach it: its Wayland display, Hyprland instance, runtime directory and buses, as shell exports (or JSON"
+        " with --json)",
+    )
+
+
 def build_parser() -> argparse.ArgumentParser:
     p = _parser()
     sub = p.add_subparsers(dest="cmd", required=True)
@@ -333,15 +342,10 @@ def build_parser() -> argparse.ArgumentParser:
         s.add_argument("address", help="exact address from deskpilot windows")
     sub.add_parser("show", help="show this agent's hidden workspace on the focused monitor, or hide it again")
     sub.add_parser("stop", help="close this agent's launched apps and return its adopted windows")
-    sub.add_parser(
-        "env",
-        help="with --session, start this agent's private desktop if it is not running and print what another tool needs"
-        " to reach it: its Wayland display, Hyprland instance, runtime directory and buses, as shell exports (or JSON"
-        " with --json)",
-    )
+    _env_parser(sub)
 
-    sub.add_parser("cursor", help="print the cursor's global position")
-    sub.add_parser("mcp", help="run the MCP server on stdio")
+    for name, text in (("cursor", "print the cursor's global position"), ("mcp", "run the MCP server on stdio")):
+        sub.add_parser(name, help=text)
     return p
 
 
