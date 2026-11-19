@@ -203,6 +203,15 @@ def _runtime() -> Path:
     return Path(os.environ.get("XDG_RUNTIME_DIR", f"/run/user/{os.getuid()}"))
 
 
+def _agent_records(agent: str | None) -> list[Path]:
+    """The ready files of this agent's own sessions: a directory is `AGENT-TAG`, so `tester` does not take the
+    sessions of `tester-browser`."""
+    own = re.compile(rf"{re.escape(agent)}-(?:[0-9a-f]{{12}}|standalone)")
+    return [
+        p for p in (_runtime() / "deskpilot" / "sessions").glob(f"{agent}-*/ready.json") if own.fullmatch(p.parent.name)
+    ]
+
+
 def _parent() -> str:
     """The Hyprland a nested session runs in, or "" for a standalone one, which has none."""
     return "" if os.environ.get(STANDALONE_ENV) == "1" else parent_instance()
@@ -211,7 +220,7 @@ def _parent() -> str:
 def parent_instance() -> str:
     if not os.environ.get("HYPRLAND_INSTANCE_SIGNATURE") and not os.environ.get("WAYLAND_DISPLAY"):
         agent = agent_from_env()
-        records = [_read(p) for p in (_runtime() / "deskpilot" / "sessions").glob(f"{agent}-*/ready.json")]
+        records = [_read(p) for p in _agent_records(agent)]
         parents = {
             r["parent"]
             for r in records
@@ -267,7 +276,7 @@ def verify_current() -> str:
     agent = agent_from_env()
     if not signature or marker != signature or not agent:
         raise HyprctlError("not running in a verified isolated session")
-    records = [_read(p) for p in (_runtime() / "deskpilot" / "sessions").glob(f"{agent}-*/ready.json")]
+    records = [_read(p) for p in _agent_records(agent)]
     record = next((r for r in records if r.get("signature") == signature), None)
     if not record or not live(record):
         raise HyprctlError("isolated session identity is not live")
@@ -286,15 +295,11 @@ def _directory() -> Path:
         raise ValueError("--session needs DESKPILOT_AGENT to name its private desktop")
     if os.environ.get("DESKPILOT_ISOLATED"):
         signature = verify_current()
-        return next(
-            p.parent
-            for p in (_runtime() / "deskpilot" / "sessions").glob(f"{agent}-*/ready.json")
-            if _read(p).get("signature") == signature
-        )
+        return next(p.parent for p in _agent_records(agent) if _read(p).get("signature") == signature)
     # A shell that evaluated `env` sits in the agent's own compositor without the process-only marker: that is this
     # agent's session, not a parent desktop to nest another in.
     signature = os.environ.get("HYPRLAND_INSTANCE_SIGNATURE")
-    for ready in (_runtime() / "deskpilot" / "sessions").glob(f"{agent}-*/ready.json"):
+    for ready in _agent_records(agent):
         record = _read(ready)
         if signature and record.get("signature") == signature and live(record):
             return ready.parent
