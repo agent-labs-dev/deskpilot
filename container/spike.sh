@@ -8,9 +8,9 @@ if [ "$(id -u)" = 0 ]; then
     mkdir -p "$OUT" && chmod 777 "$OUT"
     ls -l /dev/dri /sys/class/drm/ || true
     for c in /sys/class/drm/card*; do
-        [ -e "$c/device/driver" ] && echo "$c $(basename "$(readlink "$c/device/driver")")"
+        [ -e "$c/device" ] && echo "$c $(readlink -f "$c/device")"
     done
-    seatd -g agent -l debug > "$OUT/seatd.log" 2>&1 &
+    SEATD_VTBOUND=0 seatd -g agent -l debug > "$OUT/seatd.log" 2>&1 &
     for _ in $(seq 50); do [ -S /run/seatd.sock ] && break; sleep 0.1; done
     ls -l /run/seatd.sock
     exec runuser -u agent -- env OUT="$OUT" "$0"
@@ -21,7 +21,7 @@ mkdir -p -m 700 "$XDG_RUNTIME_DIR"
 card=""
 for c in /sys/class/drm/card*; do
     case "$c" in *-*) continue ;; esac
-    [ "$(basename "$(readlink "$c/device/driver")")" = vkms ] && card=/dev/dri/$(basename "$c")
+    [ "$(basename "$(readlink -f "$c/device")")" = vkms ] && card=/dev/dri/$(basename "$c")
 done
 echo "vkms card: $card"
 export AQ_DRM_DEVICES=$card
