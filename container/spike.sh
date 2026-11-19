@@ -26,7 +26,7 @@ done
 echo "vkms card: $card"
 export AQ_DRM_DEVICES=$card
 
-mkdir -p ~/.config/hypr
+mkdir -p ~/.config/hypr ~/.cache/hyprland
 cat > ~/.config/hypr/hyprland.lua <<'EOF'
 hl.monitor({ output = "", mode = "1280x800", position = "0x0", scale = 1 })
 hl.config({
@@ -34,9 +34,11 @@ hl.config({
     animations = { enabled = false },
 })
 EOF
-EGL_LOG_LEVEL=debug AQ_TRACE=1 HYPRLAND_NO_SD_NOTIFY=1 Hyprland -c ~/.config/hypr/hyprland.lua > "$OUT/hyprland.log" 2>&1 &
+EGL_LOG_LEVEL=debug AQ_TRACE=1 HYPRLAND_NO_SD_NOTIFY=1 DEBUGINFOD_URLS=https://debuginfod.archlinux.org \
+    gdb -q -batch -ex "set debuginfod enabled on" -ex run -ex "thread apply all bt" \
+    --args Hyprland -c ~/.config/hypr/hyprland.lua > "$OUT/hyprland.log" 2>&1 &
 hypr=$!
-for _ in $(seq 150); do
+for _ in $(seq 900); do
     sig=$(ls "$XDG_RUNTIME_DIR/hypr" 2>/dev/null | head -1)
     [ -n "$sig" ] && [ -S "$XDG_RUNTIME_DIR/hypr/$sig/.socket.sock" ] && break
     kill -0 $hypr 2>/dev/null || break
@@ -48,7 +50,7 @@ if ! kill -0 $hypr 2>/dev/null; then
     tail -80 "$OUT/hyprland-full.log"
     cp ~/.cache/hyprland/hyprlandCrashReport*.txt "$OUT/" 2>/dev/null
     cat ~/.cache/hyprland/hyprlandCrashReport*.txt 2>/dev/null | head -80
-    ls -l /usr/lib/dri /usr/lib/gbm 2>/dev/null
+    grep -n -A60 "received signal\|Thread 1" "$OUT/hyprland.log" | head -120
     exit 1
 fi
 export HYPRLAND_INSTANCE_SIGNATURE=$sig
