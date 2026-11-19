@@ -25,6 +25,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 - The session's seat now has a pointer as well as a keyboard, so clicks reach apps in a desktop that has no other input device.
 - The free memory a session needs is checked against the container's memory limit as well as the machine's, so a small box refuses to start one instead of running out.
 - `deskpilot plugin build` works with no Hyprland running, building against the installed headers, and also builds the `--session` keyboard.
+- `deskpilot recipe run FILE` replays a saved recipe: one JSON file naming a window, 1 to 200 steps and optionally the app it launches, with `pause`, `wait` and `shot` steps between the batch actions. `--record MP4` films the window as `deskpilot record` does, so the video holds the agent cursor deskpilot draws and nothing else on screen; the recording is stopped and kept even when a step fails, which exits 2. An app that exits with an error before its window appears fails the run at once with its own exit status and last words, instead of after the whole timeout. `deskpilot recipe check` validates a file without touching the desktop, and `deskpilot recipe schema` prints the format as JSON Schema. `recipes/export-an-asset.json` records the README walkthrough. A recipe never uses `--show`, `--take-focus` or `--take-pointer`.
 
 ## [0.7.4] - 2026-11-16
 

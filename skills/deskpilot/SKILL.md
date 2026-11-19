@@ -89,6 +89,9 @@ the events. Use the regular route for Qt, Chromium, XWayland and paste.
 ## Chaining known steps
 
 Use `deskpilot batch WINDOW [FILE] --final-shot` or MCP `batch` to run 1 to 32 known actions in one request.
+To record a demo of known steps, write a recipe and run `deskpilot recipe check FILE` then
+`deskpilot recipe run FILE --record demo.mp4`: it replays `pause`, `wait` and `shot` steps between the batch actions
+and films the window, agent cursor included, as `deskpilot record` does. See [recipes.md](../../docs/recipes.md).
 The CLI reads a JSON array from the file or stdin. For example, after inspecting the focused text field in
 that window, `[{"action":"key","combo":"ctrl+a"},{"action":"type","text":"Hello"}]` replaces its contents.
 Supported steps are `click`, `move`, `scroll`, `drag`, `key`, `type` and `paste`, with element and shot IDs

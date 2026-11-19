@@ -229,6 +229,48 @@ class _Parser(argparse.ArgumentParser):
         self.exit(_fail("invalid", message, True))
 
 
+def _recipe_command(sub) -> None:
+    s = sub.add_parser(
+        "recipe",
+        help="check, run, or export the schema of a saved recipe: a JSON sequence of steps with reading beats, "
+        "waits and shots, replayed in order and optionally recorded to an MP4",
+    )
+    s.add_argument("action", choices=["run", "check", "schema"])
+    s.add_argument("file", nargs="?", help="the recipe JSON file (run and check); - reads it from stdin")
+    s.add_argument(
+        "--record",
+        type=Path,
+        metavar="MP4",
+        help="with run: film the window to this MP4, instead of the recipe's own output",
+    )
+
+
+def _recipe(args: argparse.Namespace):
+    """The recipe from its file, read whole and validated before anything is launched or clicked."""
+    from . import recipe
+
+    if args.action != "run" and args.record:
+        raise ValueError(f"recipe {args.action} does not take --record: only run films")
+    if args.action == "schema":
+        if args.file:
+            raise ValueError("recipe schema takes no file")
+        return recipe.schema()
+    if not args.file:
+        raise ValueError(f"recipe {args.action} needs a file")
+    if args.file == "-":
+        return recipe.parse(json.loads(sys.stdin.read()))
+    return recipe.load(Path(args.file))
+
+
+def _run_recipe(args: argparse.Namespace, desk: Desk) -> object:
+    from . import recipe as recipes
+
+    loaded = _recipe(args)
+    if args.action != "run":
+        return loaded if isinstance(loaded, dict) else loaded.model_dump(mode="json")
+    return recipes.run(desk, loaded, args.record).to_dict()
+
+
 def _parser() -> argparse.ArgumentParser:
     p = _Parser(prog="deskpilot", description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("--session", action="store_true", help="use this agent's private compositor, clipboard and bus")
@@ -246,6 +288,24 @@ def _record_parser(sub) -> None:
     s.add_argument("--fps", type=int, default=25)
     s.add_argument("--seconds", type=float, help="stop after this long (Ctrl-C or SIGTERM also stops)")
     s.add_argument("--hidden", action="store_true", help="film a window this agent launched or adopted, out of view")
+
+
+def _hidden_commands(sub) -> None:
+    s = sub.add_parser(
+        "launch",
+        help="start an app for this agent (DESKPILOT_AGENT) on its hidden workspace, for --hidden actions; print its "
+        "first window",
+    )
+    s.add_argument("command", nargs=argparse.REMAINDER, help="the app and its arguments")
+    s.add_argument("--timeout", type=float, default=30, help="seconds to wait for its first window")
+    for name, description in (
+        ("adopt", "hand one unfocused native window to this agent for hidden actions"),
+        ("release", "return one adopted window to its original workspace without closing it"),
+    ):
+        s = sub.add_parser(name, help=description)
+        s.add_argument("address", help="exact address from deskpilot windows")
+    sub.add_parser("show", help="show this agent's hidden workspace on the focused monitor, or hide it again")
+    sub.add_parser("stop", help="close this agent's launched apps and return its adopted windows")
 
 
 def _env_parser(sub) -> None:
@@ -327,25 +387,12 @@ def build_parser() -> argparse.ArgumentParser:
 
     _wait_command(sub)
 
-    s = sub.add_parser(
-        "launch",
-        help="start an app for this agent (DESKPILOT_AGENT) on its hidden workspace, for --hidden actions; print its "
-        "first window",
-    )
-    s.add_argument("command", nargs=argparse.REMAINDER, help="the app and its arguments")
-    s.add_argument("--timeout", type=float, default=30, help="seconds to wait for its first window")
-    for name, description in (
-        ("adopt", "hand one unfocused native window to this agent for hidden actions"),
-        ("release", "return one adopted window to its original workspace without closing it"),
-    ):
-        s = sub.add_parser(name, help=description)
-        s.add_argument("address", help="exact address from deskpilot windows")
-    sub.add_parser("show", help="show this agent's hidden workspace on the focused monitor, or hide it again")
-    sub.add_parser("stop", help="close this agent's launched apps and return its adopted windows")
+    _hidden_commands(sub)
     _env_parser(sub)
 
     for name, text in (("cursor", "print the cursor's global position"), ("mcp", "run the MCP server on stdio")):
         sub.add_parser(name, help=text)
+    _recipe_command(sub)
     return p
 
 
@@ -365,7 +412,7 @@ def _record(desk: Desk, args: argparse.Namespace) -> object:
     return result.to_dict() | {"path": args.out}
 
 
-def run(args: argparse.Namespace, desk: Desk) -> object:
+def run(args: argparse.Namespace, desk: Desk) -> object:  # noqa: PLR0915 (one branch per command)
     match args.cmd:
         case "windows":
             return [w.to_dict() for w in desk.windows()]
@@ -514,6 +561,8 @@ def run(args: argparse.Namespace, desk: Desk) -> object:
         case "cursor":
             x, y = desk.hypr.cursor()
             return {"x": x, "y": y}
+        case "recipe":
+            return _run_recipe(args, desk)
     raise AssertionError(args.cmd)
 
 
@@ -553,6 +602,9 @@ def main(argv: list[str] | None = None) -> int:
         if args.cmd == "batch" and isinstance(output, dict) and not output["ok"]:
             failed = output["failed"]
             return _fail(failed["code"], f"{failed['message']} ({failed['action']})", args.json)
+        if args.cmd == "recipe" and args.action == "run" and isinstance(output, dict) and not output["ok"]:
+            failed = output["failed"]
+            return _fail(failed["code"], f"{failed['message']} (step {failed['index']} {failed['action']})", args.json)
     except EXPECTED as error:
         return _fail(error_code(error), str(error), args.json)
     finally:

@@ -70,6 +70,14 @@ def test_a_window_that_never_gives_a_frame_ends_the_stream_with_its_error():
     assert (result.frames, result.error) == (0, "window gone")
 
 
+def test_a_stream_says_when_its_first_frame_is_in_the_sink():
+    started, seen = threading.Event(), []
+    result = record.stream(
+        lambda: b"f", lambda frame: seen.append(started.is_set()), threading.Event(), 50, 0.06, started
+    )
+    assert started.is_set() and seen[0] is False and result.frames == 3
+
+
 def test_stop_ends_a_stream():
     stop = threading.Event()
     stop.set()

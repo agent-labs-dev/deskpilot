@@ -381,9 +381,11 @@ class Desk:
         fps: int = recording.FPS,
         seconds: float | None = None,
         hidden: bool = False,
+        started: threading.Event | None = None,
     ) -> recording.Result:
         """Film a window, with the agent cursor the plugin draws into the capture, into an mp4 at `out` or, given a
-        binary stream, as constant-rate PPM frames. Frames are of the window as it is each time, hidden included."""
+        binary stream, as constant-rate PPM frames. Frames are of the window as it is each time, hidden included.
+        `started` is set when the first frame is in an mp4 at `out`."""
         if not 1 <= fps <= 60:
             raise ValueError("fps is between 1 and 60")
         win = self._shootable(self._target(query, False, hidden, refresh=True))
@@ -394,7 +396,7 @@ class Desk:
             return screen.frame(win)
 
         if isinstance(out, Path):
-            return recording.to_file(take, out, stop, fps, seconds)
+            return recording.to_file(take, out, stop, fps, seconds, started)
         return recording.to_stdout(take, out, stop, fps, seconds)
 
     def _shootable(self, win: Window) -> Window:

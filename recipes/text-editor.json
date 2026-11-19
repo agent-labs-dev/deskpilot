@@ -1,0 +1,18 @@
+{
+  "version": 1,
+  "name": "text editor",
+  "description": "Write a short note in GNOME Text Editor with typed text, then open its document statistics.",
+  "window": "org.gnome.TextEditor",
+  "size": "1238x758",
+  "launch": ["sh", "-c", "d=$(mktemp -d); XDG_DATA_HOME=$d XDG_CONFIG_HOME=$d/c XDG_CACHE_HOME=$d/k GSETTINGS_BACKEND=memory exec gnome-text-editor --standalone"],
+  "timeout": 30,
+  "steps": [
+    { "action": "click", "x": 600, "y": 300 },
+    { "action": "pause", "seconds": 0.8 },
+    { "action": "type", "text": "# Shopping list\n\n- oat milk\n- coffee beans\n- lemons\n", "delay": 0.05 },
+    { "action": "pause", "seconds": 0.8 },
+    { "action": "click", "x": 1032, "y": 23 },
+    { "action": "pause", "seconds": 2.5 }
+  ],
+  "record": { "output": "assets/recipes/text-editor.mp4" }
+}
