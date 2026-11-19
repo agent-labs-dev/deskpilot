@@ -564,16 +564,19 @@ def _choose_toplevel(bus: _Bus, app_bus: str, app_path: str, window: Window) -> 
         if role.casefold() in {"frame", "window", "dialog"}:
             candidates.append((ref, role, name))
 
-    # The one toplevel left after another went may not be this window's: only its title can say it is.
-    if len(candidates) == 1 and not skipped:
+    # A toplevel that went while the list was read may have been this window, and its title is unknown, so even one
+    # left with the window's title may be a sibling sharing it: the match cannot be proven.
+    if skipped:
+        raise A11yError(
+            f"A toplevel of the app closed while {window.title!r} was looked for, so which one is this window "
+            "cannot be told.",
+            "gone",
+        )
+    if len(candidates) == 1:
         return candidates[0][0]
     exact = [candidate for candidate in candidates if candidate[2] == window.title]
     if len(exact) == 1:
         return exact[0][0]
-    if skipped:
-        raise A11yError(
-            f"A toplevel of the app closed while {window.title!r} was looked for, and no other has that title.", "gone"
-        )
     listed = ", ".join(repr(name) for name in names) or "none"
     raise A11yError(
         f"Could not choose an accessibility toplevel for {window.title!r}: candidates are {listed}. "
@@ -650,6 +653,18 @@ def _leave_out(exc: A11yError, records: dict[str, dict[str, str]], recorded: int
         del records[gone]
 
 
+@contextmanager
+def _closed_is_gone():
+    """A snapshot reads only the app's root, the window's toplevel and what the walk keeps, so any of those found
+    closed, from choosing the toplevel to the last element, is the window or its app gone, not a stale element id."""
+    try:
+        yield
+    except A11yError as exc:
+        if exc.code != "stale":
+            raise
+        raise A11yError(f"The window's accessible closed while its tree was read: {exc}", "gone") from exc
+
+
 def snapshot(
     window: Window,
     max_depth: int = 30,
@@ -662,7 +677,7 @@ def snapshot(
     snapshot, so ids taken from that snapshot stay good; its own ids name nothing and it has no snapshot id. Bounds are
     in window pixels: a GTK 3 popup element's are placed through its popup from `popups`, asked once and only if an
     element is showing, and are zero when its surface cannot be told exactly."""
-    with _bus_context(bus) as connection:
+    with _bus_context(bus) as connection, _closed_is_gone():
         app_bus, app_path = _app_for_pid(connection, window.pid)
         root_bus, root_path = _choose_toplevel(connection, app_bus, app_path, window)
         gtk3 = _gtk3(connection, app_bus, app_path)
@@ -711,12 +726,7 @@ def snapshot(
                             _leave_out(exc, records, recorded)
             return Element(element_id, role, name, states, text, *bounds, tuple(children))
 
-        try:
-            root = walk(root_bus, root_path, 0)
-        except A11yError as exc:
-            if exc.code != "stale":
-                raise
-            raise A11yError(f"The window's accessible closed while its tree was read: {exc}", "gone") from exc
+        root = walk(root_bus, root_path, 0)
         # Ids are numbered afresh by each snapshot, so an id is checked against the snapshot it came from.
         if peek:
             return replace(root, truncated=truncated)

@@ -436,7 +436,9 @@ def test_an_app_that_leaves_the_bus_while_its_tree_is_read_is_gone(tmp_path, mon
     assert error.value.code == "gone"
 
 
-def test_the_one_toplevel_left_after_another_closed_must_have_the_title(tmp_path, monkeypatch):
+def test_a_toplevel_that_closes_while_toplevels_are_read_leaves_no_match_proven(tmp_path, monkeypatch):
+    # Two windows of one process share a title and the requested one goes after GetChildren: the one left has the
+    # title, but may be the sibling, so its tree must never be saved under the requested window.
     monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path))
 
     class Closing(FakeBus):
@@ -449,7 +451,46 @@ def test_the_one_toplevel_left_after_another_closed_must_have_the_title(tmp_path
                 raise _dbus_error("org.freedesktop.DBus.Error.UnknownMethod")
             return super().call(destination, object_path, interface, method, signature, body)
 
+    for title in ("Preferences", "Editor"):
+        with pytest.raises(a11y.A11yError) as error:
+            a11y.snapshot(window(), bus=Closing(title))
+        assert error.value.code == "gone"
+    assert not (tmp_path / "deskpilot" / "elements" / "0xabc.json").exists()
+
+
+@pytest.mark.parametrize(
+    "failing",
+    [("/frame", "GetInterfaces"), ("/frame", "GetExtents")],
+)
+def test_a_gtk3_toplevel_that_closes_while_its_offset_is_read_is_gone(tmp_path, monkeypatch, failing):
+    monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path))
+
+    class Closing(FakeBus):
+        def call(self, destination, object_path, interface, method, signature, body):
+            if (object_path, method) == failing:
+                raise _dbus_error("org.freedesktop.DBus.Error.UnknownMethod")
+            return super().call(destination, object_path, interface, method, signature, body)
+
+    fake = Closing()
+    fake.toolkit = ("gtk", "3.24.52")
     with pytest.raises(a11y.A11yError) as error:
-        a11y.snapshot(window(), bus=Closing("Preferences"))
+        a11y.snapshot(window(), bus=fake)
     assert error.value.code == "gone"
-    assert a11y.snapshot(window(), bus=Closing("Editor")).role == "dialog"
+
+
+@pytest.mark.parametrize(
+    "failing",
+    [("/app", "GetChildren"), ("/frame", "GetRoleName"), ("/frame", "Get")],
+)
+def test_an_app_that_leaves_the_bus_while_its_toplevel_is_chosen_is_gone(tmp_path, monkeypatch, failing):
+    monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path))
+
+    class Leaving(FakeBus):
+        def call(self, destination, object_path, interface, method, signature, body):
+            if (object_path, method) == failing:
+                raise _dbus_error("org.freedesktop.DBus.Error.NameHasNoOwner")
+            return super().call(destination, object_path, interface, method, signature, body)
+
+    with pytest.raises(a11y.A11yError) as error:
+        a11y.snapshot(window(), bus=Leaving())
+    assert error.value.code == "gone"
