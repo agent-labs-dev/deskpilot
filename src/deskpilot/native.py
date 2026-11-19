@@ -23,7 +23,7 @@ from typing import Protocol
 from . import screen
 from .a11y import Element
 from .base import BaseDesk
-from .errors import NotVisible, SessionLocked, Unavailable
+from .errors import Covered, NotVisible, SessionLocked, Unavailable
 from .hypr import Window, WindowNotFound, find_window
 from .keys import NAMED
 
@@ -71,6 +71,10 @@ class Driver(Protocol):
     def grab(self, window: Window, path: Path) -> None: ...
     def focus(self, window: Window) -> None: ...
     def cursor(self) -> tuple[int, int]: ...
+    def top_at(self, x: int, y: int) -> str | None:
+        """The address of the top-level window that gets input at global (x, y), menus and dialogs included."""
+        ...
+
     def mouse(
         self,
         window: Window,
@@ -119,6 +123,19 @@ def chord(combo: str) -> list[str]:
         if len(part) != 1 and part.lower() not in NAMED and part.lower() not in MODIFIERS:
             raise ValueError(f"unknown key '{part}'; use a character or one of: {', '.join(sorted(NAMED))}")
     return [part if len(part) == 1 else part.lower() for part in parts]
+
+
+def descendants(pid: int, parents: dict[int, int]) -> set[int]:
+    """`pid` and every process whose parent chain reaches it."""
+    family = {pid}
+    grew = True
+    while grew:
+        grew = False
+        for child, parent in parents.items():
+            if parent in family and child not in family:
+                family.add(child)
+                grew = True
+    return family
 
 
 def _elements_path(window: Window) -> Path:
@@ -224,14 +241,22 @@ class NativeDesk(BaseDesk):
         win = self._target(query, show, hidden)
         if element is not None:
             at = self.locate(win, element)
-            return win, win.x + at.x + at.width // 2, win.y + at.y + at.height // 2
-        assert x is not None and y is not None
-        taken = screen.load(shot) if shot else screen.last_at(win)
-        if taken and (shot or scale is None):
-            taken.check(win)
-        if scale is None:
-            scale = taken.scale if taken else 1.0
-        return win, *screen.to_global(win, x, y, scale)
+            gx, gy = win.x + at.x + at.width // 2, win.y + at.y + at.height // 2
+        else:
+            assert x is not None and y is not None
+            taken = screen.load(shot) if shot else screen.last_at(win)
+            if taken and (shot or scale is None):
+                taken.check(win)
+            if scale is None:
+                scale = taken.scale if taken else 1.0
+            gx, gy = screen.to_global(win, x, y, scale)
+        top = self.driver.top_at(gx, gy)
+        if top != win.address:
+            raise Covered(
+                f"({gx}, {gy}) in {win.cls} ({win.address}) is under another window ({top or 'none'}); move or close "
+                "it, or pick a point that shows"
+            )
+        return win, gx, gy
 
     # Pointer
 

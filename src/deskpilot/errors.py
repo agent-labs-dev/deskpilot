@@ -13,6 +13,10 @@ class NotVisible(LookupError):
     code = "not_visible"
 
 
+class Covered(RuntimeError):
+    code = "covered"
+
+
 class Unavailable(RuntimeError):
     """An action this platform's backend cannot do without breaking a rule, such as moving the user's pointer."""
 

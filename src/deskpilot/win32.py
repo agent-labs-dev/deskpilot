@@ -1,0 +1,569 @@
+"""The Windows driver: window messages posted to the target window, so the user's pointer and focus stay theirs.
+
+Coordinates are physical pixels: the process is per-monitor DPI aware (v2) before it reads any window. Pointer events
+are posted to the deepest child window under the point in client coordinates; keys are posted to the target thread's
+focused control. Posted modifier state is not seen by an app that reads the real keyboard (GetKeyState), so a chord
+with a modifier needs take_focus, which sends it through SendInput to the foreground window.
+"""
+
+from __future__ import annotations
+
+import ctypes
+import os
+import subprocess
+import sys
+from ctypes import wintypes
+from pathlib import Path
+from typing import Any
+
+from PIL import Image
+
+from .errors import Unavailable
+from .hypr import Window
+from .native import MODIFIERS, Node, descendants
+
+INSTANCE = "win32"
+
+# Messages, flags and constants from WinUser.h and dwmapi.h.
+WM_KEYDOWN, WM_KEYUP, WM_CHAR, WM_SYSKEYDOWN, WM_SYSKEYUP = 0x0100, 0x0101, 0x0102, 0x0104, 0x0105
+WM_MOUSEMOVE, WM_MOUSEWHEEL = 0x0200, 0x020A
+BUTTON_MESSAGES = {
+    # button: (down, up, double-click, MK_ flag)
+    "left": (0x0201, 0x0202, 0x0203, 0x0001),
+    "right": (0x0204, 0x0205, 0x0206, 0x0002),
+    "middle": (0x0207, 0x0208, 0x0209, 0x0010),
+}
+WHEEL_DELTA = 120
+GW_OWNER = 4
+GA_ROOT = 2
+GWL_EXSTYLE = -20
+WS_EX_TOOLWINDOW = 0x00000080
+DWMWA_EXTENDED_FRAME_BOUNDS = 9
+DWMWA_CLOAKED = 14
+PW_RENDERFULLCONTENT = 2
+CWP_SKIPINVISIBLE, CWP_SKIPDISABLED, CWP_SKIPTRANSPARENT = 0x1, 0x2, 0x4
+SW_RESTORE = 9
+SW_SHOWNOACTIVATE = 4
+MAPVK_VK_TO_VSC = 0
+CF_UNICODETEXT = 13
+GMEM_MOVEABLE = 0x0002
+PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
+TH32CS_SNAPPROCESS = 0x2
+DESKTOP_SWITCHDESKTOP = 0x0100
+UOI_NAME = 2
+DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2 = -4
+
+INPUT_MOUSE, INPUT_KEYBOARD = 0, 1
+KEYEVENTF_KEYUP, KEYEVENTF_UNICODE = 0x0002, 0x0004
+MOUSEEVENTF = {
+    ("left", True): 0x0002,
+    ("left", False): 0x0004,
+    ("right", True): 0x0008,
+    ("right", False): 0x0010,
+    ("middle", True): 0x0020,
+    ("middle", False): 0x0040,
+}
+MOUSEEVENTF_WHEEL = 0x0800
+
+# Virtual-key codes for keys.NAMED and the modifiers.
+VK = {
+    "esc": 0x1B, "escape": 0x1B, "backspace": 0x08, "tab": 0x09, "return": 0x0D, "enter": 0x0D, "space": 0x20,
+    "ctrl": 0x11, "control": 0x11, "shift": 0x10, "alt": 0x12, "super": 0x5B, "meta": 0x5B, "win": 0x5B,
+    "cmd": 0x11, "command": 0x11, "capslock": 0x14, "delete": 0x2E, "del": 0x2E, "insert": 0x2D, "home": 0x24,
+    "end": 0x23, "pageup": 0x21, "pagedown": 0x22, "up": 0x26, "down": 0x28, "left": 0x25, "right": 0x27,
+    **{f"f{n}": 0x6F + n for n in range(1, 13)},
+}  # fmt: skip
+EXTENDED = frozenset({0x2E, 0x2D, 0x24, 0x23, 0x21, 0x22, 0x26, 0x28, 0x25, 0x27, 0x5B})
+
+
+def lparam_point(x: int, y: int) -> int:
+    """MAKELPARAM of two signed 16-bit coordinates."""
+    return ((y & 0xFFFF) << 16) | (x & 0xFFFF)
+
+
+def key_lparam(scan: int, down: bool, extended: bool, alt: bool = False) -> int:
+    """The lParam of a posted WM_KEYDOWN or WM_KEYUP: repeat count 1, the scan code, and the transition bits."""
+    value = 1 | (scan & 0xFF) << 16
+    if extended:
+        value |= 1 << 24
+    if alt:
+        value |= 1 << 29
+    if not down:
+        value |= 1 << 30 | 1 << 31
+    return value
+
+
+def wheel_wparam(notches: int, held: int = 0) -> int:
+    """WM_MOUSEWHEEL's wParam: the signed delta in the high word, the MK_ flags in the low one."""
+    return ((notches * WHEEL_DELTA) & 0xFFFF) << 16 | held
+
+
+def mk_flags(held: frozenset[str]) -> int:
+    return sum(BUTTON_MESSAGES[b][3] for b in held if b in BUTTON_MESSAGES)
+
+
+class _MOUSEINPUT(ctypes.Structure):
+    _fields_ = (
+        ("dx", wintypes.LONG),
+        ("dy", wintypes.LONG),
+        ("mouseData", wintypes.DWORD),
+        ("dwFlags", wintypes.DWORD),
+        ("time", wintypes.DWORD),
+        ("dwExtraInfo", ctypes.c_size_t),
+    )
+
+
+class _KEYBDINPUT(ctypes.Structure):
+    _fields_ = (
+        ("wVk", wintypes.WORD),
+        ("wScan", wintypes.WORD),
+        ("dwFlags", wintypes.DWORD),
+        ("time", wintypes.DWORD),
+        ("dwExtraInfo", ctypes.c_size_t),
+    )
+
+
+class _INPUTUNION(ctypes.Union):
+    _fields_ = (("mi", _MOUSEINPUT), ("ki", _KEYBDINPUT), ("pad", ctypes.c_byte * 32))
+
+
+class _INPUT(ctypes.Structure):
+    _fields_ = (("type", wintypes.DWORD), ("u", _INPUTUNION))
+
+
+class _GUITHREADINFO(ctypes.Structure):
+    _fields_ = (
+        ("cbSize", wintypes.DWORD),
+        ("flags", wintypes.DWORD),
+        ("hwndActive", wintypes.HWND),
+        ("hwndFocus", wintypes.HWND),
+        ("hwndCapture", wintypes.HWND),
+        ("hwndMenuOwner", wintypes.HWND),
+        ("hwndMoveSize", wintypes.HWND),
+        ("hwndCaret", wintypes.HWND),
+        ("rcCaret", wintypes.RECT),
+    )
+
+
+class _PROCESSENTRY32W(ctypes.Structure):
+    _fields_ = (
+        ("dwSize", wintypes.DWORD),
+        ("cntUsage", wintypes.DWORD),
+        ("th32ProcessID", wintypes.DWORD),
+        ("th32DefaultHeapID", ctypes.c_size_t),
+        ("th32ModuleID", wintypes.DWORD),
+        ("cntThreads", wintypes.DWORD),
+        ("th32ParentProcessID", wintypes.DWORD),
+        ("pcPriClassBase", wintypes.LONG),
+        ("dwFlags", wintypes.DWORD),
+        ("szExeFile", wintypes.WCHAR * 260),
+    )
+
+
+class _BITMAPINFOHEADER(ctypes.Structure):
+    _fields_ = (
+        ("biSize", wintypes.DWORD),
+        ("biWidth", wintypes.LONG),
+        ("biHeight", wintypes.LONG),
+        ("biPlanes", wintypes.WORD),
+        ("biBitCount", wintypes.WORD),
+        ("biCompression", wintypes.DWORD),
+        ("biSizeImage", wintypes.DWORD),
+        ("biXPelsPerMeter", wintypes.LONG),
+        ("biYPelsPerMeter", wintypes.LONG),
+        ("biClrUsed", wintypes.DWORD),
+        ("biClrImportant", wintypes.DWORD),
+    )
+
+
+class Win32Driver:
+    instance = INSTANCE
+
+    def __init__(self) -> None:
+        if sys.platform != "win32":
+            raise Unavailable("the Windows driver runs only on Windows")
+        self.user32: Any = ctypes.WinDLL("user32", use_last_error=True)
+        self.gdi32: Any = ctypes.WinDLL("gdi32", use_last_error=True)
+        self.kernel32: Any = ctypes.WinDLL("kernel32", use_last_error=True)
+        self.dwmapi: Any = ctypes.WinDLL("dwmapi")
+        self.user32.SetProcessDpiAwarenessContext(ctypes.c_void_p(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2))
+        for name in ("WindowFromPoint", "GetAncestor", "ChildWindowFromPointEx", "GetForegroundWindow", "GetWindow"):
+            getattr(self.user32, name).restype = wintypes.HWND
+        self.user32.WindowFromPoint.argtypes = (wintypes.POINT,)
+        self.user32.ChildWindowFromPointEx.argtypes = (wintypes.HWND, wintypes.POINT, wintypes.UINT)
+        self.user32.PostMessageW.argtypes = (wintypes.HWND, wintypes.UINT, wintypes.WPARAM, wintypes.LPARAM)
+        self.user32.GetWindowLongPtrW.restype = ctypes.c_ssize_t
+        self.kernel32.GlobalLock.restype = ctypes.c_void_p
+        self.kernel32.GlobalAlloc.restype = ctypes.c_void_p
+        self.kernel32.GlobalLock.argtypes = (ctypes.c_void_p,)
+        self.kernel32.GlobalUnlock.argtypes = (ctypes.c_void_p,)
+        self.user32.GetClipboardData.restype = ctypes.c_void_p
+        self.user32.SetClipboardData.argtypes = (wintypes.UINT, ctypes.c_void_p)
+        self._uia: Any = None
+
+    # Windows
+
+    def _dwm_rect(self, hwnd: int) -> wintypes.RECT:
+        rect = wintypes.RECT()
+        if self.dwmapi.DwmGetWindowAttribute(
+            wintypes.HWND(hwnd), DWMWA_EXTENDED_FRAME_BOUNDS, ctypes.byref(rect), ctypes.sizeof(rect)
+        ):
+            self.user32.GetWindowRect(wintypes.HWND(hwnd), ctypes.byref(rect))
+        return rect
+
+    def _cloaked(self, hwnd: int) -> bool:
+        value = wintypes.DWORD()
+        self.dwmapi.DwmGetWindowAttribute(wintypes.HWND(hwnd), DWMWA_CLOAKED, ctypes.byref(value), 4)
+        return bool(value.value)
+
+    def _pid(self, hwnd: int) -> int:
+        pid = wintypes.DWORD()
+        self.user32.GetWindowThreadProcessId(wintypes.HWND(hwnd), ctypes.byref(pid))
+        return pid.value
+
+    def _process(self, pid: int) -> tuple[str, int]:
+        """The process's executable name and creation time, which with the HWND names one window for good."""
+        handle = self.kernel32.OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, False, pid)
+        if not handle:
+            return "", 0
+        try:
+            size = wintypes.DWORD(1024)
+            buffer = ctypes.create_unicode_buffer(size.value)
+            self.kernel32.QueryFullProcessImageNameW(handle, 0, buffer, ctypes.byref(size))
+            times = [wintypes.FILETIME() for _ in range(4)]
+            self.kernel32.GetProcessTimes(handle, *(ctypes.byref(t) for t in times))
+            created = times[0].dwHighDateTime << 32 | times[0].dwLowDateTime
+            return Path(buffer.value).stem, created
+        finally:
+            self.kernel32.CloseHandle(handle)
+
+    def windows(self) -> list[Window]:
+        """Top-level windows a user could see, front to back (EnumWindows walks the z-order from the top)."""
+        handles: list[int] = []
+        callback = ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM)(
+            lambda hwnd, _: handles.append(hwnd or 0) or True
+        )
+        self.user32.EnumWindows(callback, 0)
+        foreground = self.user32.GetForegroundWindow() or 0
+        found: list[Window] = []
+        for hwnd in handles:
+            if not self.user32.IsWindowVisible(wintypes.HWND(hwnd)) or self._cloaked(hwnd):
+                continue
+            if self.user32.GetWindowLongPtrW(wintypes.HWND(hwnd), GWL_EXSTYLE) & WS_EX_TOOLWINDOW:
+                continue
+            length = self.user32.GetWindowTextLengthW(wintypes.HWND(hwnd))
+            if not length:
+                continue
+            title = ctypes.create_unicode_buffer(length + 1)
+            self.user32.GetWindowTextW(wintypes.HWND(hwnd), title, length + 1)
+            rect = self._dwm_rect(hwnd)
+            width, height = rect.right - rect.left, rect.bottom - rect.top
+            if width <= 0 or height <= 0:
+                continue
+            pid = self._pid(hwnd)
+            exe, created = self._process(pid)
+            found.append(
+                Window(
+                    address=hex(hwnd),
+                    cls=exe,
+                    title=title.value,
+                    x=rect.left,
+                    y=rect.top,
+                    width=width,
+                    height=height,
+                    monitor=0,
+                    workspace="",
+                    xwayland=False,
+                    pid=pid,
+                    focused=hwnd == foreground,
+                    instance=INSTANCE,
+                    stable_id=f"{hwnd:x}-{created:x}",
+                    visible=not self.user32.IsIconic(wintypes.HWND(hwnd)),
+                )
+            )
+        return found
+
+    def locked(self) -> bool:
+        """The input desktop is the Winlogon one, not Default, while the session is locked."""
+        desktop = self.user32.OpenInputDesktop(0, False, DESKTOP_SWITCHDESKTOP)
+        if not desktop:
+            return True
+        try:
+            name = ctypes.create_unicode_buffer(256)
+            self.user32.GetUserObjectInformationW(desktop, UOI_NAME, name, ctypes.sizeof(name), None)
+            return name.value.lower() != "default"
+        finally:
+            self.user32.CloseDesktop(desktop)
+
+    def focus(self, window: Window) -> None:
+        hwnd = wintypes.HWND(int(window.address, 16))
+        if self.user32.IsIconic(hwnd):
+            self.user32.ShowWindow(hwnd, SW_RESTORE)
+        self.user32.SetForegroundWindow(hwnd)
+
+    def cursor(self) -> tuple[int, int]:
+        point = wintypes.POINT()
+        self.user32.GetCursorPos(ctypes.byref(point))
+        return point.x, point.y
+
+    def top_at(self, x: int, y: int) -> str | None:
+        hwnd = self.user32.WindowFromPoint(wintypes.POINT(x, y))
+        root = self.user32.GetAncestor(hwnd, GA_ROOT) if hwnd else None
+        return hex(root) if root else None
+
+    # Capture
+
+    def grab(self, window: Window, path: Path) -> None:
+        """PrintWindow with PW_RENDERFULLCONTENT draws the window from its own content, so a window partly under
+        another still comes out whole; the frame is cropped to the bounds DWM shows."""
+        hwnd = wintypes.HWND(int(window.address, 16))
+        outer = wintypes.RECT()
+        self.user32.GetWindowRect(hwnd, ctypes.byref(outer))
+        width, height = outer.right - outer.left, outer.bottom - outer.top
+        screen_dc = self.user32.GetDC(None)
+        dc = self.gdi32.CreateCompatibleDC(screen_dc)
+        bitmap = self.gdi32.CreateCompatibleBitmap(screen_dc, width, height)
+        try:
+            self.gdi32.SelectObject(dc, bitmap)
+            if not self.user32.PrintWindow(hwnd, dc, PW_RENDERFULLCONTENT):
+                raise RuntimeError(f"Windows drew no image of {window.cls} ({window.address})")
+            header = _BITMAPINFOHEADER(ctypes.sizeof(_BITMAPINFOHEADER), width, -height, 1, 32, 0)
+            pixels = ctypes.create_string_buffer(width * height * 4)
+            self.gdi32.GetDIBits(dc, bitmap, 0, height, pixels, ctypes.byref(header), 0)
+        finally:
+            self.gdi32.DeleteObject(bitmap)
+            self.gdi32.DeleteDC(dc)
+            self.user32.ReleaseDC(None, screen_dc)
+        image = Image.frombuffer("RGB", (width, height), pixels.raw, "raw", "BGRX", 0, 1)
+        left, top = window.x - outer.left, window.y - outer.top
+        image.crop((left, top, left + window.width, top + window.height)).save(path)
+
+    # Input
+
+    def _deepest(self, window: Window, x: int, y: int) -> tuple[Any, int, int]:
+        """The child window under (x, y) that would get the event, and the point in its client coordinates."""
+        hwnd = wintypes.HWND(int(window.address, 16))
+        flags = CWP_SKIPINVISIBLE | CWP_SKIPDISABLED | CWP_SKIPTRANSPARENT
+        while True:
+            point = wintypes.POINT(x, y)
+            self.user32.ScreenToClient(hwnd, ctypes.byref(point))
+            child = self.user32.ChildWindowFromPointEx(hwnd, point, flags)
+            if not child or child == hwnd.value:
+                return hwnd, point.x, point.y
+            hwnd = wintypes.HWND(child)
+
+    def mouse(
+        self,
+        window: Window,
+        event: str,
+        x: int,
+        y: int,
+        *,
+        button: str = "left",
+        held: frozenset[str] = frozenset(),
+        clicks: int = 1,
+        dy: int = 0,
+        seat: bool = False,
+    ) -> None:
+        if seat:
+            self._seat_mouse(event, x, y, button, dy)
+            return
+        target, cx, cy = self._deepest(window, x, y)
+        flags = mk_flags(held)
+        if event == "move":
+            self.user32.PostMessageW(target, WM_MOUSEMOVE, flags, lparam_point(cx, cy))
+        elif event == "wheel":
+            self.user32.PostMessageW(target, WM_MOUSEWHEEL, wheel_wparam(dy, flags), lparam_point(x, y))
+        else:
+            down, up, double, flag = BUTTON_MESSAGES[button]
+            if event == "down":
+                message = double if clicks % 2 == 0 else down
+                self.user32.PostMessageW(target, message, flags | flag, lparam_point(cx, cy))
+            else:
+                self.user32.PostMessageW(target, up, flags, lparam_point(cx, cy))
+
+    def _send(self, *inputs: _INPUT) -> None:
+        array = (_INPUT * len(inputs))(*inputs)
+        if self.user32.SendInput(len(inputs), array, ctypes.sizeof(_INPUT)) != len(inputs):
+            raise RuntimeError("Windows refused the input (another app may be elevated or the desktop is locked)")
+
+    def _seat_mouse(self, event: str, x: int, y: int, button: str, dy: int) -> None:
+        self.user32.SetCursorPos(x, y)
+        if event == "move":
+            return
+        if event == "wheel":
+            flags, data = MOUSEEVENTF_WHEEL, (dy * WHEEL_DELTA) & 0xFFFFFFFF
+        else:
+            flags, data = MOUSEEVENTF[(button, event == "down")], 0
+        self._send(_INPUT(INPUT_MOUSE, _INPUTUNION(mi=_MOUSEINPUT(0, 0, data, flags, 0, 0))))
+
+    def _focused_control(self, window: Window) -> Any:
+        hwnd = wintypes.HWND(int(window.address, 16))
+        thread = self.user32.GetWindowThreadProcessId(hwnd, None)
+        info = _GUITHREADINFO(cbSize=ctypes.sizeof(_GUITHREADINFO))
+        if self.user32.GetGUIThreadInfo(thread, ctypes.byref(info)) and info.hwndFocus:
+            return info.hwndFocus
+        return hwnd
+
+    def _vk(self, key: str) -> tuple[int, int]:
+        """A key's virtual-key code and the shift state its character needs on the user's layout (VkKeyScanW)."""
+        if key in VK:
+            return VK[key], 0
+        scan = self.user32.VkKeyScanW(ctypes.c_wchar(key))
+        if scan == -1 or scan & 0xFFFF == 0xFFFF:
+            raise ValueError(f"no key on the active keyboard layout types {key!r}")
+        return scan & 0xFF, (scan >> 8) & 0xFF
+
+    def key(self, window: Window, key: str, down: bool, *, held: frozenset[str], seat: bool = False) -> None:
+        vk, _ = self._vk(key)
+        if seat:
+            flags = 0 if down else KEYEVENTF_KEYUP
+            self._send(_INPUT(INPUT_KEYBOARD, _INPUTUNION(ki=_KEYBDINPUT(vk, 0, flags, 0, 0))))
+            return
+        if held & MODIFIERS or key in MODIFIERS:
+            raise Unavailable(
+                "Windows apps read modifiers from the real keyboard, so a posted chord would arrive without them: "
+                "pass take_focus to send it through the system"
+            )
+        scan = self.user32.MapVirtualKeyW(vk, MAPVK_VK_TO_VSC)
+        message = WM_KEYDOWN if down else WM_KEYUP
+        target = self._focused_control(window)
+        self.user32.PostMessageW(target, message, vk, key_lparam(scan, down, vk in EXTENDED))
+
+    def text(self, window: Window, char: str, *, seat: bool = False) -> None:
+        units = char.encode("utf-16-le")
+        codes = [int.from_bytes(units[i : i + 2], "little") for i in range(0, len(units), 2)]
+        if seat:
+            for code in codes:
+                self._send(
+                    _INPUT(INPUT_KEYBOARD, _INPUTUNION(ki=_KEYBDINPUT(0, code, KEYEVENTF_UNICODE, 0, 0))),
+                    _INPUT(
+                        INPUT_KEYBOARD, _INPUTUNION(ki=_KEYBDINPUT(0, code, KEYEVENTF_UNICODE | KEYEVENTF_KEYUP, 0, 0))
+                    ),
+                )
+            return
+        target = self._focused_control(window)
+        if char in ("\n", "\r"):
+            scan = self.user32.MapVirtualKeyW(VK["return"], MAPVK_VK_TO_VSC)
+            for down in (True, False):
+                message = WM_KEYDOWN if down else WM_KEYUP
+                self.user32.PostMessageW(target, message, VK["return"], key_lparam(scan, down, False))
+            return
+        for code in codes:
+            self.user32.PostMessageW(target, WM_CHAR, code, 1)
+
+    # Accessibility (UI Automation)
+
+    def _automation(self) -> Any:
+        if self._uia is None:
+            import comtypes.client
+
+            comtypes.client.GetModule("UIAutomationCore.dll")
+            from comtypes.gen import UIAutomationClient as uia
+
+            self._uia_module = uia
+            self._uia = comtypes.client.CreateObject(uia.CUIAutomation, interface=uia.IUIAutomation)
+            self._walker = self._uia.ControlViewWalker
+        return self._uia
+
+    def root(self, window: Window) -> object:
+        return self._automation().ElementFromHandle(int(window.address, 16))
+
+    def children(self, node: object) -> list[object]:
+        self._automation()
+        found = []
+        child = self._walker.GetFirstChildElement(node)
+        while child:
+            found.append(child)
+            child = self._walker.GetNextSiblingElement(child)
+        return found
+
+    def describe(self, node: Any) -> Node:
+        uia = self._uia_module
+        rect = node.CurrentBoundingRectangle
+        states = []
+        if node.CurrentIsOffscreen:
+            states.append("offscreen")
+        if not node.CurrentIsEnabled:
+            states.append("disabled")
+        if node.CurrentHasKeyboardFocus:
+            states.append("focused")
+        text = None
+        try:
+            pattern = node.GetCurrentPattern(uia.UIA_ValuePatternId)
+            if pattern:
+                text = pattern.QueryInterface(uia.IUIAutomationValuePattern).CurrentValue
+        except OSError:
+            text = None
+        return Node(
+            role=node.CurrentLocalizedControlType or "",
+            name=node.CurrentName or "",
+            states=tuple(states),
+            text=text,
+            x=rect.left,
+            y=rect.top,
+            width=max(0, rect.right - rect.left),
+            height=max(0, rect.bottom - rect.top),
+        )
+
+    # Clipboard
+
+    def read_clipboard(self) -> str:
+        if not self.user32.OpenClipboard(None):
+            raise RuntimeError("another app holds the clipboard open")
+        try:
+            handle = self.user32.GetClipboardData(CF_UNICODETEXT)
+            if not handle:
+                return ""
+            pointer = self.kernel32.GlobalLock(handle)
+            try:
+                return ctypes.wstring_at(pointer)
+            finally:
+                self.kernel32.GlobalUnlock(handle)
+        finally:
+            self.user32.CloseClipboard()
+
+    def write_clipboard(self, text: str) -> None:
+        data = text.encode("utf-16-le") + b"\0\0"
+        if not self.user32.OpenClipboard(None):
+            raise RuntimeError("another app holds the clipboard open")
+        try:
+            self.user32.EmptyClipboard()
+            handle = self.kernel32.GlobalAlloc(GMEM_MOVEABLE, len(data))
+            pointer = self.kernel32.GlobalLock(handle)
+            ctypes.memmove(pointer, data, len(data))
+            self.kernel32.GlobalUnlock(handle)
+            if not self.user32.SetClipboardData(CF_UNICODETEXT, handle):
+                raise RuntimeError("Windows refused the clipboard text")
+        finally:
+            self.user32.CloseClipboard()
+
+    # Processes
+
+    def launch(self, command: list[str]) -> int:
+        """Start the app without activating its window, so the user's focus stays where it is."""
+        info = subprocess.STARTUPINFO()  # type: ignore[attr-defined]
+        info.dwFlags |= subprocess.STARTF_USESHOWWINDOW  # type: ignore[attr-defined]
+        info.wShowWindow = SW_SHOWNOACTIVATE
+        process = subprocess.Popen(
+            command,
+            startupinfo=info,
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            env=os.environ.copy(),
+        )
+        return process.pid
+
+    def family(self, pid: int) -> set[int]:
+        snapshot = self.kernel32.CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0)
+        parents: dict[int, int] = {}
+        try:
+            entry = _PROCESSENTRY32W(dwSize=ctypes.sizeof(_PROCESSENTRY32W))
+            more = self.kernel32.Process32FirstW(snapshot, ctypes.byref(entry))
+            while more:
+                parents[entry.th32ProcessID] = entry.th32ParentProcessID
+                more = self.kernel32.Process32NextW(snapshot, ctypes.byref(entry))
+        finally:
+            self.kernel32.CloseHandle(snapshot)
+        return descendants(pid, parents)

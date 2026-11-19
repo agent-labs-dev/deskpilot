@@ -35,6 +35,12 @@ dev = ["fonttools>=4.58", "pytest>=8", "ruff>=0.12", "ty>=0.0.1"]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
 
+# Each platform's driver uses that platform's stdlib members and packages, which ty cannot see from another one; CI
+# runs each driver on its own platform.
+[[tool.ty.overrides]]
+include = ["src/deskpilot/win32.py", "src/deskpilot/macos.py"]
+rules = { import-not-found = "ignore", missing-attribute = "ignore" }
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 
