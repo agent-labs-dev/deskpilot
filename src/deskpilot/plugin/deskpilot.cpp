@@ -1558,7 +1558,7 @@ namespace {
             return;
         if (direct() ? !(clearAt() && hiddenReady(*g_op)) : !targetUnderPointer())
             return;
-        if (g_op->mode == eMode::SHOWN)
+        if (g_op->mode == eMode::SHOWN || g_op->film)
             agentcursor::press(g_op->agent);
         if (direct())
             hiddenButton(*g_op, button, WL_POINTER_BUTTON_STATE_PRESSED);
@@ -1583,7 +1583,7 @@ namespace {
         if (IT == g_op->down.end())
             return;
         g_op->down.erase(IT);
-        if (g_op->mode == eMode::SHOWN && g_op->down.empty())
+        if ((g_op->mode == eMode::SHOWN || g_op->film) && g_op->down.empty())
             agentcursor::release(g_op->agent);
         if (direct()) {
             hiddenButton(*g_op, button, WL_POINTER_BUTTON_STATE_RELEASED);
@@ -1641,7 +1641,7 @@ namespace {
         g_op.reset();
         dropTimer(op.timer);
         op.focusChange.reset();
-        if (op.mode == eMode::SHOWN && !op.down.empty())
+        if ((op.mode == eMode::SHOWN || op.film) && !op.down.empty())
             agentcursor::release(op.agent);
         // An action that ends early (an error, `end`, an unload) still lets go of every button it holds. A drag and
         // drop started while it held one is its own, since the user's input is held meanwhile: it is cancelled rather

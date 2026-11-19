@@ -341,6 +341,7 @@ def _record(desk: Desk, args: argparse.Namespace) -> object:
     result = desk.record(
         args.window, sys.stdout.buffer if to_stdout else Path(args.out), stop, args.fps, args.seconds, args.hidden
     )
+    result.raise_if_empty()
     if to_stdout:
         # stdout carries the frames, so the summary goes to stderr.
         print(json.dumps(result.to_dict()), file=sys.stderr)

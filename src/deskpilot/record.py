@@ -29,6 +29,12 @@ class Result:
     frames: int
     seconds: float
     error: str | None = None
+    failure: Exception | None = None
+
+    def raise_if_empty(self) -> None:
+        """A recording that captured no frame failed: raise the capture's own error, so its code is kept."""
+        if self.failure and not self.frames:
+            raise self.failure
 
     def to_dict(self) -> dict:
         return {"frames": self.frames, "seconds": round(self.seconds, 2)} | (
@@ -51,32 +57,34 @@ def stream(
     fps: int = FPS,
     seconds: float | None = None,
 ) -> Result:
-    """Take frames from `take` at a steady `fps` into `sink` until `stop` is set or `seconds` pass. A slow or failed
-    capture repeats the last frame, so the stream keeps the real time of the run."""
+    """Take frames from `take` at a steady `fps` into `sink` until `stop` is set or `seconds` pass. A failed capture,
+    and the slots a slow one overran, repeat the last frame, so the stream keeps the real time of the run and no
+    longer than it."""
     limit = min(seconds, MAX_SECONDS) if seconds else MAX_SECONDS
+    total = max(1, round(limit * fps))
     start = time.monotonic()
     last: bytes | None = None
     written = failures = 0
-    error = None
-    while not stop.is_set():
-        due = start + written / fps
-        if due - start >= limit:
-            break
-        stop.wait(max(0.0, due - time.monotonic()))
+    failure: Exception | None = None
+    while not stop.is_set() and written < total:
+        stop.wait(max(0.0, start + written / fps - time.monotonic()))
         if stop.is_set():
             break
         try:
             last = take()
             failures = 0
-        except (RuntimeError, TimeoutError) as failure:
+        except (RuntimeError, TimeoutError) as caught:
             failures += 1
             if failures >= MAX_FAILURES or last is None:
-                error = str(failure)
+                failure = caught
                 break
         assert last is not None
         sink(last)
         written += 1
-    return Result(written, time.monotonic() - start, error)
+        while written < total and start + written / fps <= time.monotonic():
+            sink(last)
+            written += 1
+    return Result(written, time.monotonic() - start, str(failure) if failure else None, failure)
 
 
 class Mp4:

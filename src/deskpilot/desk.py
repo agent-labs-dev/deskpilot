@@ -387,6 +387,8 @@ class Desk:
         if not 1 <= fps <= 60:
             raise ValueError("fps is between 1 and 60")
         win = self._shootable(self._target(query, False, hidden, refresh=True))
+        # The cursor in the frames is the plugin's, so it is loaded, at this source's build, before the first capture.
+        self.plugin.load()
 
         def take() -> bytes:
             return screen.frame(win)

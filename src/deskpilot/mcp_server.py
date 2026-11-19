@@ -111,6 +111,7 @@ def record_stop(path: str) -> dict:
     thread.join()
     if isinstance(outcome[0], BaseException):
         raise outcome[0]
+    outcome[0].raise_if_empty()
     return outcome[0].to_dict() | {"path": path}
 
 
