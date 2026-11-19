@@ -298,7 +298,7 @@ def _pinned(desk: Desk, window: Window) -> Window:
 
 def _names(desk: Desk, query: str | None, window: Window) -> bool:
     """Whether a step's window is the pinned one: it names none, or what it names is at the pinned address."""
-    if not query:
+    if not query or query == window.address:
         return True
     try:
         return desk.window(query).address == window.address
@@ -319,7 +319,9 @@ def _wait_pinned(desk: Desk, window: Window, step: Any) -> Window:
                 raise
             time.sleep(0.5)
             continue
-        return _pinned(desk, found or window)
+        if found is None or (found.pid, found.stable_id) != (window.pid, window.stable_id):
+            raise WindowNotFound(f"window {window.address} is no longer the {window.cls} the recipe started on")
+        return found
 
 
 def _do(desk: Desk, step: Any, window: Window, hidden: bool) -> dict:

@@ -356,3 +356,21 @@ def test_a_recording_that_ends_at_its_limit_fails_the_run_even_while_it_finalize
     finally:
         ended.set()
     assert not result["ok"] and "limit" in result["failed"]["message"]
+
+
+@pytest.mark.parametrize("explicit", [False, True])
+def test_a_wait_refuses_a_replacement_its_own_poll_returns(tmp_path, monkeypatch, explicit):
+    desk, fake, _, _ = make_desk(tmp_path, monkeypatch)
+    wait_for = desk.wait_for
+    calls = []
+
+    def replaced_at_the_first_poll(*args, **kwargs):
+        calls.append(args)
+        if len(calls) == 2:  # the first call pins the window, the second is the wait's first poll
+            fake.clients[0] = {**CLIENT, "pid": 99, "title": "Saved"}
+        return wait_for(*args, **kwargs)
+
+    monkeypatch.setattr(desk, "wait_for", replaced_at_the_first_poll)
+    step = {"action": "wait", "title": "Saved", "timeout": 1} | ({"window": CLIENT["address"]} if explicit else {})
+    result = recipe.run(desk, recipe.parse({**DOC, "steps": [step]})).to_dict()
+    assert result["failed"]["code"] == "not_found"
