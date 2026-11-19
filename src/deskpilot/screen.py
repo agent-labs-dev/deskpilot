@@ -106,13 +106,18 @@ class Shot:
             raise StaleShot(f"window {window.address} has changed since shot {self.id}: take a new shot")
 
 
-def _grim(window: Window, path: Path) -> None:
+def _grim(window: Window, path: Path | None = None, cursor: bool = False) -> bytes:
+    """Capture `window` to `path`, or with no path return a PPM of it. `cursor` asks the compositor for a capture with
+    a cursor, which is what makes the plugin draw the agent cursors into it (see `frame`)."""
     cmd = ["grim", "-T", window.stable_id] if window.stable_id else ["grim", "-s", "1", "-g", _geometry(window)]
+    if cursor:
+        cmd.insert(1, "-c")
+    if path is None:
+        cmd[1:1] = ["-t", "ppm"]
     try:
         result = subprocess.run(
-            [*cmd, str(path)],
+            [*cmd, str(path) if path else "-"],
             capture_output=True,
-            text=True,
             check=False,
             timeout=GRIM_TIMEOUT,
             env={**os.environ, "WAYLAND_DISPLAY": window.wayland} if window.wayland else None,
@@ -122,8 +127,22 @@ def _grim(window: Window, path: Path) -> None:
             f"grim got no frame of {window.cls} ({window.address}) from the compositor within {GRIM_TIMEOUT}s"
         ) from error
     if result.returncode != 0:
-        detail = result.stderr.strip() or f"exit status {result.returncode}"
+        detail = _text(result.stderr).strip() or f"exit status {result.returncode}"
         raise RuntimeError(f"grim could not capture {window.cls} ({window.address}): {detail}")
+    return result.stdout
+
+
+def _text(output: bytes | str) -> str:
+    return output.decode(errors="replace") if isinstance(output, bytes) else output
+
+
+def frame(window: Window) -> bytes:
+    """One PPM frame of the window as a recording takes it: with the agent cursor the plugin draws, brackets closing in
+    as it lands and the marker squeezing on a press, wherever the window is, hidden included. This is the one capture
+    that carries the cursor; `capture`, which a model reads, never does. It shows no pointer of the user's."""
+    if not window.stable_id:
+        raise RuntimeError(f"{window.cls} ({window.address}) has no stable id, so the compositor cannot film it")
+    return _grim(window, cursor=True)
 
 
 def _geometry(window: Window) -> str:

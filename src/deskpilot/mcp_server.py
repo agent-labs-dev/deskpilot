@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import functools
 import os
+import threading
 from importlib.metadata import version
+from pathlib import Path
 from typing import Annotated, Literal
 
 from mcp.server.mcpserver import Image, MCPServer
@@ -65,6 +67,43 @@ def shot(window: str, max_width: int = 1400, show: bool = False, hidden: bool = 
     screen is an error unless show is set, which focuses it; hidden captures a window the agent launched or adopted."""
     taken = desk.shot(window, max_width=max_width, show=show, hidden=hidden)
     return [Image(path=taken.path), taken.to_dict()]
+
+
+_recordings: dict[str, tuple[threading.Thread, threading.Event, list]] = {}
+
+
+@_tool()
+def record_start(window: str, path: str, fps: int = 25, hidden: bool = False) -> dict:
+    """Start filming a window into the mp4 at `path`, with the agent cursor the plugin draws: brackets closing in as it
+    lands, the marker squeezing on a press. One recording per path; end it with record_stop. Screenshots from `shot`
+    never show the cursor. hidden films a window the agent launched or adopted, out of view."""
+    if path in _recordings:
+        raise ValueError(f"already recording to {path}")
+    stop, outcome = threading.Event(), []
+
+    def film() -> None:
+        try:
+            outcome.append(desk.record(window, Path(path), stop, fps, None, hidden))
+        except EXPECTED as error:
+            outcome.append(error)
+
+    thread = threading.Thread(target=film, daemon=True)
+    thread.start()
+    _recordings[path] = (thread, stop, outcome)
+    return {"recording": path}
+
+
+@_tool()
+def record_stop(path: str) -> dict:
+    """End the recording to `path` and return its frame count and length once the mp4 is written."""
+    if path not in _recordings:
+        raise ValueError(f"not recording to {path}")
+    thread, stop, outcome = _recordings.pop(path)
+    stop.set()
+    thread.join()
+    if isinstance(outcome[0], BaseException):
+        raise outcome[0]
+    return outcome[0].to_dict() | {"path": path}
 
 
 @_tool()

@@ -7,6 +7,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+- `deskpilot record WINDOW` (MCP `record_start` and `record_stop`) films a window, hidden ones included, with the real agent cursor the plugin draws: brackets closing in as it lands and the marker squeezing on a press. It writes an mp4, or with `-o -` PPM frames at a constant rate on stdout for another encoder. Only a capture that asks for a cursor carries it, so `shot` stays cursor-free, and the user's own pointer is never in the frames. While a window is being filmed, a hidden action on it shows its cursor in the recording alone, never on screen.
+
 ## [0.7.4] - 2026-11-16
 
 - A window that Hyprland gives a closed window's address, such as a freshly launched app, is no longer refused as changed since the closed window's shot. Shots and accessibility snapshots are matched to the window by its compositor, process and stable id as well as its address, so a new window at a reused address simply has none yet, while a window that changed since its own shot is still refused, and so are coordinates given without a shot id or scale, which are in the closed window's shot.
