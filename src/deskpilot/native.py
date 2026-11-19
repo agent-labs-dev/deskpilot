@@ -18,7 +18,7 @@ from collections.abc import Callable, Generator
 from contextlib import contextmanager
 from dataclasses import dataclass, replace
 from pathlib import Path
-from typing import Protocol
+from typing import Any, Protocol
 
 from . import screen
 from .a11y import Element
@@ -258,15 +258,34 @@ class NativeDesk(BaseDesk):
             if scale is None:
                 scale = taken.scale if taken else 1.0
             gx, gy = screen.to_global(win, x, y, scale)
-        top = self.driver.top_at(gx, gy)
-        if top != win.address:
-            raise Covered(
-                f"({gx}, {gy}) in {win.cls} ({win.address}) is under another window ({top or 'none'}); move or close "
-                "it, or pick a point that shows"
-            )
+        self._check_point(win, gx, gy)
         return win, gx, gy
 
+    def _check_point(self, win: Window, x: int, y: int) -> None:
+        top = self.driver.top_at(x, y)
+        if top != win.address:
+            raise Covered(
+                f"({x}, {y}) in {win.cls} ({win.address}) is under another window ({top or 'none'}); move or close "
+                "it, or pick a point that shows"
+            )
+
     # Pointer
+
+    def _mouse(self, win: Window, event: str, x: int, y: int, **options: Any) -> None:
+        """One pointer event. Every event but a release checks at dispatch that the point still shows the target, so
+        a window that came up during a pause or along a drag's path is never clicked through; a release always goes
+        out, so no button stays held."""
+        if event != "up":
+            self._check_point(win, x, y)
+        self.driver.mouse(win, event, x, y, **options)
+
+    def _seat_check(self, win: Window, seat: bool) -> None:
+        """Seat keys go to whatever is in front: check at each one that it is still the target, since the user may
+        have switched windows since the last."""
+        if seat and next((w.address for w in self.driver.windows() if w.focused), None) != win.address:
+            raise RuntimeError(  # refused
+                f"{win.cls} ({win.address}) is no longer in front, so the keys would go to another window; stopped"
+            )
 
     @contextmanager
     def _buttons(self, win: Window, seat: bool) -> Generator[set[str]]:
@@ -277,12 +296,12 @@ class NativeDesk(BaseDesk):
         finally:
             for button in list(held):
                 x, y = self.driver.cursor() if seat else (win.x, win.y)
-                self.driver.mouse(win, "up", x, y, button=button, seat=seat)
+                self._mouse(win, "up", x, y, button=button, seat=seat)
 
     def _press(self, win: Window, held: set[str], x: int, y: int, button: str, clicks: int, seat: bool) -> None:
-        self.driver.mouse(win, "down", x, y, button=button, held=frozenset(held), clicks=clicks, seat=seat)
+        self._mouse(win, "down", x, y, button=button, held=frozenset(held), clicks=clicks, seat=seat)
         held.add(button)
-        self.driver.mouse(win, "up", x, y, button=button, held=frozenset(held - {button}), clicks=clicks, seat=seat)
+        self._mouse(win, "up", x, y, button=button, held=frozenset(held - {button}), clicks=clicks, seat=seat)
         held.discard(button)
 
     def _focus_for_seat(self, win: Window) -> None:
@@ -304,7 +323,7 @@ class NativeDesk(BaseDesk):
         win, gx, gy = self.point(query, x, y, scale, shot, show, element)
         if take_pointer:
             self._focus_for_seat(win)
-        self.driver.mouse(win, "move", gx, gy, seat=take_pointer)
+        self._mouse(win, "move", gx, gy, seat=take_pointer)
         return gx, gy
 
     def click(
@@ -340,7 +359,7 @@ class NativeDesk(BaseDesk):
         if take_pointer:
             self._focus_for_seat(win)
         with self._buttons(win, take_pointer) as held:
-            self.driver.mouse(win, "move", gx, gy, seat=take_pointer)
+            self._mouse(win, "move", gx, gy, seat=take_pointer)
             self._sleep(HOLD)
             for n in range(1, count + 1):
                 self._press(win, held, gx, gy, button, n, take_pointer)
@@ -367,9 +386,9 @@ class NativeDesk(BaseDesk):
         win, gx, gy = self.point(query, x, y, scale, shot, show, element, hidden)
         if take_pointer:
             self._focus_for_seat(win)
-        self.driver.mouse(win, "move", gx, gy, seat=take_pointer)
+        self._mouse(win, "move", gx, gy, seat=take_pointer)
         self._sleep(HOLD)
-        self.driver.mouse(win, "wheel", gx, gy, dy=dy, seat=take_pointer)
+        self._mouse(win, "wheel", gx, gy, dy=dy, seat=take_pointer)
         return gx, gy
 
     def drag(
@@ -393,17 +412,17 @@ class NativeDesk(BaseDesk):
             raise ValueError(f"button is one of {', '.join(BUTTONS)}")
         moves = max(2, round(duration / DRAG_STEP))
         with self._buttons(win, False) as held:
-            self.driver.mouse(win, "move", x1, y1)
+            self._mouse(win, "move", x1, y1)
             self._sleep(DRAG_PAUSE)
-            self.driver.mouse(win, "down", x1, y1, button=button)
+            self._mouse(win, "down", x1, y1, button=button)
             held.add(button)
             self._sleep(DRAG_PAUSE)
             for i in range(1, moves + 1):
                 x, y = round(x1 + (x2 - x1) * i / moves), round(y1 + (y2 - y1) * i / moves)
-                self.driver.mouse(win, "move", x, y, held=frozenset(held))
+                self._mouse(win, "move", x, y, held=frozenset(held))
                 self._sleep(duration / moves)
             self._sleep(DRAG_PAUSE)
-            self.driver.mouse(win, "up", x2, y2, button=button)
+            self._mouse(win, "up", x2, y2, button=button)
             held.discard(button)
         return x2, y2
 
@@ -426,14 +445,14 @@ class NativeDesk(BaseDesk):
         if not 0 <= wait <= 5:
             raise ValueError("a hover waits 0 to 5 seconds")
         win, gx, gy = self.point(query, x, y, scale, shot, show, element, hidden)
-        if then_click is not None:
-            _, cx, cy = self.point(query, *then_click, scale, shot, show, hidden=hidden)
-        self.driver.mouse(win, "move", gx, gy)
+        self._mouse(win, "move", gx, gy)
         self._sleep(wait)
         if then_click is None:
             return self._capture(self._shootable(win), max_width)
+        # Resolved after the wait, so a popup the hover opened over the point is seen.
+        win, cx, cy = self.point(query, *then_click, scale, shot, show, hidden=hidden)
         with self._buttons(win, False) as held:
-            self.driver.mouse(win, "move", cx, cy)
+            self._mouse(win, "move", cx, cy)
             self._press(win, held, cx, cy, button, 1, False)
         return cx, cy
 
@@ -475,11 +494,13 @@ class NativeDesk(BaseDesk):
         win = self._key_target(query, take_focus, show, hidden)
         seat = take_focus
         if len(parts) == 1 and len(parts[0]) == 1:
+            self._seat_check(win, seat)
             self.driver.text(win, parts[0], seat=seat)
             return
         held: list[str] = []
         try:
             for part in parts:
+                self._seat_check(win, seat)
                 self.driver.key(win, part, True, held=frozenset(held), seat=seat)
                 held.append(part)
             self._sleep(hold)
@@ -504,6 +525,7 @@ class NativeDesk(BaseDesk):
         win = self._key_target(query, take_focus, show, hidden)
         seat = take_focus
         for char in text:
+            self._seat_check(win, seat)
             self.driver.text(win, char, seat=seat)
             self._sleep(delay)
 

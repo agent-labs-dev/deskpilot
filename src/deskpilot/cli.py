@@ -466,13 +466,12 @@ def run(args: argparse.Namespace, desk: Desk | NativeDesk) -> object:
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     if args.session:
-        from . import session
-
         try:
             hyprland_only("a private --session")
         except EXPECTED as error:
             print(f"deskpilot: {error_code(error)}: {error}", file=sys.stderr)
             return 2
+        from . import session  # after the guard: it needs fcntl, which Windows lacks
 
         try:
             if args.cmd == "mcp" and not os.environ.get("DESKPILOT_OWNER_PID"):

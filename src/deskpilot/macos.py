@@ -16,7 +16,7 @@ from pathlib import Path
 from typing import Any
 
 from .errors import Unavailable
-from .hypr import AmbiguousWindow, Window
+from .hypr import AmbiguousWindow, Window, WindowNotFound
 from .native import ElementError, Node, descendants
 
 INSTANCE = "macos"
@@ -58,11 +58,13 @@ class MacDriver:
             raise Unavailable("the macOS driver runs only on macOS")
         import AppKit
         import ApplicationServices
+        import CoreFoundation
         import Quartz
 
         self.q: Any = Quartz
         self.ax: Any = ApplicationServices
         self.appkit: Any = AppKit
+        self.cf: Any = CoreFoundation
 
     def _trusted(self) -> None:
         if not self.ax.AXIsProcessTrusted():
@@ -219,8 +221,21 @@ class MacDriver:
         q.CGEventSetIntegerValueField(made, WINDOW_THAT_CAN_HANDLE, number)
         self._post(window, made, seat)
 
+    def _keys_reach(self, window: Window) -> None:
+        """Keys posted to a process go to its focused window, whichever that is: refuse unless it is this one, so
+        typing never edits another document of the same app."""
+        app = self.ax.AXUIElementCreateApplication(window.pid)
+        focused, target = self._attr(app, "AXFocusedWindow"), self._ax_window(window)
+        if focused is None or target is None or not self.cf.CFEqual(focused, target):
+            raise RuntimeError(  # refused
+                f"{window.cls}'s focused window is not {window.address}, so keys would go to another of its windows: "
+                "click in this one first, or pass take_focus"
+            )
+
     def key(self, window: Window, key: str, down: bool, *, held: frozenset[str], seat: bool = False) -> None:
         self._trusted()
+        if down:
+            self._keys_reach(window)
         q = self.q
         code = KEYCODES.get(key)
         if code is None:
@@ -233,6 +248,7 @@ class MacDriver:
 
     def text(self, window: Window, char: str, *, seat: bool = False) -> None:
         self._trusted()
+        self._keys_reach(window)
         q = self.q
         if char in ("\n", "\r"):
             for down in (True, False):
@@ -323,12 +339,19 @@ class MacDriver:
                 command, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
             ).pid
         workspace = self.appkit.NSWorkspace.sharedWorkspace()
-        before = {app.processIdentifier() for app in workspace.runningApplications()}
+        path = command[0] if command[0].endswith(".app") else workspace.fullPathForApplication_(command[0])
+        bundle = self.appkit.NSBundle.bundleWithPath_(path) if path else None
+        if bundle is None or not bundle.bundleIdentifier():
+            raise WindowNotFound(f"no app named {command[0]!r} is installed")
+        ident = bundle.bundleIdentifier()
+        running = self.appkit.NSRunningApplication.runningApplicationsWithBundleIdentifier_
+        before = {app.processIdentifier() for app in running(ident)}
         args = ["--args", *command[1:]] if command[1:] else []
-        subprocess.run(["/usr/bin/open", "-g", "-a", command[0], *args], check=True, capture_output=True)
+        subprocess.run(["/usr/bin/open", "-g", "-n", "-a", path, *args], check=True, capture_output=True)
         deadline = time.monotonic() + 10
         while time.monotonic() < deadline:
-            for app in workspace.runningApplications():
+            # A new process of this app's bundle alone, so an unrelated app starting meanwhile is never taken.
+            for app in running(ident):
                 if app.processIdentifier() not in before:
                     return int(app.processIdentifier())
             time.sleep(0.1)

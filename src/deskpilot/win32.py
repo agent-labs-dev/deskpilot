@@ -40,6 +40,7 @@ BUTTON_MESSAGES = {
 }
 WHEEL_DELTA = 120
 GA_ROOT = 2
+HWND_MESSAGE = -3
 GWL_EXSTYLE = -20
 WS_EX_TOOLWINDOW = 0x00000080
 DWMWA_EXTENDED_FRAME_BOUNDS = 9
@@ -213,6 +214,14 @@ class Win32Driver:
         self.kernel32.GlobalUnlock.argtypes = (ctypes.c_void_p,)
         self.user32.GetClipboardData.restype = ctypes.c_void_p
         self.user32.SetClipboardData.argtypes = (wintypes.UINT, ctypes.c_void_p)
+        self.user32.CreateWindowExW.restype = wintypes.HWND
+        self.user32.CreateWindowExW.argtypes = (
+            wintypes.DWORD, wintypes.LPCWSTR, wintypes.LPCWSTR, wintypes.DWORD, ctypes.c_int, ctypes.c_int,
+            ctypes.c_int, ctypes.c_int, wintypes.HWND, wintypes.HMENU, wintypes.HINSTANCE, wintypes.LPVOID,
+        )  # fmt: skip
+        self.user32.OpenClipboard.argtypes = (wintypes.HWND,)
+        self.kernel32.GlobalFree.argtypes = (ctypes.c_void_p,)
+        self._pressed: dict[str, Any] = {}  # window address: the control a held button was pressed on
         self._uia: Any = None
 
     # Windows
@@ -345,12 +354,15 @@ class Win32Driver:
         dc = self.gdi32.CreateCompatibleDC(screen_dc)
         bitmap = self.gdi32.CreateCompatibleBitmap(screen_dc, width, height)
         try:
-            self.gdi32.SelectObject(dc, bitmap)
-            if not self.user32.PrintWindow(hwnd, dc, PW_RENDERFULLCONTENT):
+            previous = self.gdi32.SelectObject(dc, bitmap)
+            drawn = self.user32.PrintWindow(hwnd, dc, PW_RENDERFULLCONTENT)
+            self.gdi32.SelectObject(dc, previous)  # GetDIBits needs the bitmap out of every DC
+            if not drawn:
                 raise RuntimeError(f"Windows drew no image of {window.cls} ({window.address})")
             header = _BITMAPINFOHEADER(ctypes.sizeof(_BITMAPINFOHEADER), width, -height, 1, 32, 0)
             pixels = ctypes.create_string_buffer(width * height * 4)
-            self.gdi32.GetDIBits(dc, bitmap, 0, height, pixels, ctypes.byref(header), 0)
+            if self.gdi32.GetDIBits(dc, bitmap, 0, height, pixels, ctypes.byref(header), 0) != height:
+                raise RuntimeError(f"Windows gave no pixels for {window.cls} ({window.address})")
         finally:
             self.gdi32.DeleteObject(bitmap)
             self.gdi32.DeleteDC(dc)
@@ -373,6 +385,13 @@ class Win32Driver:
                 return hwnd, point.x, point.y
             hwnd = wintypes.HWND(child)
 
+    def _post_message(self, window: Window, target: Any, message: int, wparam: int, lparam: int) -> None:
+        if not self.user32.PostMessageW(target, message, wparam, lparam):
+            raise RuntimeError(  # refused
+                f"Windows would not deliver input to {window.cls} ({window.address}); an app running as administrator "
+                "takes input only from one that is too"
+            )
+
     def mouse(
         self,
         window: Window,
@@ -389,19 +408,31 @@ class Win32Driver:
         if seat:
             self._seat_mouse(event, x, y, button, dy)
             return
-        target, cx, cy = self._deepest(window, x, y)
+        # While a button is held, every event goes to the control it was pressed on, as Windows' own mouse capture
+        # does, so a drag across child controls, or the release after a failure, ends on the one it began on.
+        pressed = self._pressed.get(window.address)
+        if pressed is not None and (held or event == "up"):
+            target = pressed
+            point = wintypes.POINT(x, y)
+            self.user32.ScreenToClient(target, ctypes.byref(point))
+            cx, cy = point.x, point.y
+        else:
+            target, cx, cy = self._deepest(window, x, y)
         flags = mk_flags(held)
         if event == "move":
-            self.user32.PostMessageW(target, WM_MOUSEMOVE, flags, lparam_point(cx, cy))
+            self._post_message(window, target, WM_MOUSEMOVE, flags, lparam_point(cx, cy))
         elif event == "wheel":
-            self.user32.PostMessageW(target, WM_MOUSEWHEEL, wheel_wparam(dy, flags), lparam_point(x, y))
+            self._post_message(window, target, WM_MOUSEWHEEL, wheel_wparam(dy, flags), lparam_point(x, y))
         else:
             down, up, double, flag = BUTTON_MESSAGES[button]
             if event == "down":
                 message = double if clicks % 2 == 0 else down
-                self.user32.PostMessageW(target, message, flags | flag, lparam_point(cx, cy))
+                self._post_message(window, target, message, flags | flag, lparam_point(cx, cy))
+                self._pressed[window.address] = target
             else:
-                self.user32.PostMessageW(target, up, flags, lparam_point(cx, cy))
+                if not held:
+                    self._pressed.pop(window.address, None)
+                self._post_message(window, target, up, flags, lparam_point(cx, cy))
 
     def _send(self, *inputs: _INPUT) -> None:
         array = (_INPUT * len(inputs))(*inputs)
@@ -421,8 +452,16 @@ class Win32Driver:
     def _focused_control(self, window: Window) -> Any:
         hwnd = wintypes.HWND(int(window.address, 16))
         thread = self.user32.GetWindowThreadProcessId(hwnd, None)
+        if not thread:  # thread 0 would ask about the foreground thread instead
+            raise RuntimeError(f"{window.cls} ({window.address}) has closed")
         info = _GUITHREADINFO(cbSize=ctypes.sizeof(_GUITHREADINFO))
         if self.user32.GetGUIThreadInfo(thread, ctypes.byref(info)) and info.hwndFocus:
+            # Windows on one thread share its focus: it must be a control of this window, not a sibling's.
+            if self.user32.GetAncestor(info.hwndFocus, GA_ROOT) != hwnd.value:
+                raise RuntimeError(  # refused
+                    f"keyboard focus in {window.cls} is in another of its windows, not {window.address}: click a field "
+                    "in this one first"
+                )
             return info.hwndFocus
         raise RuntimeError(  # refused: keys would go nowhere
             f"{window.cls} ({window.address}) has no control with keyboard focus to type into: click the field first"
@@ -451,7 +490,7 @@ class Win32Driver:
         scan = self.user32.MapVirtualKeyW(vk, MAPVK_VK_TO_VSC)
         message = WM_KEYDOWN if down else WM_KEYUP
         target = self._focused_control(window)
-        self.user32.PostMessageW(target, message, vk, key_lparam(scan, down, vk in EXTENDED))
+        self._post_message(window, target, message, vk, key_lparam(scan, down, vk in EXTENDED))
 
     def text(self, window: Window, char: str, *, seat: bool = False) -> None:
         units = char.encode("utf-16-le")
@@ -470,10 +509,10 @@ class Win32Driver:
             scan = self.user32.MapVirtualKeyW(VK["return"], MAPVK_VK_TO_VSC)
             for down in (True, False):
                 message = WM_KEYDOWN if down else WM_KEYUP
-                self.user32.PostMessageW(target, message, VK["return"], key_lparam(scan, down, False))
+                self._post_message(window, target, message, VK["return"], key_lparam(scan, down, False))
             return
         for code in codes:
-            self.user32.PostMessageW(target, WM_CHAR, code, 1)
+            self._post_message(window, target, WM_CHAR, code, 1)
 
     # Accessibility (UI Automation)
 
@@ -570,19 +609,31 @@ class Win32Driver:
             self.user32.CloseClipboard()
 
     def write_clipboard(self, text: str) -> None:
+        """The text is ready before the clipboard is emptied, and a window of ours opens it: with no owner,
+        EmptyClipboard leaves SetClipboardData to fail and the user's clipboard gone."""
         data = text.encode("utf-16-le") + b"\0\0"
-        if not self.user32.OpenClipboard(None):
-            raise RuntimeError("another app holds the clipboard open")
+        handle = self.kernel32.GlobalAlloc(GMEM_MOVEABLE, len(data))
+        pointer = self.kernel32.GlobalLock(handle) if handle else None
+        if not pointer:
+            raise MemoryError("no memory for the clipboard text")
+        ctypes.memmove(pointer, data, len(data))
+        self.kernel32.GlobalUnlock(handle)
+        owner = self.user32.CreateWindowExW(0, "STATIC", None, 0, 0, 0, 0, 0, HWND_MESSAGE, None, None, None)
         try:
-            self.user32.EmptyClipboard()
-            handle = self.kernel32.GlobalAlloc(GMEM_MOVEABLE, len(data))
-            pointer = self.kernel32.GlobalLock(handle)
-            ctypes.memmove(pointer, data, len(data))
-            self.kernel32.GlobalUnlock(handle)
-            if not self.user32.SetClipboardData(CF_UNICODETEXT, handle):
-                raise RuntimeError("Windows refused the clipboard text")
+            if not self.user32.OpenClipboard(owner):
+                raise RuntimeError("another app holds the clipboard open")
+            try:
+                self.user32.EmptyClipboard()
+                if not self.user32.SetClipboardData(CF_UNICODETEXT, handle):
+                    raise RuntimeError("Windows refused the clipboard text")
+                handle = None  # the clipboard owns it now
+            finally:
+                self.user32.CloseClipboard()
         finally:
-            self.user32.CloseClipboard()
+            if handle:
+                self.kernel32.GlobalFree(handle)
+            if owner:
+                self.user32.DestroyWindow(owner)
 
     # Processes
 

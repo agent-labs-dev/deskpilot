@@ -13,9 +13,11 @@ from deskpilot.hypr import Window
 from deskpilot.native import NativeDesk, Node, chord, descendants
 
 
-def window(address: str = "0x10", pid: int = 100, title: str = "notes", visible: bool = True) -> Window:
+def window(
+    address: str = "0x10", pid: int = 100, title: str = "notes", visible: bool = True, focused: bool = True
+) -> Window:
     return Window(address, "Notepad", title, 100, 50, 400, 300, 0, "", False, pid, instance="test",
-                  stable_id=f"{address}-1", visible=visible)  # fmt: skip
+                  stable_id=f"{address}-1", visible=visible, focused=focused)  # fmt: skip
 
 
 class FakeDriver:
@@ -220,3 +222,22 @@ def test_win32_message_parameters():
     assert up & 1 and (up >> 16) & 0xFF == 0x1C and up & (1 << 24) and up & (1 << 31)
     assert win32.wheel_wparam(-1) >> 16 == (-120) & 0xFFFF
     assert win32.mk_flags(frozenset({"left", "middle"})) == 0x11
+
+
+def test_a_window_that_comes_up_along_a_drag_stops_it_and_lets_go():
+    d, driver = desk()
+    real_top = driver.top_at
+    pressed = lambda: any(e[1] == "down" for e in driver.events)  # noqa: E731
+    driver.top_at = lambda x, y: "0x99" if pressed() and x > 150 else real_top(x, y)
+    with pytest.raises(Covered):
+        d.drag("notes", (10, 10), (100, 10), scale=1)
+    assert driver.events[-1][1] == "up", "the pressed button was released"
+
+
+def test_seat_keys_stop_when_the_target_leaves_the_front():
+    d, driver = desk(window())
+    driver.list = [window(focused=False)]
+    with pytest.raises(RuntimeError) as error:
+        d.type("hi", "notes", take_focus=True)
+    assert error_code(error.value) == "refused"
+    assert not [e for e in driver.events if e[0] == "text"]
