@@ -18,9 +18,14 @@ from typing import Any
 
 from PIL import Image
 
-from .errors import Unavailable
+from .errors import NoFocus, Unavailable
 from .hypr import Window
-from .native import MODIFIERS, Node, descendants
+from .native import MODIFIERS, ElementError, Node, descendants
+
+try:
+    from _ctypes import COMError  # UI Automation's failures: an element gone, a provider that does not answer
+except ImportError:  # not Windows
+    COMError = OSError
 
 INSTANCE = "win32"
 
@@ -73,6 +78,16 @@ VK = {
     "end": 0x23, "pageup": 0x21, "pagedown": 0x22, "up": 0x26, "down": 0x28, "left": 0x25, "right": 0x27,
     **{f"f{n}": 0x6F + n for n in range(1, 13)},
 }  # fmt: skip
+# UIA control type ids (UIA_ButtonControlTypeId = 50000 onwards) as stable, unlocalized role names.
+CONTROL_TYPES = (
+    "button", "calendar", "check box", "combo box", "edit", "hyperlink", "image", "list item", "list", "menu",
+    "menu bar", "menu item", "progress bar", "radio button", "scroll bar", "slider", "spinner", "status bar", "tab",
+    "tab item", "text", "tool bar", "tool tip", "tree", "tree item", "custom", "group", "thumb", "data grid",
+    "data item", "document", "split button", "window", "pane", "header", "header item", "table", "title bar",
+    "separator", "semantic zoom", "app bar",
+)  # fmt: skip
+UIA_INVOKE_PATTERN = 10000
+UIA_VALUE_PATTERN = 10002
 EXTENDED = frozenset({0x2E, 0x2D, 0x24, 0x23, 0x21, 0x22, 0x26, 0x28, 0x25, 0x27, 0x5B})
 
 
@@ -296,10 +311,17 @@ class Win32Driver:
             self.user32.CloseDesktop(desktop)
 
     def focus(self, window: Window) -> None:
+        """Bring the window to the foreground, and refuse when Windows keeps it from taking focus: SendInput would
+        then type into whatever the user has in front."""
         hwnd = wintypes.HWND(int(window.address, 16))
         if self.user32.IsIconic(hwnd):
             self.user32.ShowWindow(hwnd, SW_RESTORE)
         self.user32.SetForegroundWindow(hwnd)
+        if (self.user32.GetForegroundWindow() or 0) != hwnd.value:
+            raise Unavailable(
+                f"Windows did not let {window.cls} ({window.address}) take focus (an app may only take focus from "
+                "the one in front); focus it yourself or act without take_focus"
+            )
 
     def cursor(self) -> tuple[int, int]:
         point = wintypes.POINT()
@@ -403,7 +425,9 @@ class Win32Driver:
         info = _GUITHREADINFO(cbSize=ctypes.sizeof(_GUITHREADINFO))
         if self.user32.GetGUIThreadInfo(thread, ctypes.byref(info)) and info.hwndFocus:
             return info.hwndFocus
-        return hwnd
+        raise NoFocus(
+            f"{window.cls} ({window.address}) has no control with keyboard focus to type into: click the field first"
+        )
 
     def _vk(self, key: str) -> tuple[int, int]:
         """A key's virtual-key code and the shift state its character needs on the user's layout (VkKeyScanW)."""
@@ -456,8 +480,10 @@ class Win32Driver:
 
     def _automation(self) -> Any:
         if self._uia is None:
+            import comtypes
             import comtypes.client
 
+            comtypes.CoInitialize()
             comtypes.client.GetModule("UIAutomationCore.dll")
             from comtypes.gen import UIAutomationClient as uia
 
@@ -467,44 +493,65 @@ class Win32Driver:
         return self._uia
 
     def root(self, window: Window) -> object:
-        return self._automation().ElementFromHandle(int(window.address, 16))
+        try:
+            return self._automation().ElementFromHandle(int(window.address, 16))
+        except (OSError, COMError, ImportError) as error:
+            raise ElementError(
+                f"{window.cls} ({window.address}) exposes no UI Automation tree: {error}", "no_tree"
+            ) from error
 
-    def children(self, node: object) -> list[object]:
+    def children(self, node: Any) -> list[object]:
         self._automation()
         found = []
-        child = self._walker.GetFirstChildElement(node)
-        while child:
-            found.append(child)
-            child = self._walker.GetNextSiblingElement(child)
+        try:
+            child = self._walker.GetFirstChildElement(node)
+            while child:
+                found.append(child)
+                child = self._walker.GetNextSiblingElement(child)
+        except (OSError, COMError) as error:
+            raise ElementError(f"an element went away while its children were read: {error}", "stale") from error
         return found
+
+    def _pattern(self, node: Any, pattern_id: int, interface: Any) -> Any:
+        try:
+            pattern = node.GetCurrentPattern(pattern_id)
+        except (OSError, COMError):
+            return None
+        return pattern.QueryInterface(interface) if pattern else None
 
     def describe(self, node: Any) -> Node:
         uia = self._uia_module
-        rect = node.CurrentBoundingRectangle
-        states = []
-        if node.CurrentIsOffscreen:
-            states.append("offscreen")
-        if not node.CurrentIsEnabled:
-            states.append("disabled")
-        if node.CurrentHasKeyboardFocus:
-            states.append("focused")
-        text = None
         try:
-            pattern = node.GetCurrentPattern(uia.UIA_ValuePatternId)
-            if pattern:
-                text = pattern.QueryInterface(uia.IUIAutomationValuePattern).CurrentValue
-        except OSError:
-            text = None
-        return Node(
-            role=node.CurrentLocalizedControlType or "",
-            name=node.CurrentName or "",
-            states=tuple(states),
-            text=text,
-            x=rect.left,
-            y=rect.top,
-            width=max(0, rect.right - rect.left),
-            height=max(0, rect.bottom - rect.top),
-        )
+            rect = node.CurrentBoundingRectangle
+            states = []
+            if node.CurrentIsOffscreen:
+                states.append("offscreen")
+            if not node.CurrentIsEnabled:
+                states.append("disabled")
+            if node.CurrentHasKeyboardFocus:
+                states.append("focused")
+            value = self._pattern(node, UIA_VALUE_PATTERN, uia.IUIAutomationValuePattern)
+            control = node.CurrentControlType - 50000
+            role = CONTROL_TYPES[control] if 0 <= control < len(CONTROL_TYPES) else "unknown"
+            return Node(
+                role=role,
+                name=node.CurrentName or "",
+                states=tuple(states),
+                text=value.CurrentValue if value else None,
+                x=rect.left,
+                y=rect.top,
+                width=max(0, rect.right - rect.left),
+                height=max(0, rect.bottom - rect.top),
+            )
+        except (OSError, COMError) as error:
+            raise ElementError(f"an element went away while it was read: {error}", "stale") from error
+
+    def press(self, window: Window, node: Any) -> bool:
+        invoke = self._pattern(node, UIA_INVOKE_PATTERN, self._uia_module.IUIAutomationInvokePattern)
+        if invoke is None:
+            return False
+        invoke.Invoke()
+        return True
 
     # Clipboard
 

@@ -13,6 +13,12 @@ class NotVisible(LookupError):
     code = "not_visible"
 
 
+class NoFocus(RuntimeError):
+    """Keys sent to a window none of whose controls has keyboard focus would go nowhere."""
+
+    code = "refused"
+
+
 class Covered(RuntimeError):
     code = "covered"
 

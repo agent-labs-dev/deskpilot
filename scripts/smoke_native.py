@@ -14,10 +14,14 @@ import sys
 
 def deskpilot(*args: str, ok: bool = True) -> dict | list:
     result = subprocess.run(["deskpilot", "--json", *args], capture_output=True, text=True, check=False)
-    print(f"$ deskpilot {' '.join(args)} -> {result.returncode}\n{result.stdout[-800:]}{result.stderr[-800:]}")
+    print(f"$ deskpilot {' '.join(args)} -> {result.returncode}\n{result.stdout[:600]}{result.stderr[-800:]}")
     if ok and result.returncode != 0:
         raise SystemExit(f"deskpilot {args[0]} failed")
     return json.loads(result.stdout) if result.returncode == 0 else {"stderr": result.stderr}
+
+
+def walk(node: dict) -> list[dict]:
+    return [node] + [n for c in node.get("children", []) for n in walk(c)]
 
 
 def texts(node: dict) -> list[str]:
@@ -30,6 +34,10 @@ def windows_smoke() -> None:
     address = win["address"]
     shot = deskpilot("shot", address)
     assert isinstance(shot, dict) and shot["width"] > 0
+    tree = deskpilot("elements", address)
+    assert isinstance(tree, dict)
+    edit = next(e for e in walk(tree) if e["role"] in ("edit", "document"))
+    deskpilot("click", address, "--element", f"{tree['snapshot']}:{edit['id']}")
     deskpilot("type", "deskpilot smoke", "--window", address)
     tree = deskpilot("elements", address)
     assert isinstance(tree, dict)

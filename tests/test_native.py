@@ -66,6 +66,10 @@ class FakeDriver:
     def text(self, window, char, *, seat=False):
         self.events.append(("text", char, seat))
 
+    def press(self, window, node):
+        self.events.append(("press", node["node"].name))
+        return node.get("press", False)
+
     def root(self, window):
         return self.tree
 
@@ -176,6 +180,27 @@ def test_an_element_is_found_again_and_refused_when_it_changed():
     button["node"] = Node("button", "Open", (), None, 120, 60, 40, 20)
     with pytest.raises(RuntimeError) as error:
         d.click("notes", None, None, element="e2")
+    assert error_code(error.value) == "stale"
+
+
+def test_an_element_click_uses_the_apps_own_action_when_it_has_one():
+    d, driver = desk()
+    driver.tree["children"] = [{"node": Node("button", "Save", (), None, 120, 60, 40, 20), "children": [],
+                                "press": True}]  # fmt: skip
+    d.elements("notes")
+    assert d.click("notes", None, None, element="e2") == (140, 70)
+    assert ("press", "Save") in driver.events and not [e for e in driver.events if e[0] == "mouse"]
+
+
+def test_an_element_whose_parent_changed_is_stale():
+    d, driver = desk()
+    group = {"node": Node("group", "a", (), None, 100, 50, 10, 10), "children": []}
+    group["children"] = [{"node": Node("button", "Save", (), None, 120, 60, 40, 20), "children": []}]
+    driver.tree["children"] = [group]
+    d.elements("notes")
+    group["node"] = Node("group", "b", (), None, 100, 50, 10, 10)
+    with pytest.raises(RuntimeError) as error:
+        d.click("notes", None, None, element="e3")
     assert error_code(error.value) == "stale"
 
 

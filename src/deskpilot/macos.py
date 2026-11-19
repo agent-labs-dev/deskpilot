@@ -16,8 +16,8 @@ from pathlib import Path
 from typing import Any
 
 from .errors import Unavailable
-from .hypr import Window
-from .native import Node, descendants
+from .hypr import AmbiguousWindow, Window
+from .native import ElementError, Node, descendants
 
 INSTANCE = "macos"
 
@@ -150,6 +150,11 @@ class MacDriver:
     # Capture
 
     def grab(self, window: Window, path: Path) -> None:
+        if not self.q.CGPreflightScreenCaptureAccess():
+            raise Unavailable(
+                f"macOS has not given this app Screen Recording access: allow it in {SETTINGS} > Screen & System Audio "
+                "Recording, then run deskpilot again"
+            )
         number = str(int(window.address, 16))
         result = subprocess.run(
             ["/usr/sbin/screencapture", "-x", "-o", f"-l{number}", str(path)],
@@ -247,20 +252,34 @@ class MacDriver:
         return value if error == 0 else None
 
     def _ax_window(self, window: Window) -> Any:
-        """The app's AX window with this window's frame: AX has no window number, so the frame is the join."""
+        """The app's AX window for this window. AX has no window number, so it is the one window with this title and
+        frame; two alike are ambiguous, never a guess."""
         app = self.ax.AXUIElementCreateApplication(window.pid)
+        found = []
         for candidate in self._attr(app, "AXWindows") or []:
             node = self.describe(candidate)
-            if (node.x, node.y, node.width, node.height) == (window.x, window.y, window.width, window.height):
-                return candidate
-        return None
+            title = self._attr(candidate, "AXTitle") or ""
+            if (node.x, node.y, node.width, node.height) == (window.x, window.y, window.width, window.height) and (
+                not window.title or title == window.title
+            ):
+                found.append(candidate)
+        if len(found) > 1:
+            raise AmbiguousWindow(f"{window.cls} has {len(found)} windows with the title and frame of {window.address}")
+        return found[0] if found else None
 
     def root(self, window: Window) -> object:
         self._trusted()
         found = self._ax_window(window)
         if found is None:
-            raise LookupError(f"{window.cls} ({window.address}) exposes no accessibility window with its frame")
+            raise ElementError(f"{window.cls} ({window.address}) exposes no accessibility window with its frame",
+                               "no_tree")  # fmt: skip
         return found
+
+    def press(self, window: Window, node: Any) -> bool:
+        error, actions = self.ax.AXUIElementCopyActionNames(node, None)
+        if error != 0 or "AXPress" not in (actions or []):
+            return False
+        return self.ax.AXUIElementPerformAction(node, "AXPress") == 0
 
     def children(self, node: object) -> list[object]:
         return list(self._attr(node, "AXChildren") or [])
@@ -282,7 +301,7 @@ class MacDriver:
         if self._attr(node, "AXFocused"):
             states.append("focused")
         value = self._attr(node, "AXValue")
-        role = self._attr(node, "AXRoleDescription") or self._attr(node, "AXRole") or ""
+        role = (self._attr(node, "AXRole") or "").removeprefix("AX")
         name = self._attr(node, "AXTitle") or self._attr(node, "AXDescription") or ""
         return Node(str(role), str(name), tuple(states), value if isinstance(value, str) else None, x, y, width, height)
 

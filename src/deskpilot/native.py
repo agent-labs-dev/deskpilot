@@ -100,7 +100,15 @@ class Driver(Protocol):
         """Type one character as itself, whatever key would give it."""
         ...
 
-    def root(self, window: Window) -> object: ...
+    def press(self, window: Window, node: object) -> bool:
+        """Activate an element through the accessibility API (UIA Invoke, AX Press), as a left click on it would.
+        False when it offers no such action, so the click goes to its centre instead."""
+        ...
+
+    def root(self, window: Window) -> object:
+        """The window's accessibility root. An app with no tree raises ElementError with code no_tree."""
+        ...
+
     def children(self, node: object) -> list[object]: ...
     def describe(self, node: object) -> Node: ...
     def read_clipboard(self) -> str: ...
@@ -323,6 +331,11 @@ class NativeDesk(BaseDesk):
             raise ValueError(f"button is one of {', '.join(BUTTONS)}")
         if take_focus:
             self.focus(query)
+        if element is not None and button == "left" and count == 1 and not take_pointer:
+            win = self._target(query, show, hidden)
+            ref, info = self._find(win, element)
+            if self.driver.press(win, ref):
+                return info.x + info.width // 2, info.y + info.height // 2
         win, gx, gy = self.point(query, x, y, scale, shot, show, element, hidden)
         if take_pointer:
             self._focus_for_seat(win)
@@ -525,12 +538,13 @@ class NativeDesk(BaseDesk):
         count = 0
         truncated = False
 
-        def walk(node: object, path: list[int], depth: int) -> Element:
+        def walk(node: object, path: list[int], trail: list[list[str]], depth: int) -> Element:
             nonlocal count, truncated
             count += 1
             element_id = f"e{count}"
             info = self.driver.describe(node)
-            records[element_id] = {"path": path, "role": info.role, "name": info.name}
+            trail = [*trail, [info.role, info.name]]
+            records[element_id] = {"path": path, "trail": trail}
             children: list[Element] = []
             refs = self.driver.children(node)
             if refs and depth >= MAX_DEPTH:
@@ -540,12 +554,12 @@ class NativeDesk(BaseDesk):
                     if count >= MAX_NODES:
                         truncated = True
                         break
-                    children.append(walk(ref, [*path, index], depth + 1))
+                    children.append(walk(ref, [*path, index], trail, depth + 1))
             x, y = (info.x - win.x, info.y - win.y) if info.width and info.height else (0, 0)
             return Element(element_id, info.role, info.name, info.states, info.text, x, y, info.width, info.height,
                            tuple(children))  # fmt: skip
 
-        root = walk(self.driver.root(win), [], 0)
+        root = walk(self.driver.root(win), [], [], 0)
         if peek:
             return replace(root, truncated=truncated)
         snapshot_id = f"{win.address.removeprefix('0x')}-{time.time_ns()}"
@@ -554,8 +568,9 @@ class NativeDesk(BaseDesk):
         path.write_text(json.dumps({"window": _identity(win), "snapshot": snapshot_id, "elements": records}))
         return replace(root, truncated=truncated, snapshot=snapshot_id)
 
-    def locate(self, win: Window, element: str) -> Node:
-        """Where an element of the latest snapshot is now, in window pixels. The id is `e5` or `<snapshot>:e5`."""
+    def _find(self, win: Window, element: str) -> tuple[object, Node]:
+        """An element of the latest snapshot as the app reports it now. Every node on its path from the window must
+        still have the role and name it had, so an inserted or removed sibling is stale, never a guess."""
         snapshot_id, _, element_id = element.rpartition(":")
         try:
             payload = json.loads(_elements_path(win).read_text())
@@ -573,18 +588,29 @@ class NativeDesk(BaseDesk):
                 "stale",
             )
         node = self.driver.root(win)
-        for index in record["path"]:
+        trail = record["trail"]
+        info = self.driver.describe(node)
+        for depth, index in enumerate([*record["path"], None]):
+            role, name = trail[depth]
+            if (info.role, info.name) != (role, name):
+                raise ElementError(
+                    f"Element {element_id}'s {'place' if depth < len(trail) - 1 else 'element'} was {role} {name!r} "
+                    f"and is now {info.role} {info.name!r}; take a new snapshot.",
+                    "stale",
+                )
+            if index is None:
+                break
             refs = self.driver.children(node)
             if index >= len(refs):
                 raise ElementError(f"Element {element_id} is gone; take a new snapshot.", "stale")
             node = refs[index]
-        info = self.driver.describe(node)
-        if (info.role, info.name) != (record["role"], record["name"]):
-            raise ElementError(
-                f"Element {element_id} was {record['role']} {record['name']!r} and is now {info.role} {info.name!r}; "
-                "take a new snapshot.",
-                "stale",
-            )
+            info = self.driver.describe(node)
+        return node, info
+
+    def locate(self, win: Window, element: str) -> Node:
+        """Where an element of the latest snapshot is now, in window pixels. The id is `e5` or `<snapshot>:e5`."""
+        _, info = self._find(win, element)
+        element_id = element.rpartition(":")[2]
         if info.width <= 0 or info.height <= 0 or "offscreen" in info.states:
             raise ElementError(f"Element {element_id} is not showing; scroll it into view or take a new snapshot.",
                                "offscreen")  # fmt: skip
