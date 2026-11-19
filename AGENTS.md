@@ -70,7 +70,7 @@ own pointer and keyboard focus where they were. The CLI and the MCP server are t
   updates `README.md` and `skills/deskpilot/SKILL.md` too.
 - A PR that adds a feature carries a video of it working on a real window: record the nested Hyprland's output
   (`WAYLAND_DISPLAY=<wayland> wf-recorder -o DPTEST -f clip.mp4`, stopped with SIGINT), keep it short and under
-  10 MB, and attach it with `ghp pr edit <n> --attach clip.mp4`, which GitHub plays inline. Never a mock; when it
+  10 MB, and attach it with `gh pr edit <n> --attach clip.mp4`, which GitHub plays inline. Never a mock; when it
   cannot be recorded, the body says why.
 
 ## Standards
