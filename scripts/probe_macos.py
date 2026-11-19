@@ -27,33 +27,51 @@ def key(char: str, post) -> None:
     time.sleep(1)
 
 
-subprocess.run(["open", "-a", "TextEdit"], check=True)
+finder = next(a for a in AppKit.NSWorkspace.sharedWorkspace().runningApplications() if a.localizedName() == "Finder")
+subprocess.run(["open", "-g", "-a", "TextEdit"], check=True)
 time.sleep(5)
 app = next(a for a in AppKit.NSWorkspace.sharedWorkspace().runningApplications() if a.localizedName() == "TextEdit")
 pid = app.processIdentifier()
-front = AppKit.NSWorkspace.sharedWorkspace().frontmostApplication()
-print("TextEdit", pid, "front", front.localizedName() if front else None, "value", value(pid), flush=True)
+
+
+def front() -> str:
+    found = AppKit.NSWorkspace.sharedWorkspace().frontmostApplication()
+    return found.localizedName() if found else "none"
+
+
+finder.activateWithOptions_(AppKit.NSApplicationActivateIgnoringOtherApps)
+time.sleep(2)
+print("background: front", front(), "value", value(pid), flush=True)
 key("a", lambda e: q.CGEventPostToPid(pid, e))
-print("after PostToPid 'a':", value(pid), flush=True)
+print("after PostToPid 'a' (background):", value(pid), flush=True)
+windows = [
+    w
+    for w in q.CGWindowListCopyWindowInfo(q.kCGWindowListOptionOnScreenOnly, q.kCGNullWindowID)
+    if w.get(q.kCGWindowOwnerPID) == pid and w.get(q.kCGWindowLayer) == 0
+]
+address = hex(int(windows[0][q.kCGWindowNumber])) if windows else None
+print("TextEdit window", address, flush=True)
+result = subprocess.run(
+    ["deskpilot", "type", "b", "--window", str(address)], capture_output=True, text=True, check=False
+)
+print(
+    "deskpilot type 'b' (background):",
+    result.returncode,
+    result.stderr.strip(),
+    value(pid),
+    "front",
+    front(),
+    flush=True,
+)
 app.activateWithOptions_(AppKit.NSApplicationActivateIgnoringOtherApps)
 time.sleep(2)
-front = AppKit.NSWorkspace.sharedWorkspace().frontmostApplication()
-print("front after activate", front.localizedName() if front else None, flush=True)
-key("b", lambda e: q.CGEventPostToPid(pid, e))
-print("after PostToPid 'b' (front):", value(pid), flush=True)
-key("c", lambda e: q.CGEventPost(q.kCGHIDEventTap, e))
-print("after HID tap 'c':", value(pid), flush=True)
-key("d", lambda e: q.CGEventPost(q.kCGSessionEventTap, e))
-print("after session tap 'd':", value(pid), flush=True)
-source = q.CGEventSourceCreate(q.kCGEventSourceStateHIDSystemState)
-for down in (True, False):
-    q.CGEventPost(q.kCGHIDEventTap, q.CGEventCreateKeyboardEvent(source, 14, down))  # 'e'
-    time.sleep(0.05)
-time.sleep(1)
-print("after HID tap keycode e with source:", value(pid), flush=True)
-subprocess.run(["osascript", "-e", 'tell application "System Events" to keystroke "f"'], check=False)
-time.sleep(1)
-print("after System Events 'f':", value(pid), flush=True)
+print("front after activate", front(), flush=True)
+result = subprocess.run(
+    ["deskpilot", "type", "c", "--window", str(address)], capture_output=True, text=True, check=False
+)
+print("deskpilot type 'c' (front):", result.returncode, result.stderr.strip(), value(pid), flush=True)
+key("d", lambda e: q.CGEventPostToPid(pid, e))
+print("after PostToPid 'd' (front):", value(pid), flush=True)
 app.terminate()
 
 cover = subprocess.Popen([sys.executable, "scripts/smoke_app.py", "/tmp/probe-state.json"])
