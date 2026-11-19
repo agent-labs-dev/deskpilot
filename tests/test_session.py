@@ -429,7 +429,7 @@ def test_launcher_overrides_the_parent_environment_with_the_session_profile(tmp_
     overrides = {"HOME": "/profile/home", "XDG_DATA_HOME": "/profile/data", "WINEPREFIX": "/profile/wine"}
     overrides[session.TOKEN_ENV] = TOKEN
     with pytest.raises(session.HyprctlError, match="launched"):
-        session._start_compositor(path, "parent", {}, overrides)
+        session._start_compositor(path, "parent", overrides)
     seen = dict(line.split("=", 1) for line in (path / "hyprland.log").read_text().splitlines() if "=" in line)
     assert {k: seen[k] for k in overrides} == overrides
     assert json.loads((path / "starting.json").read_text())["token"] == TOKEN
@@ -453,9 +453,8 @@ def served(tmp_path, monkeypatch):
         calls.append(("keyboard", session.build_dir()))
         return tmp_path / "keyboard"
 
-    def start_compositor(p, parent, env, overrides):
-        calls.append(("compositor", dict(env), dict(overrides), json.loads((p / "starting.json").read_text())))
-        env["WAYLAND_DISPLAY"], env["HYPRLAND_INSTANCE_SIGNATURE"] = "wl", "nested"
+    def start_compositor(p, parent, overrides):
+        calls.append(("compositor", dict(overrides), json.loads((p / "starting.json").read_text())))
         return 501, "comp", "nested", "wl"
 
     def start_services(p, env, keyboard, children):
@@ -468,7 +467,6 @@ def served(tmp_path, monkeypatch):
 
     def start_standalone(p, env, overrides, children):
         calls.append(("standalone", dict(env), dict(overrides), json.loads((p / "starting.json").read_text())))
-        env["WAYLAND_DISPLAY"], env["HYPRLAND_INSTANCE_SIGNATURE"] = "wl", "standalone"
         return 501, "comp", "standalone", "wl"
 
     class Plugin:
@@ -501,12 +499,12 @@ def test_profile_and_token_are_decided_once_before_compositor_and_services(serve
     calls[:] = [c for c in calls if c[0] != "ctl"]
     names = [c[0] for c in calls]
     assert names == ["keyboard", "compositor", "plugin", "services", "publish", "apps"]
-    compositor_env, overrides, starting = calls[1][1:]
+    overrides, starting = calls[1][1:]
     services_env, published_env = calls[3][1], calls[4][1]
     token = overrides[session.TOKEN_ENV]
     assert session._token_ok(token) and token != "inherited"
     assert starting["token"] == token  # recorded before the compositor launched
-    for env in (compositor_env, services_env, published_env):
+    for env in (services_env, published_env):
         assert {k: env[k] for k in overrides} == overrides
     assert calls[0][1] == session.build_dir()  # keyboard cache is not under the profile
     assert calls[-1] == ("apps", token)
@@ -544,7 +542,7 @@ def test_two_workers_never_share_a_token(served):
     path, calls, _ = served
     session.serve(path, "parent")
     session.serve(path, "parent")
-    tokens = [c[2][session.TOKEN_ENV] for c in calls if c[0] == "compositor"]
+    tokens = [c[1][session.TOKEN_ENV] for c in calls if c[0] == "compositor"]
     assert len(set(tokens)) == 2
 
 
@@ -816,7 +814,6 @@ def test_standalone_runs_hyprland_on_the_vkms_node_with_the_noop_seat(tmp_path, 
     env: dict[str, str] = {}
     children: list = []
     assert session._start_standalone(tmp_path, env, {}, children) == (7, "b", "sig", "wayland-1")
-    assert env == {"HYPRLAND_INSTANCE_SIGNATURE": "sig", "WAYLAND_DISPLAY": "wayland-1"}
     assert started == [[str(tmp_path / "launch.py")]] and len(children) == 1
     launcher = (tmp_path / "launch.py").read_text()
     assert "'LIBSEAT_BACKEND': 'noop'" in launcher and f"'AQ_DRM_DEVICES': '{card}'" in launcher

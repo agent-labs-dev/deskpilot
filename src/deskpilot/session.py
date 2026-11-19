@@ -203,13 +203,9 @@ def _runtime() -> Path:
     return Path(os.environ.get("XDG_RUNTIME_DIR", f"/run/user/{os.getuid()}"))
 
 
-def standalone() -> bool:
-    return os.environ.get(STANDALONE_ENV) == "1"
-
-
 def _parent() -> str:
     """The Hyprland a nested session runs in, or "" for a standalone one, which has none."""
-    return "" if standalone() else parent_instance()
+    return "" if os.environ.get(STANDALONE_ENV) == "1" else parent_instance()
 
 
 def parent_instance() -> str:
@@ -595,18 +591,14 @@ def _launched(path: Path, ask: str, fail) -> tuple[int, str, str, str]:
     raise HyprctlError("Hyprland did not start")
 
 
-def _start_compositor(
-    path: Path, parent: str, env: dict[str, str], overrides: dict[str, str]
-) -> tuple[int, str, str, str]:
+def _start_compositor(path: Path, parent: str, overrides: dict[str, str]) -> tuple[int, str, str, str]:
     # A seat backend libseat does not have, so the DRM backend fails at once instead of asking for the user's seat.
     launcher = _launcher(path, overrides, {"LIBSEAT_BACKEND": "deskpilot-no-drm"}, "DESKPILOT")
     command = json.dumps(str(launcher))
     workspace = json.dumps(f"special:agent-{agent_from_env()} silent")
     legacy = f"exec [workspace {workspace.strip(chr(34))}] {launcher}"
     _dispatch(parent, f"hl.dsp.exec_cmd({command}, {{ workspace = {workspace} }})", legacy)
-    started = _launched(path, parent, lambda: None)
-    env["HYPRLAND_INSTANCE_SIGNATURE"], env["WAYLAND_DISPLAY"] = started[2], started[3]
-    return started
+    return _launched(path, parent, lambda: None)
 
 
 def vkms_card() -> str:
@@ -641,9 +633,7 @@ def _start_standalone(
             log = (path / "hyprland.log").read_text(errors="replace").strip()
             raise HyprctlError(f"standalone Hyprland exited: {log[-600:]}")
 
-    started = _launched(path, "", fail)
-    env["HYPRLAND_INSTANCE_SIGNATURE"], env["WAYLAND_DISPLAY"] = started[2], started[3]
-    return started
+    return _launched(path, "", fail)
 
 
 def _wait_dead(pid: int, started: str, timeout: float = 5) -> bool:
@@ -899,9 +889,11 @@ def serve(path: Path, parent: str) -> None:
             json.dumps({"worker": os.getpid(), "worker_birth": birth(os.getpid()), "token": token}),
         )
         if parent:
-            compositor_pid, compositor_birth, signature, _ = _start_compositor(path, parent, env, overrides)
+            started = _start_compositor(path, parent, overrides)
         else:
-            compositor_pid, compositor_birth, signature, _ = _start_standalone(path, env, overrides, children)
+            started = _start_standalone(path, env, overrides, children)
+        compositor_pid, compositor_birth, signature, env["WAYLAND_DISPLAY"] = started
+        env["HYPRLAND_INSTANCE_SIGNATURE"] = signature
         _atomic_write(
             path / "starting.json",
             json.dumps(
