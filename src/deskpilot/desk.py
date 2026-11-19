@@ -493,6 +493,12 @@ class Desk:
             self._take_pointer(win, gx, gy)
         return gx, gy
 
+    def press_cursor(self, down: bool) -> None:
+        """Squeeze or let go of the agent cursor where it is, for show only. It sends no input: it is for an app driven
+        some other way, which marks the press it makes itself so a recording shows it."""
+        if self._mode(False) == "shown":
+            self.plugin.cursor_press(down)
+
     def click(
         self,
         query: str,

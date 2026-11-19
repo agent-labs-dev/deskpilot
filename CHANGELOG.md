@@ -8,6 +8,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 ## [Unreleased]
 
 - `deskpilot record WINDOW` (MCP `record_start` and `record_stop`) films a window, hidden ones included, with the real agent cursor the plugin draws: brackets closing in as it lands and the marker squeezing on a press. It writes an mp4, or with `-o -` PPM frames at a constant rate on stdout for another encoder. Only a capture that asks for a cursor carries it, so `shot` stays cursor-free, and the user's own pointer is never in the frames. While a window is being filmed, a hidden action on it shows its cursor in the recording alone, never on screen.
+- MCP `cursor_press` squeezes and rings the agent cursor where it is, and lets go, for show only: it sends no input, so an app driven another way, such as a browser over CDP, can mark its own presses and a `record` clip shows them.
 
 ## [0.7.4] - 2026-11-16
 

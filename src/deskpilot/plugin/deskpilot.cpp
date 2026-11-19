@@ -851,6 +851,7 @@ namespace {
             double               tagWidth = 0; // logical pixels; 0 for no tag
             CBox                 drawn;        // the global box last drawn, damaged again when it moves or goes
             bool                 filmOnly = false; // a hidden action's cursor, drawn in captures and on no output
+            std::optional<Time::steady_tp> letGo; // when a visual press lets go: no earlier than it was held for, never later than its cap
         };
 
         // Where a cursor is drawn: a monitor, or a window capture, as the box of global logical pixels it shows, its
@@ -1191,6 +1192,10 @@ namespace {
                         cursor.landed = Time::steadyNow();
                     }
                 }
+                if (cursor.letGo && Time::steadyNow() >= *cursor.letGo) {
+                    cursor.pressed = false;
+                    cursor.letGo.reset();
+                }
                 std::erase_if(cursor.pulses, [](const auto& pulse) { return seconds(pulse.second) >= secondsOf(PULSE); });
                 damage(cursor);
                 const bool VISIBLE = cursor.placed && alpha(cursor) > 0;
@@ -1200,7 +1205,7 @@ namespace {
                     continue;
                 }
                 const auto FADE_IN = std::chrono::duration_cast<ms>(cursor.active + IDLE_HIDE - Time::steadyNow());
-                if (cursor.glide || !cursor.pulses.empty() || lock(cursor) < 1 || FADE_IN <= FRAME)
+                if (cursor.glide || !cursor.pulses.empty() || cursor.letGo || lock(cursor) < 1 || FADE_IN <= FRAME)
                     moving = true;
                 else
                     untilFade = std::min(untilFade, FADE_IN);
@@ -1263,6 +1268,27 @@ namespace {
             auto& cursor   = cursorOf(name);
             cursor.pressed = true;
             cursor.pulses.emplace_back(cursor.pos, Time::steadyNow());
+            wake(cursor);
+        }
+
+        // A press and release for show only, for an app the agent drives without deskpilot's input (a browser over CDP):
+        // the cursor squeezes and pulses as a real press does and no input is sent. The squeeze is held long enough to be
+        // seen in a recording, and a press never released lets go by itself.
+        constexpr auto VISUAL_HOLD = ms(120);
+        constexpr auto VISUAL_CAP  = ms(2000);
+
+        void pressVisual(const std::string& name) {
+            press(name);
+            cursorOf(name).letGo = Time::steadyNow() + VISUAL_CAP;
+        }
+
+        void releaseVisual(const std::string& name) {
+            auto& cursor = cursorOf(name);
+            if (!cursor.pressed)
+                return;
+            // The press was at `letGo - VISUAL_CAP`; hold it VISUAL_HOLD from then at least.
+            const auto PRESSED_AT = cursor.letGo ? *cursor.letGo - VISUAL_CAP : Time::steadyNow();
+            cursor.letGo          = std::max(PRESSED_AT + VISUAL_HOLD, Time::steadyNow());
             wake(cursor);
         }
 
@@ -4353,9 +4379,16 @@ namespace {
     }
 
     IPC::Socket1::SResponse cursorCommand(const std::vector<std::string>& args, const std::string& agent) {
+        // `cursor press` and `cursor release` squeeze and let go of the cursor where it is, for show only: no input is sent.
+        if (args.size() == 3 && (args[2] == "press" || args[2] == "release")) {
+            if (!agentcursor::g_state)
+                return refuse("the agent cursor is not running");
+            args[2] == "press" ? agentcursor::pressVisual(agent) : agentcursor::releaseVisual(agent);
+            return IPC::Socket1::SResponse(okReply());
+        }
         const auto X = args.size() == 4 ? number(args[2]) : std::nullopt, Y = args.size() == 4 ? number(args[3]) : std::nullopt;
         if (!X || !Y)
-            return refuse("usage: deskpilot cursor [agent=NAME] <x> <y>");
+            return refuse("usage: deskpilot cursor [agent=NAME] <x> <y> | cursor [agent=NAME] press|release");
         const Vector2D POINT{*X, *Y};
         return enqueue([POINT, agent](uint64_t ticket) -> std::optional<SRefusal> {
             g_gliding = true;

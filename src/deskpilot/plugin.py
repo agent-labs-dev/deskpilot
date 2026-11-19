@@ -215,6 +215,11 @@ class Plugin:
         """Glide this agent's cursor to a global point, in turn with the actions, and return once it lands."""
         return self._call("cursor", *self._agent(), str(gx), str(gy))
 
+    def cursor_press(self, down: bool) -> dict:
+        """Squeeze (`down`) or let go of this agent's cursor where it is, with its press pulse, for show only: no input
+        is sent, so it marks a press an app takes some other way, such as a browser over CDP."""
+        return self._call("cursor", *self._agent(), "press" if down else "release")
+
     def register(self, owner: int | None = None) -> dict:
         """Have every window this agent launches open on its hidden workspace, and mark the agent in use. `owner` is
         the process whose exit stops the agent; with none it stops after 30 minutes unused. Returns the workspace and

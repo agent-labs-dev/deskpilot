@@ -94,3 +94,14 @@ def test_desk_record_refuses_a_bad_rate(tmp_path, monkeypatch):
     desk, *_ = make_desk(tmp_path, monkeypatch)
     with pytest.raises(ValueError, match="fps"):
         desk.record("battle", io.BytesIO(), threading.Event(), fps=0)
+
+
+def test_cursor_press_is_shown_only_on_screen(tmp_path, monkeypatch):
+    from test_core import make_desk
+
+    desk, _, _, plugin = make_desk(tmp_path, monkeypatch)
+    plugin.cursor_press = lambda down: plugin.calls.append(("cursor_press", down))
+    desk.press_cursor(True)
+    monkeypatch.setenv("DESKPILOT_CURSOR", "off")
+    desk.press_cursor(False)
+    assert plugin.calls == [("cursor_press", True)]
