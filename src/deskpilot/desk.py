@@ -14,13 +14,15 @@ import os
 import shlex
 import shutil
 import subprocess
+import threading
 import time
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, BinaryIO
 
 from PIL import Image, ImageChops
 
 from . import a11y, clipboard, keys, screen
+from . import record as recording
 from .hypr import AmbiguousWindow, HyprctlError, Hyprland, Window, WindowNotFound, find_window
 from .plugin import BUTTON_CODES, Plugin, PluginError
 
@@ -371,6 +373,30 @@ class Desk:
     ) -> screen.Shot:
         return screen.capture(self._shootable(self._target(query, show, hidden, refresh=True)), out, max_width)
 
+    def record(
+        self,
+        query: str,
+        out: Path | BinaryIO,
+        stop: threading.Event,
+        fps: int = recording.FPS,
+        seconds: float | None = None,
+        hidden: bool = False,
+    ) -> recording.Result:
+        """Film a window, with the agent cursor the plugin draws into the capture, into an mp4 at `out` or, given a
+        binary stream, as constant-rate PPM frames. Frames are of the window as it is each time, hidden included."""
+        if not 1 <= fps <= 60:
+            raise ValueError("fps is between 1 and 60")
+        win = self._shootable(self._target(query, False, hidden, refresh=True))
+        # The cursor in the frames is the plugin's, so it is loaded, at this source's build, before the first capture.
+        self.plugin.load()
+
+        def take() -> bytes:
+            return screen.frame(win)
+
+        if isinstance(out, Path):
+            return recording.to_file(take, out, stop, fps, seconds)
+        return recording.to_stdout(take, out, stop, fps, seconds)
+
     def _shootable(self, win: Window) -> Window:
         """The window, if a shot of it can get a frame. Hyprland copies a window's frame only while the window lies
         partly in its monitor's area, so a hidden shot of a scrolling layout's off-screen column is refused here
@@ -484,6 +510,12 @@ class Desk:
         if take_pointer:
             self._take_pointer(win, gx, gy)
         return gx, gy
+
+    def press_cursor(self, down: bool) -> None:
+        """Squeeze or let go of the agent cursor where it is, for show only. It sends no input: it is for an app driven
+        some other way, which marks the press it makes itself so a recording shows it."""
+        if self._mode(False) == "shown":
+            self.plugin.cursor_press(down)
 
     def click(
         self,

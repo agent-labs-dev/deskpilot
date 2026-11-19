@@ -94,6 +94,10 @@ JSON
 ```
 
 This example replaces text in the target app's current field. Run it only after inspecting that field.
+To film a window with the agent cursor (brackets closing in on a landing, the marker squeezing on a press), run
+`deskpilot record WINDOW -o clip.mp4 --seconds 10`, or `-o -` for PPM frames at a constant rate on stdout. It works for
+hidden windows too (`--hidden`), and the cursor shows in the clip alone. Screenshots from `shot` never include it.
+
 Supported steps are `click`, `move`, `scroll`, `drag`, `key`, `type` and `paste`. Element IDs and shot IDs work
 on the corresponding pointer steps. `--final-shot` returns a capture after all steps succeed.
 
