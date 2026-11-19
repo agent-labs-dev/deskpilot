@@ -1,0 +1,43 @@
+name: Container
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  smoke:
+    name: Container smoke (${{ matrix.runner }})
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [ubuntu-24.04, blacksmith-16vcpu-ubuntu-2404]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Load vkms
+        run: |
+          uname -a
+          sudo modprobe vkms || { sudo apt-get update -q && sudo apt-get install -yq "linux-modules-extra-$(uname -r)" && sudo modprobe vkms; }
+          ls -l /dev/dri
+      - name: Build image
+        run: docker build -f container/Dockerfile -t deskpilot-spike .
+      - name: Run spike
+        run: |
+          mkdir -p out
+          docker run --rm --device /dev/dri -v /run/udev:/run/udev:ro -v "$PWD/out:/out" deskpilot-spike deskpilot-spike
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: always()
+        with:
+          name: spike-${{ matrix.runner }}
+          path: out
