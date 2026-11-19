@@ -9,6 +9,17 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 - `deskpilot record WINDOW` (MCP `record_start` and `record_stop`) films a window, hidden ones included, with the real agent cursor the plugin draws: brackets closing in as it lands and the marker squeezing on a press. It writes an mp4, or with `-o -` PPM frames at a constant rate on stdout for another encoder. Only a capture that asks for a cursor carries it, so `shot` stays cursor-free, and the user's own pointer is never in the frames. While a window is being filmed, a hidden action on it shows its cursor in the recording alone, never on screen.
 - MCP `cursor_press` squeezes and rings the agent cursor where it is, and lets go, for show only: it sends no input, so an app driven another way, such as a browser over CDP, can mark its own presses and a `record` clip shows them.
+- `launch`, `clipboard` and a private XWayland paste now start their app, wl-paste or wl-copy on the Hyprland instance deskpilot drives, the one `HYPRLAND_INSTANCE_SIGNATURE` selects, whatever `WAYLAND_DISPLAY` says. An X11 app gets that instance's XWayland as `DISPLAY`, and no `DISPLAY` when the instance has no XWayland, never the caller's. Before, an app could open on another compositor, such as the user's own session while deskpilot drove a nested one, and `launch` timed out.
+- `key "ctrl++"` presses Ctrl and the `+` key, with the modifiers that key needs on the user's keymap (Ctrl+Shift+= on a US layout). Before, it pressed Ctrl alone and reported success. A chord with an empty key, such as `ctrl+`, is an error. A chord's character that no key gives unmodified is pressed with the modifiers it needs instead of refused.
+- `launch` turns off GTK's desktop portal for the app it starts, so a GTK app's file dialog is its own window, placed on the agent's workspace and instance with it, instead of a window of the user's portal on the user's screen. The app keeps the user's session bus and accessibility bus.
+- `deskpilot --session stop` asks each app of the private desktop to close before ending it. The close it sent on Hyprland 0.57 named the window in a form Hyprland accepted and ignored.
+- `launch` of a single-instance app that hands its window to a copy already running says so when it times out, instead of only that no window opened.
+- `release` of a window the agent has not adopted fails with `not_found`, not `gone`, which means the window closed.
+- `elements` reports an element whose extents the app gives a negative size, such as a GTK 4 tab panel for a page that is not realized, with zero bounds instead of a nonsense rectangle, and clicking it is refused `offscreen`.
+- With `--json`, an error is printed as `{"code": ..., "message": ...}` on stderr instead of the plain `deskpilot: CODE: message` line.
+- `paste ""` is refused, as `type ""` is.
+- An MCP tool refuses an argument it does not take instead of ignoring it, so `wait_for` with `hidden` is an error, as `wait-for --hidden` without `--changed` is in the CLI. Each tool's schema says so with `additionalProperties: false`.
+- Coordinates refused against a shot of an earlier window at the same address now say so, and `wait-for --changed` refuses such a shot instead of comparing against it.
 
 ## [0.7.4] - 2026-11-16
 

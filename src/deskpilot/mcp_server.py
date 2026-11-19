@@ -41,7 +41,15 @@ def _tool(**options):
                     is_error=True,
                 )
 
-        return mcp.tool(**options)(wrapper)
+        registered = mcp.tool(**options)(wrapper)
+        # The SDK drops an argument a tool does not take, so one the tool lacks (wait_for's hidden, a misspelt name)
+        # would run the action without it, where the CLI refuses the flag. Refuse it, and say so in the schema.
+        tool = mcp._tool_manager.get_tool(options.get("name") or fn.__name__)
+        assert tool is not None
+        tool.fn_metadata.arg_model.model_config["extra"] = "forbid"
+        tool.fn_metadata.arg_model.model_rebuild(force=True)
+        tool.parameters["additionalProperties"] = False
+        return registered
 
     return register
 

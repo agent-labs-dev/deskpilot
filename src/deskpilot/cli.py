@@ -39,6 +39,15 @@ def _print(data, as_json: bool) -> None:
         print(data if isinstance(data, str) else json.dumps(data))
 
 
+def _fail(code: str, message: str, as_json: bool) -> int:
+    """Report an expected failure on stderr, as `{"code", "message"}` with --json, and give the exit status."""
+    if as_json:
+        print(json.dumps({"code": code, "message": message}), file=sys.stderr)
+    else:
+        print(f"deskpilot: {code}: {message}", file=sys.stderr)
+    return 2
+
+
 def _view_args(s: argparse.ArgumentParser) -> None:
     """How the command reaches a window that may be off screen."""
     group = s.add_mutually_exclusive_group()
@@ -207,10 +216,19 @@ def _batch_command(sub) -> None:
     s.add_argument("--hidden", action="store_true", help="act on a window this agent launched or adopted, out of view")
 
 
+class _Parser(argparse.ArgumentParser):
+    """Reports a bad command line as the same `{"code", "message"}` JSON as any other failure when --json is given."""
+
+    json_errors = False
+
+    def error(self, message: str):
+        if not _Parser.json_errors:
+            super().error(message)
+        self.exit(_fail("invalid", message, True))
+
+
 def _parser() -> argparse.ArgumentParser:
-    p = argparse.ArgumentParser(
-        prog="deskpilot", description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
-    )
+    p = _Parser(prog="deskpilot", description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("--session", action="store_true", help="use this agent's private compositor, clipboard and bus")
     p.add_argument("--json", action="store_true", help="print JSON")
     return p
@@ -483,6 +501,7 @@ def run(args: argparse.Namespace, desk: Desk) -> object:
 
 
 def main(argv: list[str] | None = None) -> int:
+    _Parser.json_errors = "--json" in (sys.argv[1:] if argv is None else argv)
     args = build_parser().parse_args(argv)
     if args.session:
         from . import session
@@ -496,8 +515,7 @@ def main(argv: list[str] | None = None) -> int:
                 return 0
             os.environ.update(session.environment())
         except EXPECTED as error:
-            print(f"deskpilot: {error_code(error)}: {error}", file=sys.stderr)
-            return 2
+            return _fail(error_code(error), str(error), args.json)
     if args.cmd == "mcp":
         from .mcp_server import serve
 
@@ -510,11 +528,9 @@ def main(argv: list[str] | None = None) -> int:
             _print(output, args.json)
         if args.cmd == "batch" and isinstance(output, dict) and not output["ok"]:
             failed = output["failed"]
-            print(f"deskpilot: {failed['code']}: {failed['message']} ({failed['action']})", file=sys.stderr)
-            return 2
+            return _fail(failed["code"], f"{failed['message']} ({failed['action']})", args.json)
     except EXPECTED as error:
-        print(f"deskpilot: {error_code(error)}: {error}", file=sys.stderr)
-        return 2
+        return _fail(error_code(error), str(error), args.json)
     finally:
         desk.close()
     return 0

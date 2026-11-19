@@ -419,10 +419,14 @@ def _bounds(
         ),
     )
     try:
-        x, y, width, height = reply
-        return int(x), int(y), int(width), int(height)
+        x, y, width, height = (int(value) for value in reply)
     except (TypeError, ValueError) as exc:
         raise A11yError(f"Accessibility object {object_path} returned invalid bounds: {reply!r}") from exc
+    # A negative size is no size: ATK reports extents it cannot obtain as -1, and GTK 4 returns whatever was on its
+    # stack for an accessible with no bounds, such as a stack page whose widget is not realized. Either has no place.
+    if width < 0 or height < 0:
+        return 0, 0, 0, 0
+    return x, y, width, height
 
 
 def _gtk3(bus: _Bus, app_bus: str, app_path: str) -> bool:
@@ -761,7 +765,7 @@ def locate(window: Window, element_id: str, bus: _Bus | None = None) -> Located:
         bounds = _bounds(connection, destination, object_path)
         if bounds[2] <= 0 or bounds[3] <= 0:
             raise A11yError(
-                f"Element {element_id} has zero size; scroll it into view or take a new snapshot.", "offscreen"
+                f"Element {element_id} reports no size; scroll it into view or take a new snapshot.", "offscreen"
             )
         root = payload.get("root")
         if payload.get("gtk3") is not True or not isinstance(root, list) or len(root) != 2:
