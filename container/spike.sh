@@ -32,9 +32,10 @@ hl.monitor({ output = "", mode = "1280x800", position = "0x0", scale = 1 })
 hl.config({
     misc = { disable_hyprland_logo = true, disable_splash_rendering = true },
     animations = { enabled = false },
+    debug = { enable_stdout_logs = true },
 })
 EOF
-EGL_LOG_LEVEL=debug AQ_TRACE=1 HYPRLAND_NO_SD_NOTIFY=1 DEBUGINFOD_URLS=https://debuginfod.archlinux.org \
+EGL_LOG_LEVEL=debug LIBGL_DEBUG=verbose MESA_DEBUG=1 AQ_TRACE=1 HYPRLAND_NO_SD_NOTIFY=1 DEBUGINFOD_URLS=https://debuginfod.archlinux.org \
     gdb -q -batch -ex "set debuginfod enabled on" -ex run -ex "thread apply all bt" \
     --args Hyprland -c ~/.config/hypr/hyprland.lua > "$OUT/hyprland.log" 2>&1 &
 hypr=$!
