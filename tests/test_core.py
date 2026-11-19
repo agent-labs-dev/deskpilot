@@ -1460,3 +1460,31 @@ def test_a_launched_app_draws_its_own_dialogs_on_the_user_s_bus(tmp_path, monkey
     (gate,) = GATE.made
     assert gate.env["GDK_DEBUG"] == "events,no-portals" and gate.env["GTK_USE_PORTAL"] == "0"
     assert gate.env["DBUS_SESSION_BUS_ADDRESS"] == "unix:path=/run/user/1000/bus"
+
+
+def test_client_env_names_the_selected_instance_s_x_display_or_none(tmp_path, monkeypatch):
+    # The caller's DISPLAY is the user's X server; an X11 app given it would open on the user's screen.
+    from deskpilot import hypr
+
+    monkeypatch.setenv("DISPLAY", ":1")
+    monkeypatch.setattr(hypr, "X_LOCKS", tmp_path)
+    monkeypatch.setattr(hypr, "current_instance", lambda: "nested")
+    listed = [
+        {"instance": "user", "pid": 2574, "wl_socket": "wayland-1"},
+        {"instance": "nested", "pid": 4242, "wl_socket": "wayland-4"},
+    ]
+    monkeypatch.setattr(hypr, "run_hyprctl", lambda args, *, instance=None: json.dumps(listed))
+    # Hyprland writes its pid, zero padded, into the lock of the display its XWayland serves.
+    (tmp_path / ".X1-lock").write_text("0000002574\n")
+    (tmp_path / ".X7-lock").write_text("0000004242\n")
+    assert hypr.Hyprland(hypr.run_hyprctl).client_env()["DISPLAY"] == ":7"
+    (tmp_path / ".X7-lock").unlink()
+    assert "DISPLAY" not in hypr.Hyprland(hypr.run_hyprctl).client_env()
+
+
+def test_launch_of_an_app_that_hands_off_to_a_running_copy_says_so(tmp_path, monkeypatch):
+    desk, _, _ = gated_launch(tmp_path, monkeypatch)
+    monkeypatch.setattr(FakePopen, "poll", lambda self: 0)
+    monkeypatch.setattr(FakePopen, "returncode", 0, raising=False)
+    with pytest.raises(TimeoutError, match="exited without a window of its own: a single-instance app"):
+        desk.launch(["gnome-calculator"], timeout=0)

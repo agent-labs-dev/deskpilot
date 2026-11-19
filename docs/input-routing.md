@@ -66,7 +66,8 @@ action shows the result. Tooltips and menus it opens show in that screenshot and
 grab the user's input. It works for native Wayland windows. An XWayland window (X11 and Wine apps) is refused,
 since X clients read the one X pointer only the user's pointer moves; so is a window of the app the user's pointer is
 on, unless that app took the `deskpilot` seat, and a drag and drop the press starts is cancelled. A single-instance
-app that hands its window to a copy the user already runs opens nothing for the agent.
+app that hands its window to a copy the user already runs opens nothing for the agent, and `launch` says so when it
+times out; start such an app with its own instance where it has one (`gnome-text-editor --standalone`).
 
 Hidden `key`, `type` and `paste` need `--window` naming one of the agent's launched or adopted windows, go to that window's own
 client and never hold the user's input. By default keys use the regular keyboard, so an XWayland window is refused, and so

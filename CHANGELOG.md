@@ -7,10 +7,11 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
-- `launch`, `clipboard` and a private XWayland paste now start their app, wl-paste or wl-copy on the Hyprland instance deskpilot drives, the one `HYPRLAND_INSTANCE_SIGNATURE` selects, whatever `WAYLAND_DISPLAY` says. Before, an app could open on another compositor, such as the user's own session while deskpilot drove a nested one, and `launch` timed out.
+- `launch`, `clipboard` and a private XWayland paste now start their app, wl-paste or wl-copy on the Hyprland instance deskpilot drives, the one `HYPRLAND_INSTANCE_SIGNATURE` selects, whatever `WAYLAND_DISPLAY` says. An X11 app gets that instance's XWayland as `DISPLAY`, and no `DISPLAY` when the instance has no XWayland, never the caller's. Before, an app could open on another compositor, such as the user's own session while deskpilot drove a nested one, and `launch` timed out.
 - `key "ctrl++"` presses Ctrl and the `+` key, with the modifiers that key needs on the user's keymap (Ctrl+Shift+= on a US layout). Before, it pressed Ctrl alone and reported success. A chord with an empty key, such as `ctrl+`, is an error. A chord's character that no key gives unmodified is pressed with the modifiers it needs instead of refused.
 - `launch` turns off GTK's desktop portal for the app it starts, so a GTK app's file dialog is its own window, placed on the agent's workspace and instance with it, instead of a window of the user's portal on the user's screen. The app keeps the user's session bus and accessibility bus.
 - `deskpilot --session stop` asks each app of the private desktop to close before ending it. The close it sent on Hyprland 0.57 named the window in a form Hyprland accepted and ignored.
+- `launch` of a single-instance app that hands its window to a copy already running says so when it times out, instead of only that no window opened.
 - `release` of a window the agent has not adopted fails with `not_found`, not `gone`, which means the window closed.
 - `elements` reports an element whose extents the app gives a negative size, such as a GTK 4 tab panel for a page that is not realized, with zero bounds instead of a nonsense rectangle, and clicking it is refused `offscreen`.
 - With `--json`, an error is printed as `{"code": ..., "message": ...}` on stderr instead of the plain `deskpilot: CODE: message` line.

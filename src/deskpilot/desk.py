@@ -304,6 +304,14 @@ class Desk:
             if proc.poll() not in (None, 0):
                 raise RuntimeError(f"{command[0]} exited {proc.returncode} before opening a window")
             if time.monotonic() >= deadline:
+                if proc.poll() == 0:
+                    # Exiting cleanly without a window is what a single-instance app does when it hands the request
+                    # to its running copy; an app that forks off its real process can too, so this is not refused early.
+                    raise TimeoutError(
+                        f"{command[0]} exited without a window of its own: a single-instance app hands its window to "
+                        "a copy already running, which opens nothing here. Start it with its own instance (as "
+                        "gnome-text-editor --standalone does) or adopt that copy's window"
+                    )
                 raise TimeoutError(f"{command[0]} opened no window within {timeout:g}s")
             time.sleep(0.1)
 
