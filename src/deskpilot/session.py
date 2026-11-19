@@ -291,6 +291,13 @@ def _directory() -> Path:
             for p in (_runtime() / "deskpilot" / "sessions").glob(f"{agent}-*/ready.json")
             if _read(p).get("signature") == signature
         )
+    # A shell that evaluated `env` sits in the agent's own compositor without the process-only marker: that is this
+    # agent's session, not a parent desktop to nest another in.
+    signature = os.environ.get("HYPRLAND_INSTANCE_SIGNATURE")
+    for ready in (_runtime() / "deskpilot" / "sessions").glob(f"{agent}-*/ready.json"):
+        record = _read(ready)
+        if signature and record.get("signature") == signature and live(record):
+            return ready.parent
     parent = _parent()
     tag = hashlib.sha256(parent.encode()).hexdigest()[:12] if parent else "standalone"
     path = _runtime() / "deskpilot" / "sessions" / f"{agent}-{tag}"
@@ -435,14 +442,18 @@ def available_mb(proc: Path = Path("/proc"), cgroups: Path = Path("/sys/fs/cgrou
     for row in (proc / "self" / "cgroup").read_text().splitlines():
         if not row.startswith("0::"):
             continue
+        # Every ancestor's limit holds for this process too, so the tightest of them bounds what it can use.
         group = cgroups / row[3:].lstrip("/")
-        try:
-            limit = (group / "memory.max").read_text().strip()
-            used = int((group / "memory.current").read_text())
-        except OSError:
-            break
-        if limit != "max":
-            available = min(available, (int(limit) - used) // 2**20)
+        for level in (group, *group.parents):
+            if level < cgroups:
+                break
+            try:
+                limit = (level / "memory.max").read_text().strip()
+                used = int((level / "memory.current").read_text())
+            except OSError:
+                continue
+            if limit != "max":
+                available = min(available, (int(limit) - used) // 2**20)
     return available
 
 
