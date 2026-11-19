@@ -151,6 +151,24 @@ class AmbiguousWindow(LookupError):
     code = "ambiguous"
 
 
+# Where X servers keep their lock files. Hyprland writes its own pid into the lock of the display its XWayland serves.
+X_LOCKS = Path("/tmp")
+
+
+def x_display(pid: int | None) -> str | None:
+    """The X display the XWayland of the Hyprland with this pid serves, from the lock file it holds, or None."""
+    if not pid:
+        return None
+    for lock in X_LOCKS.glob(".X*-lock"):
+        try:
+            owner = int(lock.read_text().strip())
+        except (OSError, ValueError):
+            continue
+        if owner == pid:
+            return ":" + lock.name.removeprefix(".X").removesuffix("-lock")
+    return None
+
+
 class Hyprland:
     def __init__(self, runner: Runner = run_hyprctl):
         self._run = runner
@@ -168,27 +186,42 @@ class Hyprland:
         value = state.get("locked") if isinstance(state, dict) else None
         return value if isinstance(value, bool) else None
 
+    def _query(self, instance: str, name: str):
+        """`hyprctl -j name` on `instance`, pinned so several queries read one compositor. A fake runner gets no
+        instance."""
+        if self._run is not run_hyprctl:
+            return self._json(name)
+        out = run_hyprctl(["-j", name], instance=instance)
+        return json.loads(out) if out.strip() else None
+
+    def _instance(self, instance: str) -> dict:
+        listed = self._query(instance, "instances") or []
+        found = next((i for i in listed if i["instance"] == instance), {})
+        if not found.get("wl_socket"):
+            raise HyprctlError(f"no Wayland socket for Hyprland {instance or 'instance'}")
+        return found
+
+    def client_env(self) -> dict[str, str]:
+        """The environment for a client deskpilot starts (an app, grim, wl-clipboard): the caller's, with
+        WAYLAND_DISPLAY and DISPLAY naming the Hyprland instance deskpilot drives and its XWayland, since the caller's
+        may name another. An instance with no XWayland gets no DISPLAY, so an X11 app cannot reach another's."""
+        found = self._instance(current_instance() if self._run is run_hyprctl else "")
+        env = {**os.environ, "WAYLAND_DISPLAY": found["wl_socket"]}
+        env.pop("DISPLAY", None)
+        display = x_display(found.get("pid"))
+        if display:
+            env["DISPLAY"] = display
+        return env
+
     def windows(self) -> list[Window]:
         instance, wayland = "", ""
-        real = self._run is run_hyprctl
-        if real:
+        if self._run is run_hyprctl:
             instance = current_instance()
-
-        def query(name: str):
-            if not real:
-                return self._json(name)
-            out = run_hyprctl(["-j", name], instance=instance)
-            return json.loads(out) if out.strip() else None
-
-        if real:
-            listed = query("instances") or []
-            wayland = next((i["wl_socket"] for i in listed if i["instance"] == instance), "")
-            if not wayland:
-                raise HyprctlError(f"no Wayland socket for Hyprland {instance}")
-        active = query("activewindow") or {}
-        monitors = [Monitor.from_json(m) for m in query("monitors") or [] if not m.get("disabled")]
+            wayland = self._instance(instance)["wl_socket"]
+        active = self._query(instance, "activewindow") or {}
+        monitors = [Monitor.from_json(m) for m in self._query(instance, "monitors") or [] if not m.get("disabled")]
         found = []
-        for c in query("clients") or []:
+        for c in self._query(instance, "clients") or []:
             if not c.get("mapped", True) or c.get("hidden"):
                 continue
             x, y = c["at"]

@@ -3359,6 +3359,7 @@ namespace {
             uint32_t              code = 0;
             SMods                 mods;
             std::vector<uint32_t> modifiers;
+            bool                  bare = false;
         };
         std::map<std::pair<uint32_t, bool>, SResolved> found;
         KeyEvents                                      out;
@@ -3370,16 +3371,22 @@ namespace {
             const bool BARE = event.kind == SKeyEvent::KEY_OF;
             auto       it   = found.find({event.code, BARE});
             if (it == found.end()) {
-                const auto KEY = keyFor(keyboard->m_xkbKeymap, keysymOf(event.code), keyboard->m_modifiersState.locked, keyboard->m_modifiersState.group, BARE);
+                const auto& STATE = keyboard->m_modifiersState;
+                // A chord's character is the key that gives it unmodified, else that key with the modifiers it needs,
+                // as a hand presses ctrl++ as ctrl+shift+= on a US keymap.
+                auto       KEY       = keyFor(keyboard->m_xkbKeymap, keysymOf(event.code), STATE.locked, STATE.group, BARE);
+                const bool UNMODIFIED = BARE && KEY;
+                if (!KEY && BARE)
+                    KEY = keyFor(keyboard->m_xkbKeymap, keysymOf(event.code), STATE.locked, STATE.group, false);
                 if (!KEY)
-                    return std::format("no key on the active keymap gives U+{:04X}{}", event.code, BARE ? " without modifiers" : "");
-                const auto MODIFIERS = modifierKeys(keyboard->m_xkbKeymap, KEY->second.depressed, keyboard->m_modifiersState.group);
+                    return std::format("no key on the active keymap gives U+{:04X}", event.code);
+                const auto MODIFIERS = modifierKeys(keyboard->m_xkbKeymap, KEY->second.depressed, STATE.group);
                 if (!MODIFIERS)
                     return std::format("no key on the active keymap holds the modifiers U+{:04X} needs", event.code);
-                it = found.emplace(std::pair{event.code, BARE}, SResolved{.code = KEY->first, .mods = KEY->second, .modifiers = *MODIFIERS}).first;
+                it = found.emplace(std::pair{event.code, BARE}, SResolved{.code = KEY->first, .mods = KEY->second, .modifiers = *MODIFIERS, .bare = UNMODIFIED}).first;
             }
             const auto& KEY = it->second;
-            if (BARE) {
+            if (KEY.bare) {
                 out.push_back({.code = KEY.code, .press = event.press, .locks = std::nullopt});
                 continue;
             }
@@ -4144,7 +4151,7 @@ namespace {
             const auto IT      = g_agents.find(name);
             const auto ADOPTED = IT == g_agents.end() ? nullptr : adoption(IT->second, WINDOW);
             if (!ADOPTED)
-                return refuse(std::format("{} is not adopted by agent {}", describe(WINDOW), name), "gone");
+                return refuse(std::format("{} is not adopted by agent {}", describe(WINDOW), name), "not_found");
             if (WINDOW->m_workspace == ADOPTED->hidden && userIn(WINDOW))
                 return refuse(std::format("the user's focus or pointer is in {}, and returning it would take them from there", describe(WINDOW)));
             giveBack(*ADOPTED);

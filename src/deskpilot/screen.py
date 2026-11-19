@@ -97,6 +97,11 @@ class Shot:
 
     def check_identity(self, window: Window) -> None:
         """Titles may change during navigation; stable ids, process ids and instances identify the target."""
+        if (self.address, self.instance) == (window.address, window.instance) and not self.of(window):
+            raise StaleShot(
+                f"shot {self.id} is of an earlier window at {window.address}, not the {window.cls} there now: take a "
+                "new shot"
+            )
         if (self.stable_id, self.pid, self.cls, self.instance) != (
             window.stable_id,
             window.pid,

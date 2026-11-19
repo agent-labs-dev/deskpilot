@@ -21,7 +21,7 @@ NAMED = {
 
 def press_release(part: str) -> tuple[str, str]:
     """A chord part's press and release: `+code` and `-code` for a named key, or `p` and `r` with the character for
-    the key that gives it unmodified (ctrl+A is ctrl+a, as on a keyboard)."""
+    the key that gives it unmodified (ctrl+A is ctrl+a, as on a keyboard), else with the modifiers it needs."""
     if part.lower() in NAMED:
         code = NAMED[part.lower()]
         return f"+{code}", f"-{code}"
@@ -32,9 +32,17 @@ def press_release(part: str) -> tuple[str, str]:
 
 
 def chord_words(combo: str) -> list[str]:
-    """'ctrl+shift+t' -> ctrl, shift and t down, then up in reverse. A lone character, '+' included, is typed as
-    written, so `key A` types a capital A."""
-    parts = [part for part in combo.split("+") if part] if combo != "+" else ["+"]
+    """'ctrl+shift+t' -> ctrl, shift and t down, then up in reverse. A chord ending in '++' ends with the '+' key, as
+    'ctrl++' does. A lone character, '+' included, is typed as written, so `key A` types a capital A. An empty part, as
+    in 'ctrl+', is an error, so a chord never presses fewer keys than it names."""
+    if combo == "+":
+        parts = ["+"]
+    elif combo.endswith("++"):
+        parts = [*combo[:-2].split("+"), "+"]
+    else:
+        parts = combo.split("+")
+    if "" in parts:
+        raise ValueError(f"'{combo}' names an empty key: join keys with '+', as in ctrl+shift+t or ctrl++")
     if len(parts) == 1 and len(parts[0]) == 1:
         return text_words(parts[0])
     keys = [press_release(part) for part in parts]

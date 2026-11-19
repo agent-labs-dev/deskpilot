@@ -565,7 +565,7 @@ def _stop_compositor(signature: str, pid: int, started: str, runtime: Path) -> N
                 address = window["address"]
                 _dispatch(
                     signature,
-                    f"hl.dsp.window.close({json.dumps('address:' + address)})",
+                    f'hl.dsp.window.close({{window="address:{address}"}})',
                     f"closewindow address:{address}",
                 )
             deadline = time.monotonic() + 5

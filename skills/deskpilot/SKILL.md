@@ -20,7 +20,8 @@ If `deskpilot` is not on `PATH`, ask the user before installing it with
    window on a hidden workspace or scrolled off screen; acting on it is refused unless you pass `--show`, which
    focuses it and moves the user's view, so ask the user before `--show`.
    To work out of the user's sight, set `DESKPILOT_AGENT` to a name and start your own copy of the app with
-   `deskpilot launch CMD...`: it and every window it opens later stay on your hidden workspace, and `--hidden` acts
+   `deskpilot launch CMD...`: it and every window it opens later stay on your hidden workspace (a file dialog of a Qt,
+   Chromium or Electron app may open on the user's screen through their portal, so avoid one), and `--hidden` acts
    on them, or windows explicitly handed to you with `adopt ADDRESS`, on `shot`, `click`, `scroll`, `drag`, `hover`,
    `elements`, `key`,
    `type`, `paste` and `wait-for --changed`. An XWayland window is refused hidden. Hidden keys need `--window` and
@@ -47,7 +48,7 @@ If `deskpilot` is not on `PATH`, ask the user before installing it with
    app reports where the element is. An app without one says so; use a shot instead. An item of an open GTK 3 menu
    or combo box is clicked on its popup; an item `elements` lists with zero bounds is on a popup that cannot be told
    apart, so take a new snapshot or use the keyboard.
-5. Type with `deskpilot type "TEXT" --window WINDOW` and press keys with `deskpilot key ctrl+a --window WINDOW`. Games
+5. Type with `deskpilot type "TEXT" --window WINDOW` and press keys with `deskpilot key ctrl+a --window WINDOW` (`ctrl++` is Ctrl and `+`). Games
    read keys once per frame, so add `--delay 0.1` or more for them (other apps take keys with no delay; use `paste` for long text), and `key --hold SECONDS` to keep a key down: each key is held that long, with the same gap
    before the next. Text arrives as written on the user's keymap; a character no key on it types is an error, so
    send such text, or a long one, with `deskpilot paste "TEXT" --window WINDOW` (`--keys ctrl+shift+v` in a
@@ -109,11 +110,13 @@ press into the focused window, which may be the user's own: always pass `--windo
 
 ## Errors
 
-Each error starts with a code: `deskpilot: CODE: message`, or in MCP the result's structured `code`.
+Each error starts with a code: `deskpilot: CODE: message`, `{"code", "message"}` on stderr with `--json`, or in MCP the
+result's structured `code`. An MCP tool refuses an argument it does not take.
 
 - "is not on screen": the window is on a hidden workspace or scrolled off. Ask the user before passing `--show`,
   or `deskpilot launch` your own copy of the app and act on it with `--hidden`.
-- `not_found` with `--hidden`: hidden acts only on windows you launched or explicitly adopted.
+- `not_found` with `--hidden`: hidden acts only on windows you launched or explicitly adopted. From `release`: you
+  did not adopt that window.
 - "take a new shot": the window changed size since the shot. Shoot again and pick the point anew.
 - A plugin build failure names the missing headers or compiler.
 - A stale `HYPRLAND_INSTANCE_SIGNATURE` is handled: deskpilot finds the live Hyprland, and stops with a list when
