@@ -146,13 +146,11 @@ def main():  # noqa: PLR0915 - sequential live acceptance and owned-resource tea
             refused("stopped_adoption_refused", adopting.result, "refused")
         verify("stopped_adoption_left_window", desk.window(target.address).workspace == target.workspace)
         verify("stopped_adoption_unowned", not queued.plugin.owned_windows([target.address]))
-        holder.stop()
         # Use a separate agent to avoid the stopped agent's five-second process-cleanup grace period.
         keeper = Desk(plugin=Plugin(run=desk.plugin.run, agent="adoption-unload"))
         keeper._isolated = lambda: False
         keeper.adopt(target.address)
-        path = str(desk.plugin.build())
-        desk.plugin.run(["plugin", "unload", path])
+        desk.plugin.unload()
         verify("unload_returns_workspace", desk.window(target.address).workspace == target.workspace)
         verify("unload_keeps_sibling", desk.window(sibling.address).pid == target.pid)
         private_after = state(os.environ["HYPRLAND_INSTANCE_SIGNATURE"])
