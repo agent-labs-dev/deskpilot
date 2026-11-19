@@ -206,7 +206,7 @@ def _runtime() -> Path:
 def _agent_records(agent: str | None) -> list[Path]:
     """The ready files of this agent's own sessions: a directory is `AGENT-TAG`, so `tester` does not take the
     sessions of `tester-browser`."""
-    own = re.compile(rf"{re.escape(agent)}-(?:[0-9a-f]{{12}}|standalone)")
+    own = re.compile(rf"{re.escape(str(agent))}-(?:[0-9a-f]{{12}}|standalone)")
     return [
         p for p in (_runtime() / "deskpilot" / "sessions").glob(f"{agent}-*/ready.json") if own.fullmatch(p.parent.name)
     ]
