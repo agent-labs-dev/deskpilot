@@ -860,3 +860,11 @@ def test_available_memory_is_capped_by_the_cgroup_limit(tmp_path):
     assert session.available_mb(proc, cgroups) == 12288
     (group / "memory.max").write_text(str(4 * 2**30))
     assert session.available_mb(proc, cgroups) == 3072
+
+
+def test_hyprctl_listing_no_instances_is_an_empty_list(monkeypatch):
+    # hyprctl -j instances prints "\n]" before any Hyprland has written its lock, as a standalone session sees at start.
+    monkeypatch.setattr(session, "_run", lambda argv, env: "\n]\n\n")
+    assert session._instances() == []
+    monkeypatch.setattr(session, "_run", lambda argv, env: '[{"instance": "sig", "pid": 7, "wl_socket": "wayland-1"}]')
+    assert session._instances("-i", "parent") == [{"instance": "sig", "pid": 7, "wl_socket": "wayland-1"}]

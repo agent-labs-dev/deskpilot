@@ -5,7 +5,11 @@ set -euo pipefail
 OUT=${OUT:-/out}
 TEXT="hello from deskpilot"
 
-logs() { cp "$XDG_RUNTIME_DIR"/deskpilot/sessions/*/*.log "$OUT/" 2>/dev/null || true; }
+logs() {
+    cp "$XDG_RUNTIME_DIR"/deskpilot/sessions/*/*.log "$OUT/" 2>/dev/null || true
+    for log in "$XDG_RUNTIME_DIR"/hypr/*/hyprland.log; do [ -e "$log" ] && cp "$log" "$OUT/hyprland-full.log"; done
+    chmod -R a+rX "$OUT"
+}
 fail() {
     echo "smoke: $*" >&2
     logs

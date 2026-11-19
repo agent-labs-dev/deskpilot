@@ -71,6 +71,12 @@ def _ctl(signature: str, *args: str) -> str:
     return _run(["hyprctl", "-i", signature, *args], dict(os.environ))
 
 
+def _instances(*args: str) -> list[dict]:
+    """The Hyprland instances hyprctl lists. With none it prints a bare `]` rather than an empty JSON list."""
+    out = _run(["hyprctl", *args, "-j", "instances"], dict(os.environ))
+    return [] if out.strip() == "]" else json.loads(out)
+
+
 def keyboard_binary() -> Path:
     digest = hashlib.sha256(
         b"".join((NATIVE / n).read_bytes() for n in ("keyboard.c", "virtual-keyboard.xml", "virtual-pointer.xml"))
@@ -220,7 +226,7 @@ def parent_instance() -> str:
         return current_instance()
     except HyprctlError:
         # An agent's own running sessions are not candidate parent desktops.
-        listed = json.loads(_run(["hyprctl", "-j", "instances"], dict(os.environ)))
+        listed = _instances()
         own = {_read(p).get("signature") for p in (_runtime() / "deskpilot" / "sessions").glob("*/ready.json")}
         candidates = [i for i in listed if i["instance"] not in own]
         display = os.environ.get("WAYLAND_DISPLAY")
@@ -569,9 +575,7 @@ def _launched(path: Path, ask: str, fail) -> tuple[int, str, str, str]:
         starting = _read(path / "starting.json")
         candidate, candidate_birth = starting.get("pid", 0), starting.get("birth")
         if candidate_birth and birth(candidate) == candidate_birth:
-            instances = json.loads(
-                _run(["hyprctl", *(["-i", ask] if ask else []), "-j", "instances"], dict(os.environ))
-            )
+            instances = _instances(*(["-i", ask] if ask else []))
             match = next((i for i in instances if i["pid"] == candidate), None)
             if match:
                 return candidate, candidate_birth, match["instance"], match["wl_socket"]
@@ -643,7 +647,7 @@ def _stop_compositor(signature: str, pid: int, started: str, runtime: Path) -> N
         return
     if not signature:
         with contextlib.suppress(Exception):
-            listed = json.loads(_run(["hyprctl", "-j", "instances"], dict(os.environ)))
+            listed = _instances()
             signature = next((i["instance"] for i in listed if i["pid"] == pid), "")
     with contextlib.suppress(Exception):
         if signature and socket_alive(runtime / "hypr" / signature / ".socket.sock"):
