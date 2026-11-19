@@ -1,28 +1,56 @@
 {
   "version": 1,
   "name": "export an asset",
-  "description": "The README walkthrough as data: select logo.svg in the GTK demo app, open the export dialog and confirm it. Recorded with `deskpilot recipe run recipes/export-an-asset.json --record demo.mp4`.",
+  "description": "The README walkthrough as data: select logo.svg in the GTK demo app, open the export dialog and confirm it. Record it with `deskpilot recipe run recipes/export-an-asset.json --record demo.mp4`.",
   "window": "Deskpilot local demo",
   "size": "1238x758",
-  "launch": ["/usr/bin/python3", "scripts/walkthrough_app.py"],
+  "launch": [
+    "/usr/bin/python3",
+    "scripts/walkthrough_app.py"
+  ],
   "env": {
     "GDK_BACKEND": "wayland",
     "GSK_RENDERER": "cairo"
   },
   "timeout": 30,
   "steps": [
-    { "action": "shot", "out": "before.png" },
-    { "action": "pause", "seconds": 1 },
-    { "action": "click", "x": 81, "y": 247 },
-    { "action": "pause", "seconds": 1.1 },
-    { "action": "click", "x": 1110, "y": 712 },
-    { "action": "pause", "seconds": 1.1 },
-    { "action": "click", "x": 734, "y": 442 },
-    { "action": "pause", "seconds": 2 },
-    { "action": "shot", "out": "after.png" }
+    {
+      "action": "pause",
+      "seconds": 1
+    },
+    {
+      "action": "click",
+      "x": 81,
+      "y": 247
+    },
+    {
+      "action": "pause",
+      "seconds": 1.1
+    },
+    {
+      "action": "click",
+      "x": 1110,
+      "y": 712
+    },
+    {
+      "action": "pause",
+      "seconds": 1.1
+    },
+    {
+      "action": "click",
+      "x": 734,
+      "y": 442
+    },
+    {
+      "action": "pause",
+      "seconds": 2
+    },
+    {
+      "action": "shot",
+      "out": "after.png"
+    }
   ],
   "record": {
-    "output": "assets/recipes/export-an-asset.mp4",
-    "fps": 60
+    "output": "assets/recipes/export-an-asset.mp4"
   }
 }

@@ -11,26 +11,28 @@ window pixels, or in the pixels of the shot it names, or the centre of an elemen
 A recipe is not a batch: it may hold more steps and a window whose identity is pinned once, so a window Hyprland
 replaces under the same address stops the run instead of receiving the rest of the demo's clicks.
 
-Recording is `wf-recorder` on the monitor that shows the window, which holds the real compositor output: the agent
-cursor deskpilot draws, the app's own cursor and everything else the monitor shows. It starts before the first step
-and stops after the last, on failure too, so a failed recipe still leaves the recording of what went wrong.
+Recording is `Desk.record`, the same window film `deskpilot record` makes: frames of the window with the agent cursor
+the plugin draws into them. It starts before the first step and stops after the last, on failure too, so a failed
+recipe still leaves the recording of what went wrong.
 """
 
 from __future__ import annotations
 
 import json
 import os
-import shutil
 import signal
 import subprocess
+import tempfile
+import threading
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import TYPE_CHECKING, Annotated, Any, Literal, Protocol
+from typing import IO, TYPE_CHECKING, Annotated, Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from . import batch, screen
+from . import record as recording
 from .desk import EXPECTED, error_code
 from .hypr import Window, WindowNotFound
 
@@ -41,9 +43,6 @@ if TYPE_CHECKING:
 MAX_STEPS = 200
 # How often a pause checks the window is still the one pinned, so an app that died fails the run at once.
 PAUSE_TICK = 0.25
-# What `scripts/walkthrough.py` records at: one output, no dmabuf, ultrafast x264 for a lossless-ish master.
-RECORDER = ("wf-recorder", "-y", "--no-dmabuf", "-D", "-c", "libx264", "-p", "preset=ultrafast", "-p", "crf=18",
-            "-p", "threads=2", "-x", "yuv420p")  # fmt: skip
 
 
 class _Step(BaseModel):
@@ -85,11 +84,10 @@ Step = Annotated[
 
 
 class Record(_Step):
-    """Record the monitor that shows the window, from before the first step until after the last."""
+    """Film the window, with the agent cursor, from before the first step until after the last."""
 
     output: str = Field(min_length=1, description="the MP4 to write, made a directory if needed")
-    fps: int = Field(60, ge=1, le=120)
-    monitor: str | None = Field(None, min_length=1, description="record this monitor, not the one showing the window")
+    fps: int = Field(recording.FPS, ge=1, le=60)
 
 
 class Recipe(_Step):
@@ -174,77 +172,49 @@ class RunResult:
         }
 
 
-class _Process(Protocol):
-    """The part of `subprocess.Popen` a recorder uses, so a fake keeps a test off the compositor."""
+class _Film:
+    """`Desk.record` of the pinned window on a thread of its own, from its first frame until `stop`."""
 
-    def poll(self) -> int | None: ...
+    def __init__(self, desk: Desk, address: str, path: Path, fps: int) -> None:
+        self.path = path.expanduser().resolve()
+        self._stop = threading.Event()
+        self._started = threading.Event()
+        self._result: recording.Result | None = None
+        self._error: Exception | None = None
 
-    def send_signal(self, sig: int) -> None: ...
-
-    def wait(self, timeout: float | None = None) -> int: ...
-
-    def kill(self) -> None: ...
-
-
-class Recorder:
-    """`wf-recorder` on one monitor, stopped with SIGINT so it finishes its file."""
-
-    def __init__(self, process: _Process, path: Path) -> None:
-        self.process = process
-        self.path = path
-
-    @classmethod
-    def start(cls, path: Path, monitor: str, fps: int, log: Path | None = None) -> Recorder:
-        """Start recording `monitor` to `path`. A missing wf-recorder is an error before anything is driven."""
-        if not shutil.which(RECORDER[0]):
-            raise ValueError(f"recording needs {RECORDER[0]} on PATH, and it is not there")
-        path = path.expanduser().resolve()
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.unlink(missing_ok=True)
-        handle = log.open("w") if log else None
-        process = subprocess.Popen(
-            [*RECORDER, "-r", str(fps), "-o", monitor, "-f", str(path)],
-            stdout=handle or subprocess.DEVNULL,
-            stderr=subprocess.STDOUT if handle else subprocess.DEVNULL,
-        )
-        if handle:
-            handle.close()
-        return cls(process, path)
-
-    def stop(self) -> dict:
-        """Stop recording and report the file. A run that recorded nothing is an error, not an empty MP4."""
-        if self.process.poll() is None:
-            self.process.send_signal(signal.SIGINT)
+        def film() -> None:
             try:
-                self.process.wait(timeout=20)
-            except subprocess.TimeoutExpired:
-                self.process.kill()
-                self.process.wait()
-        if not self.path.is_file() or self.path.stat().st_size == 0:
-            raise RuntimeError(f"the recording wrote nothing to {self.path}")
-        return {"path": str(self.path), "bytes": self.path.stat().st_size}
+                self._result = desk.record(address, self.path, self._stop, fps, started=self._started)
+            except Exception as caught:  # re-raised by finish(), on the thread that owns the run
+                self._error = caught
+
+        self._thread = threading.Thread(target=film, name="recipe-film", daemon=True)
+        self._thread.start()
+        # No step runs before the first frame, so the clip starts on the first action rather than somewhere in it.
+        while not self._started.wait(0.1):
+            if not self._thread.is_alive():
+                self.finish()
+                raise RuntimeError(f"the recording of {address} stopped before its first frame")
+
+    def finish(self) -> dict:
+        """Stop filming and report the clip. A recording that captured nothing raises the capture's own error."""
+        self._stop.set()
+        self._thread.join()
+        if self._error:
+            raise self._error
+        assert self._result is not None
+        self._result.raise_if_empty()
+        return {"path": str(self.path), **self._result.to_dict()}
 
 
-def _monitor_showing(desk: Desk, window: Window) -> str:
-    """The name of the monitor that shows the window, for wf-recorder's -o."""
-    for monitor in desk.hypr.monitors():
-        showing = monitor.shows(window.workspace, window.x, window.y, window.width, window.height)
-        if showing and monitor.id == window.monitor and monitor.name:
-            return monitor.name
-    raise ValueError(
-        f"no monitor shows {window.cls} ({window.address}); a recipe records a window the user can see, "
-        "so move it on screen first"
-    )
-
-
-def _spawn(recipe: Recipe) -> subprocess.Popen:
+def _spawn(recipe: Recipe, stderr: IO[bytes]) -> subprocess.Popen:
     """Start the recipe's app the way the user's own shell would, in its own process group so stop ends its children."""
     command = [os.path.expanduser(part) for part in recipe.launch or []]
     return subprocess.Popen(
         command,
         env={**os.environ, **recipe.env},
         stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
+        stderr=stderr,
         start_new_session=True,
     )
 
@@ -260,38 +230,60 @@ def _stop_app(process: subprocess.Popen | None) -> None:
         process.wait()
 
 
-def run(desk: Desk, recipe: Recipe, record: Path | None = None, log: Path | None = None) -> RunResult:
+def _await_window(desk: Desk, recipe: Recipe, app: subprocess.Popen | None, stderr: IO[bytes]) -> Window:
+    """The recipe's window, as soon as it is there at its size. An app that failed before showing one fails the run
+    with its own exit status and last words, instead of the run waiting out the whole timeout. A launcher that hands
+    off and exits 0 is fine: its window is still waited for."""
+    deadline = time.monotonic() + recipe.timeout
+    while True:
+        try:
+            window = desk.wait_for(recipe.window, timeout=min(1.0, max(0.0, deadline - time.monotonic())),
+                                   size=_size(recipe.size))  # fmt: skip
+            assert window is not None
+            return window
+        except TimeoutError:
+            if app is not None and app.poll():
+                stderr.seek(0)
+                said = stderr.read().decode(errors="replace").strip().splitlines()[-3:]
+                command = (recipe.launch or [""])[0]
+                raise ValueError(
+                    f"{command} exited with status {app.returncode} before {recipe.window!r} appeared"
+                    + (": " + " / ".join(said) if said else "")
+                ) from None
+            if time.monotonic() >= deadline:
+                raise
+
+
+def run(desk: Desk, recipe: Recipe, record: Path | None = None) -> RunResult:
     """Replay the recipe, recording it too when the recipe or `record` names an MP4.
 
     The window is looked up and pinned before anything is recorded, every step is aimed at that pinned window, and
-    the app the recipe launched is stopped on the way out, as is the recorder.
+    the app the recipe launched is stopped on the way out, as is the recording.
     """
     result = RunResult(name=recipe.name)
-    app = None
-    recorder = None
-    try:
-        if recipe.launch:
-            app = _spawn(recipe)
-        window = desk.wait_for(recipe.window, timeout=recipe.timeout, size=_size(recipe.size))
-        assert window is not None
-        result.window = window.to_dict()
-        output = record or (Path(recipe.record.output) if recipe.record else None)
-        if output is not None:
-            monitor = recipe.record.monitor if recipe.record else None
-            recorder = Recorder.start(
-                output, monitor or _monitor_showing(desk, window), recipe.record.fps if recipe.record else 60, log
-            )
-        for index, step in enumerate(recipe.steps):
+    app = film = None
+    with tempfile.TemporaryFile() as stderr:
+        try:
+            if recipe.launch:
+                app = _spawn(recipe, stderr)
+            window = _await_window(desk, recipe, app, stderr)
+            result.window = window.to_dict()
+            output = record or (Path(recipe.record.output) if recipe.record else None)
+            if output is not None:
+                film = _Film(desk, window.address, output, recipe.record.fps if recipe.record else recording.FPS)
+            for index, step in enumerate(recipe.steps):
+                try:
+                    result.results.append({"index": index, "action": step.action, **_do(desk, step, recipe, window)})
+                except EXPECTED as error:
+                    result.failed = Failure(index, step.action, error_code(error), str(error))
+                    return result
+        finally:
+            # The clip is kept whatever happened, so a failed demo can be watched; the app it started is not.
             try:
-                result.results.append({"index": index, "action": step.action, **_do(desk, step, recipe, window)})
-            except EXPECTED as error:
-                result.failed = Failure(index, step.action, error_code(error), str(error))
-                return result
-    finally:
-        # The recording is kept whatever happened, so a failed demo can be watched; the app it started is not.
-        if recorder is not None:
-            result.recording = recorder.stop()
-        _stop_app(app)
+                if film is not None:
+                    result.recording = film.finish()
+            finally:
+                _stop_app(app)
     return result
 
 

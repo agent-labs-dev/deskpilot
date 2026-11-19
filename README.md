@@ -118,7 +118,7 @@ deskpilot recipe run recipes/export-an-asset.json --record demo.mp4
 ```
 
 The steps are the batch actions plus `pause`, `wait` and `shot`; a recipe may also start its own app and name the
-MP4 it records. `wf-recorder` records the monitor showing the window, so the video holds the agent cursor deskpilot
+MP4 it records. The recording is `deskpilot record` of the window, so the video holds the agent cursor deskpilot
 draws. `deskpilot recipe schema` prints the format as JSON Schema. Nothing is launched or clicked until the whole
 file validates, and a failed step stops the run, keeps the recording and exits 2.
 

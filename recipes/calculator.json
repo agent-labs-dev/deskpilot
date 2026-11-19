@@ -1,0 +1,72 @@
+{
+  "version": 1,
+  "name": "calculator",
+  "description": "Work out 24 x 36 / 2 in GNOME Calculator by clicking its keys, each shown by the agent cursor.",
+  "window": "org.gnome.Calculator",
+  "size": "1238x758",
+  "launch": [
+    "gnome-calculator"
+  ],
+  "env": {
+    "GSETTINGS_BACKEND": "memory"
+  },
+  "timeout": 30,
+  "steps": [
+    {
+      "action": "click",
+      "x": 482,
+      "y": 676
+    },
+    {
+      "action": "click",
+      "x": 347,
+      "y": 628
+    },
+    {
+      "action": "click",
+      "x": 754,
+      "y": 580
+    },
+    {
+      "action": "click",
+      "x": 618,
+      "y": 676
+    },
+    {
+      "action": "click",
+      "x": 618,
+      "y": 628
+    },
+    {
+      "action": "click",
+      "x": 890,
+      "y": 700
+    },
+    {
+      "action": "pause",
+      "seconds": 1
+    },
+    {
+      "action": "click",
+      "x": 754,
+      "y": 532
+    },
+    {
+      "action": "click",
+      "x": 482,
+      "y": 676
+    },
+    {
+      "action": "click",
+      "x": 890,
+      "y": 700
+    },
+    {
+      "action": "pause",
+      "seconds": 2
+    }
+  ],
+  "record": {
+    "output": "assets/recipes/calculator.mp4"
+  }
+}

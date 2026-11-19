@@ -136,8 +136,8 @@ claude mcp add deskpilot -- deskpilot mcp
 
 `deskpilot recipe run FILE` replays a saved recipe: one window, 1 to 200 steps, an optional launched app and an
 optional MP4 of the run. `deskpilot recipe check FILE` validates one and prints it with defaults filled in, and
-`deskpilot recipe schema` prints the format as JSON Schema. `--record MP4` overrides the recipe's own output and
-`--log FILE` keeps wf-recorder's output. The steps are the batch actions, where a point is in window pixels (or in
+`deskpilot recipe schema` prints the format as JSON Schema. `--record MP4` overrides the recipe's own output. The
+recording is the window film `deskpilot record` makes. The steps are the batch actions, where a point is in window pixels (or in
 the pixels of the shot it names), plus three the batch does not have:
 
 | Action | Required fields | Optional fields |
@@ -147,7 +147,7 @@ the pixels of the shot it names), plus three the batch does not have:
 | `shot` | none | `out`, `max_width` |
 
 The document holds `version` (1), `name`, `window`, and `steps`, plus optional `description`, `launch`, `env`,
-`timeout` and `size` in window pixels to wait for, and a `record` object of `output`, `fps` and `monitor`. The
+`timeout` and `size` in window pixels to wait for, and a `record` object of `output` and `fps` (1 to 60, default 25). The
 window is pinned once, so a window Hyprland replaces under the same address stops the run. Results have `ok`,
 `name`, `window`, `completed`, `results`, `failed` and `recording`; a failure carries the step's `index`, `action`,
 `code` and `message`. The recording is stopped and kept on failure too. A recipe never takes the user's pointer,

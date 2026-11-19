@@ -1,0 +1,18 @@
+{
+  "version": 1,
+  "name": "terminal",
+  "description": "Type two commands into a kitty terminal, with a clean config so it looks the same on every machine.",
+  "window": "kitty",
+  "size": "1238x758",
+  "launch": ["kitty", "--config", "NONE", "-o", "font_size=18", "-o", "background=#1e1f22", "sh", "-c", "PS1='$ ' exec sh"],
+  "timeout": 30,
+  "steps": [
+    { "action": "click", "x": 600, "y": 400 },
+    { "action": "pause", "seconds": 0.8 },
+    { "action": "type", "text": "echo hello from deskpilot\n", "delay": 0.05 },
+    { "action": "pause", "seconds": 0.8 },
+    { "action": "type", "text": "seq 1 5 | awk '{s+=$1} END {print \"sum:\", s}'\n", "delay": 0.05 },
+    { "action": "pause", "seconds": 2.5 }
+  ],
+  "record": { "output": "assets/recipes/terminal.mp4" }
+}

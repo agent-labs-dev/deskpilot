@@ -239,9 +239,8 @@ def _recipe_command(sub) -> None:
         "--record",
         type=Path,
         metavar="MP4",
-        help="with run: record the monitor showing the window to this MP4, instead of the recipe's own output",
+        help="with run: film the window to this MP4, instead of the recipe's own output",
     )
-    s.add_argument("--log", type=Path, help="with run: write the recorder's own output here")
 
 
 def _recipe(args: argparse.Namespace):
@@ -263,7 +262,7 @@ def _run_recipe(args: argparse.Namespace, desk: Desk) -> object:
     loaded = _recipe(args)
     if args.action != "run":
         return loaded if isinstance(loaded, dict) else loaded.model_dump(mode="json")
-    return recipes.run(desk, loaded, args.record, args.log).to_dict()
+    return recipes.run(desk, loaded, args.record).to_dict()
 
 
 def _parser() -> argparse.ArgumentParser:
@@ -283,6 +282,24 @@ def _record_parser(sub) -> None:
     s.add_argument("--fps", type=int, default=25)
     s.add_argument("--seconds", type=float, help="stop after this long (Ctrl-C or SIGTERM also stops)")
     s.add_argument("--hidden", action="store_true", help="film a window this agent launched or adopted, out of view")
+
+
+def _hidden_commands(sub) -> None:
+    s = sub.add_parser(
+        "launch",
+        help="start an app for this agent (DESKPILOT_AGENT) on its hidden workspace, for --hidden actions; print its "
+        "first window",
+    )
+    s.add_argument("command", nargs=argparse.REMAINDER, help="the app and its arguments")
+    s.add_argument("--timeout", type=float, default=30, help="seconds to wait for its first window")
+    for name, description in (
+        ("adopt", "hand one unfocused native window to this agent for hidden actions"),
+        ("release", "return one adopted window to its original workspace without closing it"),
+    ):
+        s = sub.add_parser(name, help=description)
+        s.add_argument("address", help="exact address from deskpilot windows")
+    sub.add_parser("show", help="show this agent's hidden workspace on the focused monitor, or hide it again")
+    sub.add_parser("stop", help="close this agent's launched apps and return its adopted windows")
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -351,21 +368,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     _wait_command(sub)
 
-    s = sub.add_parser(
-        "launch",
-        help="start an app for this agent (DESKPILOT_AGENT) on its hidden workspace, for --hidden actions; print its "
-        "first window",
-    )
-    s.add_argument("command", nargs=argparse.REMAINDER, help="the app and its arguments")
-    s.add_argument("--timeout", type=float, default=30, help="seconds to wait for its first window")
-    for name, description in (
-        ("adopt", "hand one unfocused native window to this agent for hidden actions"),
-        ("release", "return one adopted window to its original workspace without closing it"),
-    ):
-        s = sub.add_parser(name, help=description)
-        s.add_argument("address", help="exact address from deskpilot windows")
-    sub.add_parser("show", help="show this agent's hidden workspace on the focused monitor, or hide it again")
-    sub.add_parser("stop", help="close this agent's launched apps and return its adopted windows")
+    _hidden_commands(sub)
 
     sub.add_parser("cursor", help="print the cursor's global position")
     _recipe_command(sub)

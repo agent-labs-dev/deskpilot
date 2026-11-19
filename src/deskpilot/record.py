@@ -56,10 +56,11 @@ def stream(
     stop: threading.Event,
     fps: int = FPS,
     seconds: float | None = None,
+    started: threading.Event | None = None,
 ) -> Result:
     """Take frames from `take` at a steady `fps` into `sink` until `stop` is set or `seconds` pass. A failed capture,
     and the slots a slow one overran, repeat the last frame, so the stream keeps the real time of the run and no
-    longer than it."""
+    longer than it. `started` is set once the first frame is in the sink, for a caller that must not act before it."""
     limit = min(seconds, MAX_SECONDS) if seconds else MAX_SECONDS
     total = max(1, round(limit * fps))
     start = time.monotonic()
@@ -81,6 +82,8 @@ def stream(
         assert last is not None
         sink(last)
         written += 1
+        if started is not None:
+            started.set()
         while written < total and start + written / fps <= time.monotonic():
             sink(last)
             written += 1
@@ -127,11 +130,16 @@ class Mp4:
 
 
 def to_file(
-    take: Callable[[], bytes], path: Path, stop: threading.Event, fps: int = FPS, seconds: float | None = None
+    take: Callable[[], bytes],
+    path: Path,
+    stop: threading.Event,
+    fps: int = FPS,
+    seconds: float | None = None,
+    started: threading.Event | None = None,
 ) -> Result:
     out = Mp4(path, fps)
     try:
-        return stream(take, out.write, stop, fps, seconds)
+        return stream(take, out.write, stop, fps, seconds, started)
     finally:
         out.close()
 
