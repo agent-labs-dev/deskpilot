@@ -16,6 +16,13 @@ if [ "$(id -u)" = 0 ]; then
         echo "== eglprobe /dev/dri/$(basename "$c")"; EGL_LOG_LEVEL=debug eglprobe "/dev/dri/$(basename "$c")" 2>&1 | cut -c1-400
         echo "== eglprobe software"; LIBGL_ALWAYS_SOFTWARE=1 EGL_LOG_LEVEL=debug eglprobe "/dev/dri/$(basename "$c")" 2>&1 | cut -c1-400
     done
+    # Hyprland reopens the display node by path for its renderer, so the agent needs the node's group as well as the seat.
+    for node in /dev/dri/card*; do
+        gid=$(stat -c %g "$node")
+        getent group "$gid" > /dev/null || groupadd -g "$gid" "dri$gid"
+        usermod -aG "$(getent group "$gid" | cut -d: -f1)" agent
+    done
+    id agent
     SEATD_VTBOUND=0 seatd -g agent -l debug > "$OUT/seatd.log" 2>&1 &
     for _ in $(seq 50); do [ -S /run/seatd.sock ] && break; sleep 0.1; done
     ls -l /run/seatd.sock
