@@ -1,7 +1,9 @@
 """An agent's private compositor, bus and keyboard, started lazily by --session.
 
 The worker owns every child and publishes its environment only after all services are ready.
-The parent Wayland output is disabled before it can map; the fallback launch workspace is hidden.
+Nested in the user's Hyprland, the parent Wayland output is disabled before it can map; the fallback launch workspace is
+hidden. Standalone (DESKPILOT_STANDALONE=1, for a container with no compositor), Hyprland runs on its own DRM backend
+on the host's vkms output; the container is its seat.
 """
 
 from __future__ import annotations
@@ -25,8 +27,8 @@ import tempfile
 import time
 from pathlib import Path
 
-from .hypr import HyprctlError, current_instance, socket_alive
-from .plugin import agent_from_env, build_dir
+from .hypr import HyprctlError, current_instance, run_hyprctl, socket_alive
+from .plugin import Plugin, agent_from_env, build_dir
 
 
 class SessionBusy(RuntimeError):
@@ -36,13 +38,16 @@ class SessionBusy(RuntimeError):
 IDLE_SECONDS = 1800
 START_TIMEOUT = 30
 NATIVE = Path(__file__).with_name("native")
+STANDALONE_ENV = "DESKPILOT_STANDALONE"
+# `{desktop}` is the agent's output: nested, the headless DESKPILOT; standalone, "" for every output, which there are
+# only the vkms card's connectors, whose number varies by host.
 CONFIG = """
-hl.monitor({ output = "WAYLAND-1", disabled = true })
-hl.monitor({ output = "DESKPILOT", mode = "1280x800", position = "0x0", scale = 1 })
-hl.config({
-    misc = { disable_hyprland_logo = true, disable_splash_rendering = true },
-    animations = { enabled = false },
-})
+hl.monitor({{ output = "WAYLAND-1", disabled = true }})
+hl.monitor({{ output = "{desktop}", mode = "1280x800", position = "0x0", scale = 1 }})
+hl.config({{
+    misc = {{ disable_hyprland_logo = true, disable_splash_rendering = true }},
+    animations = {{ enabled = false }},
+}})
 """
 
 
@@ -67,9 +72,15 @@ def _ctl(signature: str, *args: str) -> str:
     return _run(["hyprctl", "-i", signature, *args], dict(os.environ))
 
 
+def _instances(*args: str) -> list[dict]:
+    """The Hyprland instances hyprctl lists. With none it prints a bare `]` rather than an empty JSON list."""
+    out = _run(["hyprctl", *args, "-j", "instances"], dict(os.environ))
+    return [] if out.strip() == "]" else json.loads(out)
+
+
 def keyboard_binary() -> Path:
     digest = hashlib.sha256(
-        b"".join((NATIVE / n).read_bytes() for n in ("keyboard.c", "virtual-keyboard.xml"))
+        b"".join((NATIVE / n).read_bytes() for n in ("keyboard.c", "virtual-keyboard.xml", "virtual-pointer.xml"))
     ).hexdigest()[:16]
     folder = build_dir() / f"keyboard-{digest}"
     folder.mkdir(parents=True, exist_ok=True)
@@ -78,10 +89,11 @@ def keyboard_binary() -> Path:
         fcntl.flock(lock, fcntl.LOCK_EX)
         if binary.exists():
             return binary
-        for kind, name in (("client-header", "virtual-keyboard.h"), ("private-code", "virtual-keyboard-protocol.c")):
-            subprocess.run(
-                ["wayland-scanner", kind, str(NATIVE / "virtual-keyboard.xml"), str(folder / name)], check=True
-            )
+        for protocol in ("virtual-keyboard", "virtual-pointer"):
+            for kind, name in (("client-header", f"{protocol}.h"), ("private-code", f"{protocol}-protocol.c")):
+                subprocess.run(
+                    ["wayland-scanner", kind, str(NATIVE / f"{protocol}.xml"), str(folder / name)], check=True
+                )
         flags = subprocess.check_output(["pkg-config", "--cflags", "--libs", "wayland-client", "xkbcommon"], text=True)
         # Built beside the binary and renamed into place, so a killed build never leaves a half-written executable.
         temporary = folder / f".keyboard.{os.getpid()}"
@@ -94,6 +106,7 @@ def keyboard_binary() -> Path:
                     str(folder),
                     str(NATIVE / "keyboard.c"),
                     str(folder / "virtual-keyboard-protocol.c"),
+                    str(folder / "virtual-pointer-protocol.c"),
                     "-o",
                     str(temporary),
                     *shlex.split(flags),
@@ -190,10 +203,24 @@ def _runtime() -> Path:
     return Path(os.environ.get("XDG_RUNTIME_DIR", f"/run/user/{os.getuid()}"))
 
 
+def _agent_records(agent: str | None) -> list[Path]:
+    """The ready files of this agent's own sessions: a directory is `AGENT-TAG`, so `tester` does not take the
+    sessions of `tester-browser`."""
+    own = re.compile(rf"{re.escape(str(agent))}-(?:[0-9a-f]{{12}}|standalone)")
+    return [
+        p for p in (_runtime() / "deskpilot" / "sessions").glob(f"{agent}-*/ready.json") if own.fullmatch(p.parent.name)
+    ]
+
+
+def _parent() -> str:
+    """The Hyprland a nested session runs in, or "" for a standalone one, which has none."""
+    return "" if os.environ.get(STANDALONE_ENV) == "1" else parent_instance()
+
+
 def parent_instance() -> str:
     if not os.environ.get("HYPRLAND_INSTANCE_SIGNATURE") and not os.environ.get("WAYLAND_DISPLAY"):
         agent = agent_from_env()
-        records = [_read(p) for p in (_runtime() / "deskpilot" / "sessions").glob(f"{agent}-*/ready.json")]
+        records = [_read(p) for p in _agent_records(agent)]
         parents = {
             r["parent"]
             for r in records
@@ -205,7 +232,7 @@ def parent_instance() -> str:
         return current_instance()
     except HyprctlError:
         # An agent's own running sessions are not candidate parent desktops.
-        listed = json.loads(_run(["hyprctl", "-j", "instances"], dict(os.environ)))
+        listed = _instances()
         own = {_read(p).get("signature") for p in (_runtime() / "deskpilot" / "sessions").glob("*/ready.json")}
         candidates = [i for i in listed if i["instance"] not in own]
         display = os.environ.get("WAYLAND_DISPLAY")
@@ -216,6 +243,16 @@ def parent_instance() -> str:
         raise
 
 
+# What another tool needs to reach the session's desktop, as `deskpilot --session env` prints it. Never the token:
+# `stop` ends every process carrying it, which would include the caller's own shell, nor the profile directories,
+# which would move the caller's HOME.
+REACH_ENV = (
+    "WAYLAND_DISPLAY",
+    "HYPRLAND_INSTANCE_SIGNATURE",
+    "XDG_RUNTIME_DIR",
+    "DBUS_SESSION_BUS_ADDRESS",
+    "AT_SPI_BUS_ADDRESS",
+)
 VERIFIED_ENV = (
     TOKEN_ENV,
     "WAYLAND_DISPLAY",
@@ -239,7 +276,7 @@ def verify_current() -> str:
     agent = agent_from_env()
     if not signature or marker != signature or not agent:
         raise HyprctlError("not running in a verified isolated session")
-    records = [_read(p) for p in (_runtime() / "deskpilot" / "sessions").glob(f"{agent}-*/ready.json")]
+    records = [_read(p) for p in _agent_records(agent)]
     record = next((r for r in records if r.get("signature") == signature), None)
     if not record or not live(record):
         raise HyprctlError("isolated session identity is not live")
@@ -258,13 +295,16 @@ def _directory() -> Path:
         raise ValueError("--session needs DESKPILOT_AGENT to name its private desktop")
     if os.environ.get("DESKPILOT_ISOLATED"):
         signature = verify_current()
-        return next(
-            p.parent
-            for p in (_runtime() / "deskpilot" / "sessions").glob(f"{agent}-*/ready.json")
-            if _read(p).get("signature") == signature
-        )
-    parent = parent_instance()
-    tag = hashlib.sha256(parent.encode()).hexdigest()[:12]
+        return next(p.parent for p in _agent_records(agent) if _read(p).get("signature") == signature)
+    # A shell that evaluated `env` sits in the agent's own compositor without the process-only marker: that is this
+    # agent's session, not a parent desktop to nest another in.
+    signature = os.environ.get("HYPRLAND_INSTANCE_SIGNATURE")
+    for ready in _agent_records(agent):
+        record = _read(ready)
+        if signature and record.get("signature") == signature and live(record):
+            return ready.parent
+    parent = _parent()
+    tag = hashlib.sha256(parent.encode()).hexdigest()[:12] if parent else "standalone"
     path = _runtime() / "deskpilot" / "sessions" / f"{agent}-{tag}"
     path.mkdir(parents=True, exist_ok=True, mode=0o700)
     return path
@@ -396,6 +436,32 @@ def live(record: dict) -> bool:
     )
 
 
+def available_mb(proc: Path = Path("/proc"), cgroups: Path = Path("/sys/fs/cgroup")) -> int:
+    """Return the memory a new session can use: the machine's available memory, capped by this process's cgroup
+    limit, since a container's /proc/meminfo reports the host."""
+    available = next(
+        int(row.split()[1]) // 1024
+        for row in (proc / "meminfo").read_text().splitlines()
+        if row.startswith("MemAvailable:")
+    )
+    for row in (proc / "self" / "cgroup").read_text().splitlines():
+        if not row.startswith("0::"):
+            continue
+        # Every ancestor's limit holds for this process too, so the tightest of them bounds what it can use.
+        group = cgroups / row[3:].lstrip("/")
+        for level in (group, *group.parents):
+            if level < cgroups:
+                break
+            try:
+                limit = (level / "memory.max").read_text().strip()
+                used = int((level / "memory.current").read_text())
+            except OSError:
+                continue
+            if limit != "max":
+                available = min(available, (int(limit) - used) // 2**20)
+    return available
+
+
 def environment() -> dict[str, str]:
     """Return a verified ready session, serializing concurrent lazy starts without changing the caller's environment."""
     path = _directory()
@@ -412,11 +478,7 @@ def environment() -> dict[str, str]:
         if not live(record):
             _reap(path)
             minimum = int(os.environ.get("DESKPILOT_MIN_FREE_MB", "2048"))
-            available = next(
-                int(row.split()[1]) // 1024
-                for row in Path("/proc/meminfo").read_text().splitlines()
-                if row.startswith("MemAvailable:")
-            )
+            available = available_mb()
             if available < minimum:
                 running = [str(p.parent.name) for p in path.parent.glob("*/ready.json") if live(_read(p))]
                 raise SessionBusy(
@@ -426,7 +488,7 @@ def environment() -> dict[str, str]:
             (path / "error").unlink(missing_ok=True)
             with (path / "worker.log").open("w") as log:
                 worker = subprocess.Popen(
-                    [sys.executable, "-m", "deskpilot.session", "serve", str(path), parent_instance()],
+                    [sys.executable, "-m", "deskpilot.session", "serve", str(path), _parent()],
                     stdin=subprocess.DEVNULL,
                     stdout=log,
                     stderr=log,
@@ -502,10 +564,10 @@ def _dispatch(signature: str, lua: str, legacy: str) -> str:
     return _ctl(signature, "dispatch", *legacy.split(" ", 1))
 
 
-def _start_compositor(
-    path: Path, parent: str, env: dict[str, str], overrides: dict[str, str]
-) -> tuple[int, str, str, str]:
-    (path / "hyprland.lua").write_text(CONFIG)
+def _launcher(path: Path, overrides: dict[str, str], seat: dict[str, str], desktop: str) -> Path:
+    """A script that records its own pid and birth in starting.json, then becomes Hyprland with the session's
+    environment. `seat` is how Hyprland gets (or is kept from) a DRM seat."""
+    (path / "hyprland.lua").write_text(CONFIG.format(desktop=desktop))
     launcher = path / "launch.py"
     launcher.write_text(
         f"#!{sys.executable}\nimport os, json\nfrom pathlib import Path\n"
@@ -518,31 +580,76 @@ def _start_compositor(
         "(path / 'pid').write_text(str(os.getpid()))\n"
         "for key in ('DISPLAY', 'HL_INITIAL_WORKSPACE_TOKEN'): os.environ.pop(key, None)\n"
         f"os.environ.update({overrides!r})\n"
-        "os.environ.update(LIBSEAT_BACKEND='deskpilot-no-drm', HYPRLAND_NO_SD_VARS='1', "
-        "HYPRLAND_NO_SD_NOTIFY='1', HYPRLAND_NO_CRASHREPORTER='1')\n"
+        f"os.environ.update({seat!r})\n"
+        "os.environ.update(HYPRLAND_NO_SD_VARS='1', HYPRLAND_NO_SD_NOTIFY='1', HYPRLAND_NO_CRASHREPORTER='1')\n"
         "log = os.open(path / 'hyprland.log', os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)\n"
         "os.dup2(log, 1)\nos.dup2(log, 2)\nos.close(log)\n"
         "os.execvp('Hyprland', ['Hyprland', '-c', str(path / 'hyprland.lua')])\n"
     )
     launcher.chmod(0o700)
     (path / "pid").unlink(missing_ok=True)
-    command = json.dumps(str(launcher))
-    workspace = json.dumps(f"special:agent-{agent_from_env()} silent")
-    legacy = f"exec [workspace {workspace.strip(chr(34))}] {launcher}"
-    _dispatch(parent, f"hl.dsp.exec_cmd({command}, {{ workspace = {workspace} }})", legacy)
+    return launcher
+
+
+def _launched(path: Path, ask: str, fail) -> tuple[int, str, str, str]:
+    """The pid, birth, signature and Wayland socket of the Hyprland the launcher became, once `ask` lists it."""
     deadline = time.monotonic() + 15
     while time.monotonic() < deadline:
         starting = _read(path / "starting.json")
         candidate, candidate_birth = starting.get("pid", 0), starting.get("birth")
         if candidate_birth and birth(candidate) == candidate_birth:
-            instances = json.loads(_ctl(parent, "-j", "instances"))
+            instances = _instances(*(["-i", ask] if ask else []))
             match = next((i for i in instances if i["pid"] == candidate), None)
             if match:
-                env["WAYLAND_DISPLAY"] = match["wl_socket"]
-                env["HYPRLAND_INSTANCE_SIGNATURE"] = match["instance"]
                 return candidate, candidate_birth, match["instance"], match["wl_socket"]
+        fail()
         time.sleep(0.1)
-    raise HyprctlError("nested Hyprland did not start")
+    raise HyprctlError("Hyprland did not start")
+
+
+def _start_compositor(path: Path, parent: str, overrides: dict[str, str]) -> tuple[int, str, str, str]:
+    # A seat backend libseat does not have, so the DRM backend fails at once instead of asking for the user's seat.
+    launcher = _launcher(path, overrides, {"LIBSEAT_BACKEND": "deskpilot-no-drm"}, "DESKPILOT")
+    command = json.dumps(str(launcher))
+    workspace = json.dumps(f"special:agent-{agent_from_env()} silent")
+    legacy = f"exec [workspace {workspace.strip(chr(34))}] {launcher}"
+    _dispatch(parent, f"hl.dsp.exec_cmd({command}, {{ workspace = {workspace} }})", legacy)
+    return _launched(path, parent, lambda: None)
+
+
+def vkms_card() -> str:
+    """The host's vkms device, the only display a standalone session drives: a virtual one, never a real screen."""
+    for card in sorted(Path("/sys/class/drm").glob("card*")):
+        # vkms registers its device under its own name, as a platform device or, from Linux 6.15, a faux one.
+        if "-" not in card.name and (card / "device").resolve().name == "vkms":
+            return f"/dev/dri/{card.name}"
+    raise HyprctlError(
+        "no vkms display: load it on the host with `modprobe vkms` and give the container `--device /dev/dri`"
+    )
+
+
+def _start_standalone(
+    path: Path, env: dict[str, str], overrides: dict[str, str], children: list[subprocess.Popen]
+) -> tuple[int, str, str, str]:
+    """Hyprland on its own DRM backend, on the vkms output. The container is the seat: libseat's noop backend opens
+    the display node directly, so the user needs the node's group, which Hyprland's renderer also opens by path."""
+    if os.geteuid() == 0:
+        raise HyprctlError("Hyprland refuses to run as root: run a standalone session as an unprivileged user")
+    card = vkms_card()
+    if not os.access(card, os.R_OK | os.W_OK):
+        raise HyprctlError(
+            f"{card} is not writable by this user: add the user to its group (gid {os.stat(card).st_gid})"
+        )
+    launcher = _launcher(path, overrides, {"LIBSEAT_BACKEND": "noop", "AQ_DRM_DEVICES": card}, "")
+    compositor = subprocess.Popen([str(launcher)], env=env, stdin=subprocess.DEVNULL)
+    children.append(compositor)
+
+    def fail() -> None:
+        if compositor.poll() is not None:
+            log = (path / "hyprland.log").read_text(errors="replace").strip()
+            raise HyprctlError(f"standalone Hyprland exited: {log[-600:]}")
+
+    return _launched(path, "", fail)
 
 
 def _wait_dead(pid: int, started: str, timeout: float = 5) -> bool:
@@ -557,7 +664,7 @@ def _stop_compositor(signature: str, pid: int, started: str, runtime: Path) -> N
         return
     if not signature:
         with contextlib.suppress(Exception):
-            listed = json.loads(_run(["hyprctl", "-j", "instances"], dict(os.environ)))
+            listed = _instances()
             signature = next((i["instance"] for i in listed if i["pid"] == pid), "")
     with contextlib.suppress(Exception):
         if signature and socket_alive(runtime / "hypr" / signature / ".socket.sock"):
@@ -758,7 +865,9 @@ def _session_loop(path: Path, parent: str, pid: int, started: str, signature: st
     while True:
         if birth(pid) != started or any(c.poll() is not None for c in children):
             raise HyprctlError("an isolated session service exited")
-        if any(c.get("pid") == pid and c.get("mapped", True) for c in json.loads(_ctl(parent, "-j", "clients"))):
+        if parent and any(
+            c.get("pid") == pid and c.get("mapped", True) for c in json.loads(_ctl(parent, "-j", "clients"))
+        ):
             raise HyprctlError("nested compositor mapped a parent window")
         if finished():
             lock = _try_lock(path)
@@ -795,7 +904,12 @@ def serve(path: Path, parent: str) -> None:
             path / "starting.json",
             json.dumps({"worker": os.getpid(), "worker_birth": birth(os.getpid()), "token": token}),
         )
-        compositor_pid, compositor_birth, signature, _ = _start_compositor(path, parent, env, overrides)
+        if parent:
+            started = _start_compositor(path, parent, overrides)
+        else:
+            started = _start_standalone(path, env, overrides, children)
+        compositor_pid, compositor_birth, signature, env["WAYLAND_DISPLAY"] = started
+        env["HYPRLAND_INSTANCE_SIGNATURE"] = signature
         _atomic_write(
             path / "starting.json",
             json.dumps(
@@ -809,9 +923,14 @@ def serve(path: Path, parent: str) -> None:
                 }
             ),
         )
-        _ctl(signature, "output", "create", "headless", "DESKPILOT")
-        _dispatch(signature, 'hl.dsp.focus({ monitor = "DESKPILOT" })', "focusmonitor DESKPILOT")
+        if parent:
+            # Nested, the agent's desktop is a headless output; standalone, it is the vkms output.
+            _ctl(signature, "output", "create", "headless", "DESKPILOT")
+            _dispatch(signature, 'hl.dsp.focus({ monitor = "DESKPILOT" })', "focusmonitor DESKPILOT")
         _ctl(signature, "dismissnotify")
+        # Loaded from the worker's build directory: callers see the agent's private XDG_DATA_HOME, which would build
+        # the plugin again for every agent profile.
+        Plugin(run=lambda args: run_hyprctl(args, instance=signature)).load()
         env.pop("DISPLAY", None)
         env.pop("AT_SPI_BUS_ADDRESS", None)
         _start_services(path, env, keyboard, children)

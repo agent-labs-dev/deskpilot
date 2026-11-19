@@ -338,7 +338,16 @@ class Plugin:
         return running
 
     def build(self) -> Path:
-        commit = self.running_commit()
+        """Build for the running Hyprland, or for the installed headers when no Hyprland is running, as in an image
+        build; a load still checks the running Hyprland's commit against the build's name."""
+        try:
+            self.commit()
+        except HyprctlError:
+            commit = headers_commit()
+            if commit is None:
+                raise PluginError("no Hyprland headers are installed: install Hyprland", "unavailable") from None
+        else:
+            commit = self.running_commit()
         out = build_path(commit)
         out.parent.mkdir(parents=True, exist_ok=True)
         result = subprocess.run(

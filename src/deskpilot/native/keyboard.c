@@ -1,5 +1,8 @@
 #define _GNU_SOURCE
+// The session seat's input devices: a virtual keyboard, and a virtual pointer so that a compositor with no other
+// pointer (a standalone session) still offers its clients a wl_pointer for the plugin to send input to.
 #include "virtual-keyboard.h"
+#include "virtual-pointer.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -9,11 +12,14 @@
 #include <xkbcommon/xkbcommon.h>
 static struct wl_seat *seat;
 static struct zwp_virtual_keyboard_manager_v1 *manager;
+static struct zwlr_virtual_pointer_manager_v1 *pointers;
 static void global(void *d, struct wl_registry *r, uint32_t name, const char *interface, uint32_t version) {
     if (!strcmp(interface, "wl_seat") && !seat)
         seat = wl_registry_bind(r, name, &wl_seat_interface, 1);
     if (!strcmp(interface, "zwp_virtual_keyboard_manager_v1"))
         manager = wl_registry_bind(r, name, &zwp_virtual_keyboard_manager_v1_interface, 1);
+    if (!strcmp(interface, "zwlr_virtual_pointer_manager_v1"))
+        pointers = wl_registry_bind(r, name, &zwlr_virtual_pointer_manager_v1_interface, 1);
 }
 static void removed(void *d, struct wl_registry *r, uint32_t name) {}
 static const struct wl_registry_listener listener = {global, removed};
@@ -23,8 +29,9 @@ int main(void) {
         return 1;
     struct wl_registry *registry = wl_display_get_registry(display);
     wl_registry_add_listener(registry, &listener, NULL);
-    if (wl_display_roundtrip(display) < 0 || !seat || !manager)
+    if (wl_display_roundtrip(display) < 0 || !seat || !manager || !pointers)
         return 2;
+    zwlr_virtual_pointer_manager_v1_create_virtual_pointer(pointers, seat);
     struct xkb_context *context = xkb_context_new(XKB_CONTEXT_NO_FLAGS);
     struct xkb_rule_names names = {.layout = "us"};
     struct xkb_keymap *keymap = xkb_keymap_new_from_names(context, &names, XKB_KEYMAP_COMPILE_NO_FLAGS);

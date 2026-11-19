@@ -17,6 +17,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import shlex
 import signal
 import sys
 import threading
@@ -24,6 +25,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from .desk import EXPECTED, Desk, error_code
+from .session import keyboard_binary
 
 if TYPE_CHECKING:
     from .batch import BatchRequest
@@ -302,6 +304,15 @@ def _hidden_commands(sub) -> None:
     sub.add_parser("stop", help="close this agent's launched apps and return its adopted windows")
 
 
+def _env_parser(sub) -> None:
+    sub.add_parser(
+        "env",
+        help="with --session, start this agent's private desktop if it is not running and print what another tool needs"
+        " to reach it: its Wayland display, Hyprland instance, runtime directory and buses, as shell exports (or JSON"
+        " with --json)",
+    )
+
+
 def build_parser() -> argparse.ArgumentParser:
     p = _parser()
     sub = p.add_subparsers(dest="cmd", required=True)
@@ -334,7 +345,11 @@ def build_parser() -> argparse.ArgumentParser:
     _path_commands(sub)
 
     s = sub.add_parser("plugin", help="build, load or check the deskpilot Hyprland plugin")
-    s.add_argument("action", choices=["build", "load", "status"])
+    s.add_argument(
+        "action",
+        choices=["build", "load", "status"],
+        help="build: the plugin (for the running Hyprland, else the installed headers) and the --session keyboard",
+    )
 
     focus_help = "focus the window first and leave it focused, for an app that ignores keys while unfocused"
     s = sub.add_parser("key", help="press a key or chord, e.g. Return, ctrl+a, alt+F4")
@@ -369,10 +384,11 @@ def build_parser() -> argparse.ArgumentParser:
     _wait_command(sub)
 
     _hidden_commands(sub)
+    _env_parser(sub)
 
-    sub.add_parser("cursor", help="print the cursor's global position")
+    for name, text in (("cursor", "print the cursor's global position"), ("mcp", "run the MCP server on stdio")):
+        sub.add_parser(name, help=text)
     _recipe_command(sub)
-    sub.add_parser("mcp", help="run the MCP server on stdio")
     return p
 
 
@@ -524,7 +540,7 @@ def run(args: argparse.Namespace, desk: Desk) -> object:  # noqa: PLR0915 (one b
             return win.to_dict() if win else "gone"
         case "plugin":
             if args.action == "build":
-                return {"path": str(desk.plugin.build())}
+                return {"path": str(desk.plugin.build()), "keyboard": str(keyboard_binary())}
             if args.action == "load":
                 return {"path": str(desk.plugin.load()), **desk.plugin.status()}
             return desk.plugin.status()
@@ -559,9 +575,16 @@ def main(argv: list[str] | None = None) -> int:
                 session.stop()
                 _print("ok", args.json)
                 return 0
-            os.environ.update(session.environment())
+            env = session.environment()
+            os.environ.update(env)
         except EXPECTED as error:
             return _fail(error_code(error), str(error), args.json)
+        if args.cmd == "env":
+            reach = {k: env[k] for k in session.REACH_ENV if k in env}
+            _print(reach if args.json else [f"export {k}={shlex.quote(v)}" for k, v in reach.items()], args.json)
+            return 0
+    elif args.cmd == "env":
+        return _fail("invalid", "env needs --session", args.json)
     if args.cmd == "mcp":
         from .mcp_server import serve
 
