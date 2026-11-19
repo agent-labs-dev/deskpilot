@@ -6,8 +6,8 @@
     "name": "Cillian Berragan",
     "url": "https://github.com/cjber"
   },
-  "homepage": "https://github.com/cjber/deskpilot",
-  "repository": "https://github.com/cjber/deskpilot",
+  "homepage": "https://github.com/agent-labs-dev/deskpilot",
+  "repository": "https://github.com/agent-labs-dev/deskpilot",
   "license": "MIT",
   "keywords": ["agent-skills", "hyprland", "wayland", "desktop-automation", "computer-use", "mcp"]
 }

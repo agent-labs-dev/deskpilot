@@ -7,6 +7,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+- deskpilot now lives at [agent-labs-dev/deskpilot](https://github.com/agent-labs-dev/deskpilot). Install the Claude Code plugin with `/plugin install deskpilot --marketplace agent-labs-dev/deskpilot`.
+
 ## [0.7.4] - 2026-11-16
 
 - A window that Hyprland gives a closed window's address, such as a freshly launched app, is no longer refused as changed since the closed window's shot. Shots and accessibility snapshots are matched to the window by its compositor, process and stable id as well as its address, so a new window at a reused address simply has none yet, while a window that changed since its own shot is still refused, and so are coordinates given without a shot id or scale, which are in the closed window's shot.

@@ -10,7 +10,7 @@
 Desktop control for agents on Hyprland. Inspect a window, target an accessibility element or a screenshot point,
 and click, scroll or type while you keep working.
 
-[![ci](https://img.shields.io/github/actions/workflow/status/cjber/deskpilot/ci.yml?branch=main&style=flat-square&label=ci)](https://github.com/cjber/deskpilot/actions/workflows/ci.yml)
+[![ci](https://img.shields.io/github/actions/workflow/status/agent-labs-dev/deskpilot/ci.yml?branch=main&style=flat-square&label=ci)](https://github.com/agent-labs-dev/deskpilot/actions/workflows/ci.yml)
 [![pypi](https://img.shields.io/pypi/v/deskpilot?style=flat-square&color=3ECF8E)](https://pypi.org/project/deskpilot/)
 ![python](https://img.shields.io/badge/python-3.12%20%7C%203.14-475569?style=flat-square)
 ![license](https://img.shields.io/badge/license-MIT-475569?style=flat-square)
@@ -40,7 +40,7 @@ prepare it ahead of time. The build needs the tools listed under [Requirements](
 For Claude Code, install the agent skill:
 
 ```text
-/plugin install deskpilot --marketplace cjber/deskpilot
+/plugin install deskpilot --marketplace agent-labs-dev/deskpilot
 ```
 
 For MCP clients, run `deskpilot mcp` over stdio. In Claude Code:
