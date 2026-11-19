@@ -168,7 +168,7 @@ def test_a_failed_final_shot_keeps_the_completed_results(tmp_path, monkeypatch):
 
 
 def run_cli(monkeypatch, desk, argv, stdin=None):
-    monkeypatch.setattr(cli, "Desk", lambda: desk)
+    monkeypatch.setattr(cli, "open_desk", lambda: desk)
     if stdin is not None:
         monkeypatch.setattr("sys.stdin", io.StringIO(stdin))
     return cli.main(["--json", "batch", *argv])

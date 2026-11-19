@@ -1,15 +1,16 @@
-"""deskpilot: drive Hyprland desktop windows from an agent.
+"""deskpilot: drive desktop windows from an agent, on Hyprland, Windows and macOS.
 
 Coordinates for move, click, scroll, hover and drag are pixels in the window's last `deskpilot shot`, so read the
 screenshot, pick a point, click it. Pass --scale 1 to give window pixels instead, or --element with an id from
 `deskpilot elements` to act on that element of the app's accessibility tree.
 
-Clicks, scrolls, drags, hovers, keys and text run inside the compositor through the deskpilot Hyprland plugin
+On Hyprland, clicks, scrolls, drags, hovers, keys and text run inside the compositor through the deskpilot plugin
 (`deskpilot plugin load`), so the user's pointer and keyboard focus stay where they are, and text arrives as written on
 the user's keymap; a marker the plugin draws shows where the agent acts, one per DESKPILOT_AGENT name. A window that
 is not on screen is refused unless --show brings it into view. --hidden acts on a window the agent launched or
 explicitly adopted, on its own hidden workspace, with nothing shown; hidden keys need --window. --take-pointer and
---take-focus move the user's own pointer or focus instead.
+--take-focus move the user's own pointer or focus instead. On Windows and macOS the same actions are posted to the
+target window's own process; hidden actions, adoption and private paste are Hyprland features and are refused there.
 """
 
 from __future__ import annotations
@@ -21,10 +22,13 @@ import sys
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from .desk import EXPECTED, Desk, error_code
+from .backend import hyprland_only, open_desk
+from .errors import EXPECTED, error_code
 
 if TYPE_CHECKING:
     from .batch import BatchRequest
+    from .desk import Desk
+    from .native import NativeDesk
 
 
 def _print(data, as_json: bool) -> None:
@@ -299,7 +303,19 @@ def build_parser() -> argparse.ArgumentParser:
     return p
 
 
-def run(args: argparse.Namespace, desk: Desk) -> object:
+def _plugin(action: str, desk: Desk | NativeDesk) -> dict:
+    hyprland_only("the compositor plugin")
+    from .desk import Desk
+
+    assert isinstance(desk, Desk)
+    if action == "build":
+        return {"path": str(desk.plugin.build())}
+    if action == "load":
+        return {"path": str(desk.plugin.load()), **desk.plugin.status()}
+    return desk.plugin.status()
+
+
+def run(args: argparse.Namespace, desk: Desk | NativeDesk) -> object:
     match args.cmd:
         case "windows":
             return [w.to_dict() for w in desk.windows()]
@@ -430,11 +446,7 @@ def run(args: argparse.Namespace, desk: Desk) -> object:
             win = desk.wait_for(args.window, args.timeout, args.gone, args.focused, args.title, args.size)
             return win.to_dict() if win else "gone"
         case "plugin":
-            if args.action == "build":
-                return {"path": str(desk.plugin.build())}
-            if args.action == "load":
-                return {"path": str(desk.plugin.load()), **desk.plugin.status()}
-            return desk.plugin.status()
+            return _plugin(args.action, desk)
         case "launch":
             return desk.launch(args.command, args.timeout).to_dict()
         case "adopt" | "release":
@@ -446,7 +458,7 @@ def run(args: argparse.Namespace, desk: Desk) -> object:
             desk.stop()
             return "ok"
         case "cursor":
-            x, y = desk.hypr.cursor()
+            x, y = desk.cursor()
             return {"x": x, "y": y}
     raise AssertionError(args.cmd)
 
@@ -455,6 +467,12 @@ def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     if args.session:
         from . import session
+
+        try:
+            hyprland_only("a private --session")
+        except EXPECTED as error:
+            print(f"deskpilot: {error_code(error)}: {error}", file=sys.stderr)
+            return 2
 
         try:
             if args.cmd == "mcp" and not os.environ.get("DESKPILOT_OWNER_PID"):
@@ -472,7 +490,7 @@ def main(argv: list[str] | None = None) -> int:
 
         serve()
         return 0
-    desk = Desk()
+    desk = open_desk()
     try:
         output = run(args, desk)
         _print(output, args.json)

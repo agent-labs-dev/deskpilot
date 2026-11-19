@@ -12,12 +12,13 @@ from mcp.types import CallToolResult, TextContent
 from pydantic import Field
 
 from . import batch as batching
+from .backend import open_desk, owner_from_env
 from .batch import MAX_ACTIONS, Action
-from .desk import EXPECTED, Desk, error_code, owner_from_env
+from .errors import EXPECTED, error_code
 
 mcp = MCPServer("deskpilot", version=version("deskpilot"))
 # The server is the agent's owner process: its apps close when it exits, unless DESKPILOT_OWNER_PID names another.
-desk = Desk(owner=owner_from_env() or os.getpid())
+desk = open_desk(owner=owner_from_env() or os.getpid())
 
 
 def _tool(**options):
