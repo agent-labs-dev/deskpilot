@@ -15,7 +15,8 @@ fail() {
 trap 'fail "failed at line $LINENO"' ERR
 field() { python3 -c 'import json, sys; print(json.load(sys.stdin)[sys.argv[1]])' "$1"; }
 
-eval "$(deskpilot --session env)" || fail "the session did not start"
+exports=$(deskpilot --session env) || fail "the session did not start"
+eval "$exports"
 echo "session: HYPRLAND_INSTANCE_SIGNATURE=$HYPRLAND_INSTANCE_SIGNATURE WAYLAND_DISPLAY=$WAYLAND_DISPLAY"
 hyprctl monitors | tee "$OUT/monitors.txt"
 deskpilot --session plugin status

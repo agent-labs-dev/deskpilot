@@ -135,7 +135,7 @@ JSON.
 ### With no desktop: a container
 
 `container/Dockerfile` builds an image whose `--session` desktop needs no GPU and no compositor around it: with
-`DESKPILOT_STANDALONE=1` (set in the image) Hyprland runs on its own DRM backend on the kernel's virtual display, vkms,
+`DESKPILOT_STANDALONE=1` and `DESKPILOT_AGENT=agent` (set in the image) Hyprland runs on its own DRM backend on the kernel's virtual display, vkms,
 rendered in software by Mesa. On the host, load vkms and pass its display node in:
 
 ```sh

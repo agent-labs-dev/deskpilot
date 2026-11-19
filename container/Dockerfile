@@ -18,7 +18,7 @@ RUN uv pip install --system --break-system-packages /opt/deskpilot \
     && install -d -m 700 -o agent -g agent /run/user/1000
 
 USER agent
-ENV DESKPILOT_STANDALONE=1 XDG_RUNTIME_DIR=/run/user/1000
+ENV DESKPILOT_STANDALONE=1 DESKPILOT_AGENT=agent XDG_RUNTIME_DIR=/run/user/1000
 # The plugin and the session's input client, built once against this image's Hyprland.
 RUN deskpilot plugin build
 USER root
