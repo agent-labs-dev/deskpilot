@@ -34,7 +34,7 @@ hl.config({
     animations = { enabled = false },
 })
 EOF
-HYPRLAND_NO_SD_NOTIFY=1 HYPRLAND_NO_CRASHREPORTER=1 Hyprland -c ~/.config/hypr/hyprland.lua > "$OUT/hyprland.log" 2>&1 &
+AQ_TRACE=1 HYPRLAND_NO_SD_NOTIFY=1 HYPRLAND_NO_CRASHREPORTER=1 Hyprland -c ~/.config/hypr/hyprland.lua > "$OUT/hyprland.log" 2>&1 &
 hypr=$!
 for _ in $(seq 150); do
     sig=$(ls "$XDG_RUNTIME_DIR/hypr" 2>/dev/null | head -1)
@@ -42,8 +42,11 @@ for _ in $(seq 150); do
     kill -0 $hypr 2>/dev/null || break
     sleep 0.1
 done
-if [ -z "${sig:-}" ]; then
-    echo "Hyprland did not start"; tail -60 "$OUT/hyprland.log"; exit 1
+if ! kill -0 $hypr 2>/dev/null; then
+    echo "Hyprland exited"
+    cp "$XDG_RUNTIME_DIR"/hypr/*/hyprland.log "$OUT/hyprland-full.log"
+    tail -80 "$OUT/hyprland-full.log"
+    exit 1
 fi
 export HYPRLAND_INSTANCE_SIGNATURE=$sig
 export WAYLAND_DISPLAY=$(ls "$XDG_RUNTIME_DIR" | grep -m1 '^wayland-[0-9]*$')

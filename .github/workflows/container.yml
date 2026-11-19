@@ -28,7 +28,8 @@ jobs:
       - name: Load vkms
         run: |
           uname -a
-          ls /dev/dri || true
+          ls /dev/dri /sys/class/drm || true
+          ls "/lib/modules/$(uname -r)" || true
           ls "/lib/modules/$(uname -r)/kernel/drivers/gpu/drm" || true
           { zcat /proc/config.gz 2>/dev/null || cat "/boot/config-$(uname -r)" 2>/dev/null; } | grep -E "^CONFIG_(DRM|DRM_VKMS|DRM_VGEM|UDMABUF|DMABUF_HEAPS)=" || true
           sudo modprobe vkms || { sudo apt-get update -q && sudo apt-get install -yq "linux-modules-extra-$(uname -r)" && sudo modprobe vkms; }
