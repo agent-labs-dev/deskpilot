@@ -18,7 +18,7 @@ from typing import Any
 
 from PIL import Image
 
-from .errors import NoFocus, Unavailable
+from .errors import Unavailable
 from .hypr import Window
 from .native import MODIFIERS, ElementError, Node, descendants
 
@@ -30,7 +30,7 @@ except ImportError:  # not Windows
 INSTANCE = "win32"
 
 # Messages, flags and constants from WinUser.h and dwmapi.h.
-WM_KEYDOWN, WM_KEYUP, WM_CHAR, WM_SYSKEYDOWN, WM_SYSKEYUP = 0x0100, 0x0101, 0x0102, 0x0104, 0x0105
+WM_KEYDOWN, WM_KEYUP, WM_CHAR = 0x0100, 0x0101, 0x0102
 WM_MOUSEMOVE, WM_MOUSEWHEEL = 0x0200, 0x020A
 BUTTON_MESSAGES = {
     # button: (down, up, double-click, MK_ flag)
@@ -39,7 +39,6 @@ BUTTON_MESSAGES = {
     "middle": (0x0207, 0x0208, 0x0209, 0x0010),
 }
 WHEEL_DELTA = 120
-GW_OWNER = 4
 GA_ROOT = 2
 GWL_EXSTYLE = -20
 WS_EX_TOOLWINDOW = 0x00000080
@@ -425,7 +424,7 @@ class Win32Driver:
         info = _GUITHREADINFO(cbSize=ctypes.sizeof(_GUITHREADINFO))
         if self.user32.GetGUIThreadInfo(thread, ctypes.byref(info)) and info.hwndFocus:
             return info.hwndFocus
-        raise NoFocus(
+        raise RuntimeError(  # refused: keys would go nowhere
             f"{window.cls} ({window.address}) has no control with keyboard focus to type into: click the field first"
         )
 
