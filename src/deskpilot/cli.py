@@ -17,7 +17,9 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import signal
 import sys
+import threading
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -232,6 +234,18 @@ def _parser() -> argparse.ArgumentParser:
     return p
 
 
+def _record_parser(sub) -> None:
+    s = sub.add_parser(
+        "record",
+        help="film a window with the agent cursor the plugin draws, to an mp4 or as PPM frames on stdout (-o -)",
+    )
+    s.add_argument("window")
+    s.add_argument("-o", "--out", default="-", help="an .mp4 path, or - for PPM frames at a constant rate on stdout")
+    s.add_argument("--fps", type=int, default=25)
+    s.add_argument("--seconds", type=float, help="stop after this long (Ctrl-C or SIGTERM also stops)")
+    s.add_argument("--hidden", action="store_true", help="film a window this agent launched or adopted, out of view")
+
+
 def build_parser() -> argparse.ArgumentParser:
     p = _parser()
     sub = p.add_subparsers(dest="cmd", required=True)
@@ -246,6 +260,8 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("-o", "--out", type=Path)
     s.add_argument("--max-width", type=int, default=1400, help="scale down wider windows to this width")
     _view_args(s)
+
+    _record_parser(sub)
 
     _point_parser(sub, "move", "show the agent cursor at a point")
     s = _point_parser(sub, "click", "click a point")
@@ -315,6 +331,22 @@ def build_parser() -> argparse.ArgumentParser:
     sub.add_parser("cursor", help="print the cursor's global position")
     sub.add_parser("mcp", help="run the MCP server on stdio")
     return p
+
+
+def _record(desk: Desk, args: argparse.Namespace) -> object:
+    stop = threading.Event()
+    for number in (signal.SIGINT, signal.SIGTERM):
+        signal.signal(number, lambda *_: stop.set())
+    to_stdout = args.out == "-"
+    result = desk.record(
+        args.window, sys.stdout.buffer if to_stdout else Path(args.out), stop, args.fps, args.seconds, args.hidden
+    )
+    result.raise_if_empty()
+    if to_stdout:
+        # stdout carries the frames, so the summary goes to stderr.
+        print(json.dumps(result.to_dict()), file=sys.stderr)
+        return None
+    return result.to_dict() | {"path": args.out}
 
 
 def run(args: argparse.Namespace, desk: Desk) -> object:
@@ -492,8 +524,9 @@ def main(argv: list[str] | None = None) -> int:
         return 0
     desk = Desk()
     try:
-        output = run(args, desk)
-        _print(output, args.json)
+        output = _record(desk, args) if args.cmd == "record" else run(args, desk)
+        if output is not None:
+            _print(output, args.json)
         if args.cmd == "batch" and isinstance(output, dict) and not output["ok"]:
             failed = output["failed"]
             return _fail(failed["code"], f"{failed['message']} ({failed['action']})", args.json)

@@ -43,6 +43,10 @@ If `deskpilot` is not on `PATH`, ask the user before installing it with
    refused. `deskpilot drag WINDOW X1 Y1 X2 Y2 --shot ID` presses, moves and releases (sliders, selections, drag and
    drop within the window). `deskpilot hover WINDOW X Y --shot ID` rests the pointer there and prints a shot taken
    meanwhile, for tooltips; `--click X2 Y2` clicks next, for a menu that opens on hover.
+   To film a run for a person, `deskpilot record WINDOW -o clip.mp4` (MCP `record_start` and `record_stop`; `--hidden`
+   for a window you launched): the clip shows the agent cursor landing and pressing, which `shot` never does.
+   MCP `cursor_press` (down, then up) is a visual-only press of the cursor where it is, for an app you drive some
+   other way; it sends no input.
    For a GTK or Qt app, `deskpilot elements WINDOW` lists its accessibility tree with ids, and
    `--element ID` replaces X Y on `click`, `move`, `scroll` and `hover`. Prefer it where the app has a tree: the
    app reports where the element is. An app without one says so; use a shot instead. An item of an open GTK 3 menu

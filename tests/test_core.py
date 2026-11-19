@@ -282,6 +282,9 @@ class FakePlugin:
         self.owned_addresses: set[str] | None = None
         self.claim_error: Exception | None = None
 
+    def load(self):
+        self.calls.append(("load",))
+
     def register(self, owner=None):
         self.calls.append(("register", owner))
         return {"ok": True, "workspace": "special:agent-tester", "token": "deskpilot-agent-tester"}
