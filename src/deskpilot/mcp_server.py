@@ -159,9 +159,9 @@ def move(
 
 @_tool()
 def cursor_press(down: bool) -> dict:
-    """Show a press: squeeze the agent cursor where it is and ring it (down), or let go (not down). VISUAL ONLY, no input
-    is sent and the window, the user's pointer and focus are untouched. For an app you drive some other way (a browser
-    over CDP): call it exactly when that press and release happen, so a recording shows them."""
+    """Show a press: squeeze the agent cursor where it is and ring it (down), or let go (not down). VISUAL ONLY: no
+    input is sent and the window, the user's pointer and focus are untouched. For an app you drive some other way (a
+    browser over CDP): call it exactly when that press and release happen, so a recording shows them."""
     desk.press_cursor(down)
     return {"down": down}
 
