@@ -61,7 +61,7 @@ def private_record(tmp_path, monkeypatch):
         "signature": "nested",
         "env": env,
     }
-    folder = tmp_path / "deskpilot" / "sessions" / "tester-" + "0" * 12
+    folder = tmp_path / "deskpilot" / "sessions" / "tester-000000000000"
     folder.mkdir(parents=True)
     target = folder / "ready.json"
     target.write_text(json.dumps(record))
