@@ -3873,6 +3873,10 @@ namespace {
         };
 
         std::map<std::string, SAgent> g_agents;
+        // How many times each agent name has been stopped. An adoption queued behind other actions carries the count it
+        // was asked under: one that runs after a stop, possibly once the stop's grace has ended and forgotten the agent,
+        // would otherwise bring the agent back and move the user's window for an agent that is gone.
+        std::map<std::string, uint64_t> g_stops;
         SP<CEventLoopTimer>           g_reaper;
         CHyprSignalListener           g_reloaded;
 
@@ -4321,6 +4325,7 @@ namespace {
             const auto IT = g_agents.find(NAME);
             if (args.size() == 4 && args[3] == "stop") {
                 // An agent the plugin no longer knows, as after it was reloaded, is stopped all the same.
+                ++g_stops[NAME];
                 g_agents[NAME];
                 stop(NAME);
                 return IPC::Socket1::SResponse(okReply());
@@ -4340,8 +4345,11 @@ namespace {
             // turn in the action queue. Refusing them while any action ran left an agent refused `busy` for as long as
             // another agent kept the queue full.
             if (args.size() == 6 && (args[3] == "adopt" || args[3] == "release"))
-                return enqueue([NAME, args](uint64_t ticket) -> std::optional<SRefusal> {
-                    complete(ticket, args[3] == "adopt" ? adopt(NAME, args[4], args[5]) : release(NAME, args[4], args[5]));
+                return enqueue([NAME, args, STOPS = g_stops[NAME]](uint64_t ticket) -> std::optional<SRefusal> {
+                    if (args[3] == "adopt" && g_stops[NAME] != STOPS)
+                        complete(ticket, errorReply(std::format("agent {} was stopped while this adoption waited its turn", NAME)));
+                    else
+                        complete(ticket, args[3] == "adopt" ? adopt(NAME, args[4], args[5]) : release(NAME, args[4], args[5]));
                     return std::nullopt;
                 });
             if (args.size() > 4 && args[3] == "windows")

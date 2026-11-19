@@ -8,6 +8,7 @@ import os
 import shutil
 import subprocess
 import time
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 from deskpilot import session
@@ -128,6 +129,24 @@ def main():  # noqa: PLR0915 - sequential live acceptance and owned-resource tea
         desk.stop()
         verify("stop_returns_workspace", desk.window(target.address).workspace == target.workspace)
         verify("stop_keeps_sibling", desk.window(sibling.address).pid == target.pid)
+        # An adoption queued behind another agent's ten second held key, whose agent is stopped meanwhile, must not run
+        # once the stop's five second grace has forgotten that agent: it would bring the agent back and move the window.
+        holder = Desk(plugin=Plugin(run=desk.plugin.run, agent="adoption-holder"))
+        holder._isolated = lambda: False
+        held = holder.launch(["/usr/bin/python3", str(ROOT / "scripts/input_client.py")])
+        queued = Desk(plugin=Plugin(run=desk.plugin.run, agent="adoption-queued"))
+        queued._isolated = lambda: False
+        with ThreadPoolExecutor(2) as pool:
+            holding = pool.submit(holder.key, "a", held.address, hold=10, hidden=True)
+            time.sleep(1)
+            adopting = pool.submit(queued.adopt, target.address)
+            time.sleep(1)
+            queued.plugin.stop()
+            holding.result()
+            refused("stopped_adoption_refused", adopting.result, "refused")
+        verify("stopped_adoption_left_window", desk.window(target.address).workspace == target.workspace)
+        verify("stopped_adoption_unowned", not queued.plugin.owned_windows([target.address]))
+        holder.stop()
         # Use a separate agent to avoid the stopped agent's five-second process-cleanup grace period.
         keeper = Desk(plugin=Plugin(run=desk.plugin.run, agent="adoption-unload"))
         keeper._isolated = lambda: False
