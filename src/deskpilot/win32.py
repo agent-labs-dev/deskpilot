@@ -2,8 +2,8 @@
 
 Coordinates are physical pixels: the process is per-monitor DPI aware (v2) before it reads any window. Pointer events
 are posted to the deepest child window under the point in client coordinates; keys are posted to the target thread's
-focused control. Posted modifier state is not seen by an app that reads the real keyboard (GetKeyState), so a chord
-with a modifier needs take_focus, which sends it through SendInput to the foreground window.
+focused control. A posted message carries its buttons and modifiers in the target thread's key state too, for apps
+that read them with GetKeyState rather than from the message.
 """
 
 from __future__ import annotations
@@ -30,7 +30,11 @@ except ImportError:  # not Windows
 INSTANCE = "win32"
 
 # Messages, flags and constants from WinUser.h and dwmapi.h.
-WM_KEYDOWN, WM_KEYUP, WM_CHAR = 0x0100, 0x0101, 0x0102
+WM_NULL, WM_KEYDOWN, WM_KEYUP, WM_CHAR, WM_SYSKEYDOWN, WM_SYSKEYUP = 0x0000, 0x0100, 0x0101, 0x0102, 0x0104, 0x0105
+SMTO_ABORTIFHUNG = 0x0002
+BUTTON_VK = {"left": 0x01, "right": 0x02, "middle": 0x04}
+# A modifier's generic key and its left-hand key, which apps read alike.
+MODIFIER_SIDES = {0x11: 0xA2, 0x10: 0xA0, 0x12: 0xA4, 0x5B: 0x5B}
 WM_MOUSEMOVE, WM_MOUSEWHEEL = 0x0200, 0x020A
 BUTTON_MESSAGES = {
     # button: (down, up, double-click, MK_ flag)
@@ -94,6 +98,16 @@ EXTENDED = frozenset({0x2E, 0x2D, 0x24, 0x23, 0x21, 0x22, 0x26, 0x28, 0x25, 0x27
 def lparam_point(x: int, y: int) -> int:
     """MAKELPARAM of two signed 16-bit coordinates."""
     return ((y & 0xFFFF) << 16) | (x & 0xFFFF)
+
+
+def key_state(state: bytes, down: set[int]) -> bytes:
+    """A 256-byte keyboard state (GetKeyboardState) with exactly the buttons and keys in `down` pressed."""
+    held = set(down) | {MODIFIER_SIDES[vk] for vk in down if vk in MODIFIER_SIDES}
+    tracked = set(BUTTON_VK.values()) | set(MODIFIER_SIDES) | set(MODIFIER_SIDES.values())
+    out = bytearray(state)
+    for vk in tracked | held:
+        out[vk] = (out[vk] | 0x80) if vk in held else (out[vk] & 0x7F)
+    return bytes(out)
 
 
 def key_lparam(scan: int, down: bool, extended: bool, alt: bool = False) -> int:
@@ -385,7 +399,45 @@ class Win32Driver:
                 return hwnd, point.x, point.y
             hwnd = wintypes.HWND(child)
 
-    def _post_message(self, window: Window, target: Any, message: int, wparam: int, lparam: int) -> None:
+    def _post_message(
+        self, window: Window, target: Any, message: int, wparam: int, lparam: int, down: frozenset[int] = frozenset()
+    ) -> None:
+        """Post a message with the buttons and keys in `down` held in the target thread's key state until the app has
+        handled it. Apps such as Tk read buttons and modifiers with GetKeyState, not from the message, so the state
+        must agree with it. deskpilot attaches to the thread's input queue, sets the state, posts, waits and puts the
+        state back, as AutoHotkey's ControlSend does. The foreground thread's state is the user's own keyboard and is
+        never changed: a modifier for it is refused, and a button message is posted as it is."""
+        thread = self.user32.GetWindowThreadProcessId(target, None)
+        if not down or thread == self.user32.GetWindowThreadProcessId(self.user32.GetForegroundWindow(), None):
+            if down & set(MODIFIER_SIDES):
+                raise Unavailable(
+                    f"{window.cls} has the user's keyboard, so a posted chord would arrive without its modifiers: pass "
+                    "take_focus to send it through the system"
+                )
+            self._post(window, target, message, wparam, lparam)
+            return
+        me = self.kernel32.GetCurrentThreadId()
+        if not self.user32.AttachThreadInput(me, thread, True):
+            raise RuntimeError(  # refused
+                f"Windows would not share {window.cls}'s key state, so it would read this input without its buttons "
+                "or modifiers"
+            )
+        try:
+            saved = (ctypes.c_ubyte * 256)()
+            self.user32.GetKeyboardState(saved)
+            self.user32.SetKeyboardState((ctypes.c_ubyte * 256).from_buffer_copy(key_state(bytes(saved), set(down))))
+            try:
+                self._post(window, target, message, wparam, lparam)
+                # A sent message is handled the next time the thread reads its queue. The first returns once the
+                # app takes the posted message from its queue, the second once it has handled it and reads again.
+                for _ in range(2):
+                    self.user32.SendMessageTimeoutW(target, WM_NULL, 0, 0, SMTO_ABORTIFHUNG, 2000, None)
+            finally:
+                self.user32.SetKeyboardState(saved)
+        finally:
+            self.user32.AttachThreadInput(me, thread, False)
+
+    def _post(self, window: Window, target: Any, message: int, wparam: int, lparam: int) -> None:
         if not self.user32.PostMessageW(target, message, wparam, lparam):
             raise RuntimeError(  # refused
                 f"Windows would not deliver input to {window.cls} ({window.address}); an app running as administrator "
@@ -419,20 +471,21 @@ class Win32Driver:
         else:
             target, cx, cy = self._deepest(window, x, y)
         flags = mk_flags(held)
+        buttons = frozenset(BUTTON_VK[b] for b in held | ({button} if event == "down" else set()))
         if event == "move":
-            self._post_message(window, target, WM_MOUSEMOVE, flags, lparam_point(cx, cy))
+            self._post_message(window, target, WM_MOUSEMOVE, flags, lparam_point(cx, cy), buttons)
         elif event == "wheel":
-            self._post_message(window, target, WM_MOUSEWHEEL, wheel_wparam(dy, flags), lparam_point(x, y))
+            self._post_message(window, target, WM_MOUSEWHEEL, wheel_wparam(dy, flags), lparam_point(x, y), buttons)
         else:
             down, up, double, flag = BUTTON_MESSAGES[button]
             if event == "down":
                 message = double if clicks % 2 == 0 else down
-                self._post_message(window, target, message, flags | flag, lparam_point(cx, cy))
+                self._post_message(window, target, message, flags | flag, lparam_point(cx, cy), buttons)
                 self._pressed[window.address] = target
             else:
                 if not held:
                     self._pressed.pop(window.address, None)
-                self._post_message(window, target, up, flags, lparam_point(cx, cy))
+                self._post_message(window, target, up, flags, lparam_point(cx, cy), buttons)
 
     def _send(self, *inputs: _INPUT) -> None:
         array = (_INPUT * len(inputs))(*inputs)
@@ -482,15 +535,14 @@ class Win32Driver:
             flags = 0 if down else KEYEVENTF_KEYUP
             self._send(_INPUT(INPUT_KEYBOARD, _INPUTUNION(ki=_KEYBDINPUT(vk, 0, flags, 0, 0))))
             return
-        if held & MODIFIERS or key in MODIFIERS:
-            raise Unavailable(
-                "Windows apps read modifiers from the real keyboard, so a posted chord would arrive without them: "
-                "pass take_focus to send it through the system"
-            )
+        mods = {VK[m] for m in held & MODIFIERS}
+        pressed = frozenset(mods | ({vk} if down else set()))
+        # Windows reports a key pressed with Alt and without Ctrl as a system key, as menus expect.
+        alt = VK["alt"] in pressed | {vk} and VK["ctrl"] not in mods
         scan = self.user32.MapVirtualKeyW(vk, MAPVK_VK_TO_VSC)
-        message = WM_KEYDOWN if down else WM_KEYUP
+        message = (WM_SYSKEYDOWN if down else WM_SYSKEYUP) if alt else (WM_KEYDOWN if down else WM_KEYUP)
         target = self._focused_control(window)
-        self._post_message(window, target, message, vk, key_lparam(scan, down, vk in EXTENDED))
+        self._post_message(window, target, message, vk, key_lparam(scan, down, vk in EXTENDED, alt), pressed)
 
     def text(self, window: Window, char: str, *, seat: bool = False) -> None:
         units = char.encode("utf-16-le")

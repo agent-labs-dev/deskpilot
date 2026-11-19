@@ -241,3 +241,10 @@ def test_seat_keys_stop_when_the_target_leaves_the_front():
         d.type("hi", "notes", take_focus=True)
     assert error_code(error.value) == "refused"
     assert not [e for e in driver.events if e[0] == "text"]
+
+
+def test_a_posted_messages_key_state_holds_exactly_its_buttons_and_modifiers():
+    state = win32.key_state(bytes([0x80] * 256), {0x01, 0x11})
+    assert all(state[vk] & 0x80 for vk in (0x01, 0x11, 0xA2)), "the button, Ctrl and left Ctrl are down"
+    assert not any(state[vk] & 0x80 for vk in (0x02, 0x10, 0xA0, 0x12)), "other buttons and modifiers are up"
+    assert state[0x41] == 0x80, "keys it does not track keep their state"

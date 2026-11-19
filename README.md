@@ -47,7 +47,7 @@ A local demo app on Hyprland, operated by deskpilot with its agent cursor and cl
 | Accessibility tree | AT-SPI | UI Automation | AX |
 | Click, scroll, drag, hover | in the compositor, to the app's own pointer | window messages posted to the window | events posted to the app's process |
 | Element click | at the element's centre | UI Automation Invoke, else its centre | AX Press, else its centre |
-| Keys and text | on your keymap, in the compositor | posted to the focused control; chords with a modifier need `--take-focus` | posted to the app's process |
+| Keys and text | on your keymap, in the compositor | posted to the focused control, with its buttons and modifiers in the app's key state | posted to the app's process |
 | Hidden agent windows, adoption, private paste, `--session` | yes | no (`unavailable`) | no (`unavailable`) |
 
 On Hyprland every action is exact. On Windows and macOS, input posted to an app that is not in front reaches most

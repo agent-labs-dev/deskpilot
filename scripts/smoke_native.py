@@ -65,6 +65,19 @@ def texts(node: dict) -> list[str]:
     return [node.get("text") or "", node.get("name") or ""] + [t for c in node.get("children", []) for t in texts(c)]
 
 
+def print_macos_windows() -> None:
+    """Every on-screen window Quartz lists, front to back, to explain a covered point on a runner."""
+    import Quartz  # ty: ignore[import-not-found]  # pyobjc, installed on macOS only
+
+    options = Quartz.kCGWindowListOptionOnScreenOnly
+    for entry in Quartz.CGWindowListCopyWindowInfo(options, Quartz.kCGNullWindowID) or []:
+        bounds = dict(entry.get("kCGWindowBounds") or {})
+        print(
+            hex(int(entry["kCGWindowNumber"])), entry.get("kCGWindowOwnerName"), repr(entry.get("kCGWindowName")),
+            "layer", entry.get("kCGWindowLayer"), "alpha", entry.get("kCGWindowAlpha"), bounds, flush=True,
+        )  # fmt: skip
+
+
 def app_smoke() -> None:
     state = work / "state.json"
     win = deskpilot("launch", sys.executable, str(APP), str(state))
@@ -75,6 +88,8 @@ def app_smoke() -> None:
     at = {name: (str(x + w // 2 - left), str(y + h // 2 - top)) for name, (x, y, w, h) in current["widgets"].items()}
     act = {name: (address, *point, "--scale", "1") for name, point in at.items()}
 
+    if sys.platform == "darwin":
+        print_macos_windows()
     before = deskpilot("shot", address)
     deskpilot("click", *act["pad"])
     until(state, lambda s: [c["kind"] for c in s["clicks"]] == ["left"], "one left click")
