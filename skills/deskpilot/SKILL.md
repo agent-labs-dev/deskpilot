@@ -35,7 +35,7 @@ If `deskpilot` is not on `PATH`, ask the user before installing it with
    windows to their original workspace without closing their shared process. A user-moved or regrouped window stays where
    the user put it. Adoption is unavailable inside `--session`.
 3. Run `deskpilot shot WINDOW`, read the image at the `path` it prints, and choose a point in that image. Note its
-   `shot` id.
+   `shot` id. `-o FILE` (MCP `out`) writes the image there instead of deskpilot's cache, so the caller can remove it.
 4. Act with that point as given, passing the id: `deskpilot click WINDOW X Y --shot ID` (`--button right`,
    `--double`), `deskpilot scroll WINDOW X Y DY --shot ID` (positive is up), or `deskpilot move WINDOW X Y --shot ID`
    to show the agent cursor there. Points are pixels in that shot, so never rescale them yourself; `--scale 1` means
@@ -138,12 +138,14 @@ result's structured `code`. An MCP tool refuses an argument it does not take.
 - `owns_clipboard`: the paste's target app holds the user's clipboard and would paste that instead. Use `type` if the
   text has no newlines or the box takes Return safely (type sends each newline as Return), or ask the user to copy
   something in another app. Never set the clipboard to get around it.
-- `stale`: the element id is from a replaced snapshot, the element's role or name changed, or the popup it is on
-  closed. Run `elements`
+- `stale`: the element id is from a replaced snapshot, the element's role or name changed, or the element or the popup
+  it is on closed, as a dialog's button does once a click on it closes the dialog. Run `elements`
   again and pick the id anew; pass ids as `SNAPSHOT:e5` so an old one cannot match a renumbered tree. To look
   again without invalidating the ids you hold, use `elements --peek`.
 - `offscreen`: the element is not showing, as in a collapsed menu or a scrolled-away row.
-- `no_tree`: the app exposes no accessibility tree. Use a shot and points instead.
+- `no_tree`: the app exposes no accessibility tree. A Chromium or Electron app needs `--force-renderer-accessibility`
+  when it starts, and joins the accessibility bus only if accessibility is already on then or `ACCESSIBILITY_ENABLED=1`
+  is in its environment, which `launch` sets. Otherwise use a shot and points instead.
 
 For a popup-grab regression in this checkout, run `scripts/popup_calibration.py --output /path/to/results.json`
 with an explicit parent `HYPRLAND_INSTANCE_SIGNATURE`. It uses and cleans up its own private desktop. The optional

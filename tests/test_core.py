@@ -1026,6 +1026,28 @@ def test_mcp_tools_report_why_an_action_was_refused(tmp_path, monkeypatch):
     assert refusal("type_text", {"text": "x", "hidden": True})["code"] == "invalid"
 
 
+def test_mcp_shot_writes_the_png_where_the_caller_names_it(tmp_path, monkeypatch):
+    """A caller that names the file before the call can remove it however the call ends, cancellation included."""
+    import asyncio
+
+    from mcp.types import CallToolResult, TextContent
+
+    from deskpilot import mcp_server
+
+    desk, _, _, _ = make_desk(tmp_path, monkeypatch)
+    monkeypatch.setattr(mcp_server, "desk", desk)
+    fake_grim(monkeypatch, (100, 50))
+    out = tmp_path / "caller" / "frame.png"
+    out.parent.mkdir()
+    result = asyncio.run(mcp_server.mcp.call_tool("shot", {"window": "battle", "out": str(out)}))
+    assert isinstance(result, CallToolResult) and not result.is_error
+    text = result.content[1]
+    assert isinstance(text, TextContent)
+    reply = json.loads(text.text)
+    assert reply["path"] == str(out) and screen.load(reply["shot"]).path == str(out)
+    assert Image.open(out).size == (100, 50)
+
+
 def test_clipboard_reads_plain_text_and_not_another_text_type(monkeypatch):
     offered, asked = ["text/x-moz-url", "text/html"], []
 
@@ -1463,6 +1485,16 @@ def test_a_launched_app_draws_its_own_dialogs_on_the_user_s_bus(tmp_path, monkey
     (gate,) = GATE.made
     assert gate.env["GDK_DEBUG"] == "events,no-portals" and gate.env["GTK_USE_PORTAL"] == "0"
     assert gate.env["DBUS_SESSION_BUS_ADDRESS"] == "unix:path=/run/user/1000/bus"
+
+
+def test_a_launched_app_is_told_accessibility_is_on(tmp_path, monkeypatch):
+    # Chromium and Electron stay off the accessibility bus without it, even with --force-renderer-accessibility.
+    desk, fake, _ = gated_launch(tmp_path, monkeypatch)
+    monkeypatch.delenv("ACCESSIBILITY_ENABLED", raising=False)
+    GATE.on_start = lambda: fake.clients.append(AGENT_CLIENT)
+    desk.launch(["google-chrome-stable", "--force-renderer-accessibility"])
+    (gate,) = GATE.made
+    assert gate.env["ACCESSIBILITY_ENABLED"] == "1"
 
 
 def test_client_env_names_the_selected_instance_s_x_display_or_none(tmp_path, monkeypatch):

@@ -37,14 +37,21 @@ NULL_PATH = "/org/a11y/atspi/null"
 MAX_ANCESTORS = 200
 CALL_TIMEOUT = 2.0
 # D-Bus errors meaning the element's app or object no longer exists, so an id that named it is stale. Any other
-# failure, such as a timeout, is the bus being unavailable.
+# failure, such as a timeout, is the bus being unavailable. GDBus, which GTK serves its tree over, answers a call on
+# the path of an accessible it has unregistered with UnknownMethod ("No such interface org.a11y.atspi.Accessible"),
+# not UnknownObject: a dialog's button read just after its click closed the dialog failed so. Every method called here
+# is one the object listed in GetInterfaces or that all accessibles have, so UnknownMethod means the object went.
 GONE_ERRORS = frozenset(
     {
         "org.freedesktop.DBus.Error.ServiceUnknown",
         "org.freedesktop.DBus.Error.NameHasNoOwner",
         "org.freedesktop.DBus.Error.UnknownObject",
+        "org.freedesktop.DBus.Error.UnknownInterface",
+        "org.freedesktop.DBus.Error.UnknownMethod",
     }
 )
+# The app's whole bus name is gone, not one of its objects: its tree cannot be read on with some elements left out.
+APP_GONE_ERRORS = frozenset({"org.freedesktop.DBus.Error.ServiceUnknown", "org.freedesktop.DBus.Error.NameHasNoOwner"})
 TEXT_LIMIT = 4000
 
 _STATE_NAMES = (
@@ -98,8 +105,9 @@ _STATE_NAMES = (
 class A11yError(RuntimeError):
     """An accessibility operation failed with an actionable message. `code` is its kind: no_tree (the app exposes
     none), ambiguous (several toplevels could be the window, or several popups the element's), stale (the element or
-    its popup is gone, changed, or from an older snapshot), offscreen (it is not showing), refused (it has no
-    position) or unavailable (the accessibility bus failed)."""
+    its popup is gone, changed, or from an older snapshot), gone (the window's toplevel closed while its tree was
+    read), offscreen (it is not showing), refused (it has no position) or unavailable (the accessibility bus
+    failed)."""
 
     def __init__(self, message: str, code: str = "unavailable"):
         super().__init__(message)
@@ -523,23 +531,47 @@ def _app_for_pid(bus: _Bus, pid: int) -> tuple[str, str]:
         except (A11yError, TypeError, ValueError):
             continue
     raise A11yError(
-        f"Application PID {pid} exposes no accessibility tree. Chromium, Electron and Firefox expose one only "
-        "when started with accessibility on, for example --force-renderer-accessibility, or when the a11y bus "
-        "property org.a11y.Status.IsEnabled is true before they start. Wine and XWayland games expose none.",
+        f"Application PID {pid} exposes no accessibility tree. Chromium and Electron join the accessibility bus only "
+        "when ACCESSIBILITY_ENABLED=1 is in their environment (launch sets it) or the a11y bus property "
+        "org.a11y.Status.IsEnabled is true before they start, and expose their pages only when also started with "
+        "--force-renderer-accessibility. Firefox too needs accessibility on when it starts. Wine and XWayland games "
+        "expose none.",
         "no_tree",
     )
+
+
+def _object_gone(exc: A11yError) -> bool:
+    """Whether the app removed one accessible, rather than the app's bus name or anything else failing."""
+    cause = exc.__cause__
+    return exc.code == "stale" and not (isinstance(cause, DBusErrorResponse) and cause.name in APP_GONE_ERRORS)
 
 
 def _choose_toplevel(bus: _Bus, app_bus: str, app_path: str, window: Window) -> tuple[str, str]:
     candidates = []
     names = []
+    skipped = False
     for ref in _children(bus, app_bus, app_path):
-        role = _role(bus, *ref)
-        name = _name(bus, *ref)
+        try:
+            role = _role(bus, *ref)
+            name = _name(bus, *ref)
+        except A11yError as exc:
+            if not _object_gone(exc):
+                raise
+            # A toplevel of the app, such as a dialog that just closed, went while the list was read.
+            skipped = True
+            continue
         names.append(name)
         if role.casefold() in {"frame", "window", "dialog"}:
             candidates.append((ref, role, name))
 
+    # A toplevel that went while the list was read may have been this window, and its title is unknown, so even one
+    # left with the window's title may be a sibling sharing it: the match cannot be proven.
+    if skipped:
+        raise A11yError(
+            f"A toplevel of the app closed while {window.title!r} was looked for, so which one is this window "
+            "cannot be told.",
+            "gone",
+        )
     if len(candidates) == 1:
         return candidates[0][0]
     exact = [candidate for candidate in candidates if candidate[2] == window.title]
@@ -611,6 +643,28 @@ class _Placer:
         return (round(popup.sx + x), round(popup.sy + y), width, height), keys
 
 
+def _leave_out(exc: A11yError, records: dict[str, dict[str, str]], recorded: int) -> None:
+    """Drop the records a walk of an element added after the first `recorded`, when the app removed that element while
+    the tree was read, as a dialog's button goes once a click on it closes the dialog: it is no longer in the tree.
+    Any other failure, the app's bus name going among them, is raised."""
+    if not _object_gone(exc):
+        raise exc
+    for gone in list(records)[recorded:]:
+        del records[gone]
+
+
+@contextmanager
+def _closed_is_gone():
+    """A snapshot reads only the app's root, the window's toplevel and what the walk keeps, so any of those found
+    closed, from choosing the toplevel to the last element, is the window or its app gone, not a stale element id."""
+    try:
+        yield
+    except A11yError as exc:
+        if exc.code != "stale":
+            raise
+        raise A11yError(f"The window's accessible closed while its tree was read: {exc}", "gone") from exc
+
+
 def snapshot(
     window: Window,
     max_depth: int = 30,
@@ -623,7 +677,7 @@ def snapshot(
     snapshot, so ids taken from that snapshot stay good; its own ids name nothing and it has no snapshot id. Bounds are
     in window pixels: a GTK 3 popup element's are placed through its popup from `popups`, asked once and only if an
     element is showing, and are zero when its surface cannot be told exactly."""
-    with _bus_context(bus) as connection:
+    with _bus_context(bus) as connection, _closed_is_gone():
         app_bus, app_path = _app_for_pid(connection, window.pid)
         root_bus, root_path = _choose_toplevel(connection, app_bus, app_path, window)
         gtk3 = _gtk3(connection, app_bus, app_path)
@@ -665,7 +719,11 @@ def snapshot(
                         if node_count >= max_nodes:
                             truncated = True
                             break
-                        children.append(walk(child_bus, child_path, depth + 1, keys))
+                        recorded = len(records)
+                        try:
+                            children.append(walk(child_bus, child_path, depth + 1, keys))
+                        except A11yError as exc:
+                            _leave_out(exc, records, recorded)
             return Element(element_id, role, name, states, text, *bounds, tuple(children))
 
         root = walk(root_bus, root_path, 0)

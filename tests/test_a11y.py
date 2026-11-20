@@ -135,6 +135,7 @@ def test_snapshot_reports_an_app_without_accessibility(tmp_path, monkeypatch):
         a11y.snapshot(window(), bus=fake)
     assert error.value.code == "no_tree"
     assert "force-renderer-accessibility" in str(error.value)
+    assert "ACCESSIBILITY_ENABLED=1" in str(error.value)
     assert "Wine and XWayland games" in str(error.value)
 
 
@@ -383,3 +384,113 @@ def test_an_element_with_a_negative_size_has_no_bounds(tmp_path, monkeypatch):
     with pytest.raises(a11y.A11yError) as error:
         a11y.locate(window(), "e2", bus=fake)
     assert error.value.code == "offscreen"
+
+
+def _dbus_error(name):
+    return DBusErrorResponse(SimpleNamespace(header=SimpleNamespace(fields={HeaderFields.error_name: name}), body=()))
+
+
+def test_an_element_gdbus_no_longer_serves_is_stale(tmp_path, monkeypatch):
+    # GDBus answers a call on an unregistered accessible's path with UnknownMethod, "No such interface
+    # org.a11y.atspi.Accessible", as GNOME Text Editor's Save button did once its click closed the dialog (#128).
+    monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path))
+    fake = FakeBus()
+    a11y.snapshot(window(), bus=fake)
+    fake.failure = _dbus_error("org.freedesktop.DBus.Error.UnknownMethod")
+    with pytest.raises(a11y.A11yError, match="is gone") as error:
+        a11y.locate(window(), "e2", bus=fake)
+    assert error.value.code == "stale"
+
+
+def test_an_element_that_vanishes_while_the_tree_is_read_is_left_out(tmp_path, monkeypatch):
+    monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path))
+    fake = FakeBus()
+    fake.failure = _dbus_error("org.freedesktop.DBus.Error.UnknownMethod")
+    tree = a11y.snapshot(window(), bus=fake)
+    assert tree.children == ()
+    records = json.loads((tmp_path / "deskpilot" / "elements" / "0xabc.json").read_text())["elements"]
+    assert list(records) == ["e1"]
+
+
+def test_a_toplevel_that_vanishes_while_the_tree_is_read_is_gone(tmp_path, monkeypatch):
+    monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path))
+
+    class Closing(FakeBus):
+        def call(self, destination, object_path, interface, method, signature, body):
+            if object_path == "/frame" and method == "GetState":
+                raise _dbus_error("org.freedesktop.DBus.Error.UnknownMethod")
+            return super().call(destination, object_path, interface, method, signature, body)
+
+    with pytest.raises(a11y.A11yError) as error:
+        a11y.snapshot(window(), bus=Closing())
+    assert error.value.code == "gone"
+
+
+def test_an_app_that_leaves_the_bus_while_its_tree_is_read_is_gone(tmp_path, monkeypatch):
+    # A child read failing because the app's bus name went is the whole tree gone, not one element left out.
+    monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path))
+    fake = FakeBus()
+    fake.failure = _dbus_error("org.freedesktop.DBus.Error.NameHasNoOwner")
+    with pytest.raises(a11y.A11yError) as error:
+        a11y.snapshot(window(), bus=fake)
+    assert error.value.code == "gone"
+
+
+def test_a_toplevel_that_closes_while_toplevels_are_read_leaves_no_match_proven(tmp_path, monkeypatch):
+    # Two windows of one process share a title and the requested one goes after GetChildren: the one left has the
+    # title, but may be the sibling, so its tree must never be saved under the requested window.
+    monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path))
+
+    class Closing(FakeBus):
+        def __init__(self, title):
+            super().__init__(duplicate_title=True)
+            self.names["/dialog"] = title
+
+        def call(self, destination, object_path, interface, method, signature, body):
+            if object_path == "/frame":
+                raise _dbus_error("org.freedesktop.DBus.Error.UnknownMethod")
+            return super().call(destination, object_path, interface, method, signature, body)
+
+    for title in ("Preferences", "Editor"):
+        with pytest.raises(a11y.A11yError) as error:
+            a11y.snapshot(window(), bus=Closing(title))
+        assert error.value.code == "gone"
+    assert not (tmp_path / "deskpilot" / "elements" / "0xabc.json").exists()
+
+
+@pytest.mark.parametrize(
+    "failing",
+    [("/frame", "GetInterfaces"), ("/frame", "GetExtents")],
+)
+def test_a_gtk3_toplevel_that_closes_while_its_offset_is_read_is_gone(tmp_path, monkeypatch, failing):
+    monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path))
+
+    class Closing(FakeBus):
+        def call(self, destination, object_path, interface, method, signature, body):
+            if (object_path, method) == failing:
+                raise _dbus_error("org.freedesktop.DBus.Error.UnknownMethod")
+            return super().call(destination, object_path, interface, method, signature, body)
+
+    fake = Closing()
+    fake.toolkit = ("gtk", "3.24.52")
+    with pytest.raises(a11y.A11yError) as error:
+        a11y.snapshot(window(), bus=fake)
+    assert error.value.code == "gone"
+
+
+@pytest.mark.parametrize(
+    "failing",
+    [("/app", "GetChildren"), ("/frame", "GetRoleName"), ("/frame", "Get")],
+)
+def test_an_app_that_leaves_the_bus_while_its_toplevel_is_chosen_is_gone(tmp_path, monkeypatch, failing):
+    monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path))
+
+    class Leaving(FakeBus):
+        def call(self, destination, object_path, interface, method, signature, body):
+            if (object_path, method) == failing:
+                raise _dbus_error("org.freedesktop.DBus.Error.NameHasNoOwner")
+            return super().call(destination, object_path, interface, method, signature, body)
+
+    with pytest.raises(a11y.A11yError) as error:
+        a11y.snapshot(window(), bus=Leaving())
+    assert error.value.code == "gone"

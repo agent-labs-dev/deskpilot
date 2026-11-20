@@ -69,11 +69,13 @@ def focus(window: str) -> dict:
 
 
 @_tool(structured_output=False)
-def shot(window: str, max_width: int = 1400, show: bool = False, hidden: bool = False) -> list:
+def shot(window: str, max_width: int = 1400, show: bool = False, hidden: bool = False, out: str | None = None) -> list:
     """Screenshot a window, returning the image and its shot id. Later move/click/scroll points are pixels in this
     image; pass its id as `shot` to refuse the action if the window has changed size since. A window that is not on
-    screen is an error unless show is set, which focuses it; hidden captures a window the agent launched or adopted."""
-    taken = desk.shot(window, max_width=max_width, show=show, hidden=hidden)
+    screen is an error unless show is set, which focuses it; hidden captures a window the agent launched or adopted.
+    out is the PNG's path (default: deskpilot's cache); a caller that names it can remove the file however the call
+    ends, even when it is cancelled before the reply."""
+    taken = desk.shot(window, Path(out) if out else None, max_width=max_width, show=show, hidden=hidden)
     return [Image(path=taken.path), taken.to_dict()]
 
 

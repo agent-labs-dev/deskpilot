@@ -265,6 +265,10 @@ class Desk:
         # desktop needs neither: a portal its private bus starts draws on its own compositor.
         env["GDK_DEBUG"] = ",".join(filter(None, (env.get("GDK_DEBUG"), "no-portals")))
         env["GTK_USE_PORTAL"] = "0"
+        # Chromium and Electron join the accessibility bus only when this says accessibility is on (or the bus's
+        # IsEnabled does, which is the user's to set): with --force-renderer-accessibility alone they stayed off it and
+        # `elements` had no tree.
+        env["ACCESSIBILITY_ENABLED"] = "1"
         self._launched = [p for p in self._launched if p.poll() is None]
         if shutil.which(command[0], path=env.get("PATH")) is None:
             raise ValueError(f"cannot start {command[0]}: No such file or directory")

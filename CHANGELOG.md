@@ -7,6 +7,14 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+- MCP `shot` takes `out`, the path to write the PNG to, as `deskpilot shot -o` does. A client that names the file before the call can remove it however the call ends, including when it is cancelled after the capture but before the reply that carries the path.
+
+- `launch` starts its app with `ACCESSIBILITY_ENABLED=1`, so a Chromium or Electron app started with `--force-renderer-accessibility` has a tree. With the flag alone it joined the accessibility bus only when accessibility was already on as it started, and otherwise `elements` failed `no_tree` with a hint that named only the flag.
+
+- `adopt` and `release` wait their turn behind the actions already running or queued, as other actions do, instead of being refused `busy` whenever any action ran. Before, an agent could be refused for as long as another agent kept acting. An adoption still waiting when its agent is stopped is refused rather than run after the stop, so it never moves a window for an agent that is gone.
+
+- An element that closed, such as a dialog's Save button read just after a click on it closed the dialog, is `stale`, and `elements` leaves out an element that went while the tree was read. GTK answers a call on a closed accessible with a D-Bus `UnknownMethod` error, which deskpilot reported as `unavailable`, as if the accessibility bus had failed. `elements` of a window whose toplevel or app closed while it was read fails with `gone`, as it does when another toplevel of the app closed while the window's was looked for, since the one left with its title may be a sibling sharing it.
+
 ## [0.8.0] - 2026-11-19
 
 - `deskpilot record WINDOW` (MCP `record_start` and `record_stop`) films a window, hidden ones included, with the real agent cursor the plugin draws: brackets closing in as it lands and the marker squeezing on a press. It writes an mp4, or with `-o -` PPM frames at a constant rate on stdout for another encoder. Only a capture that asks for a cursor carries it, so `shot` stays cursor-free, and the user's own pointer is never in the frames. While a window is being filmed, a hidden action on it shows its cursor in the recording alone, never on screen.
