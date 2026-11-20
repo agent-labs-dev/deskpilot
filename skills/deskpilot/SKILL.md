@@ -40,8 +40,9 @@ If `deskpilot` is not on `PATH`, ask the user before installing it with
    `--double`), `deskpilot scroll WINDOW X Y DY --shot ID` (positive is up), or `deskpilot move WINDOW X Y --shot ID`
    to show the agent cursor there. Points are pixels in that shot, so never rescale them yourself; `--scale 1` means
    window pixels. A point outside the window, one another window covers, or a window resized since the shot is
-   refused. `deskpilot drag WINDOW X1 Y1 X2 Y2 --shot ID` presses, moves and releases (sliders, selections, drag and
-   drop within the window). `deskpilot hover WINDOW X Y --shot ID` rests the pointer there and prints a shot taken
+   refused. `deskpilot drag WINDOW X1 Y1 X2 Y2 --shot ID` presses, moves and releases (sliders, selections; a
+   press that starts a drag and drop is refused unless the window is XWayland or of the app the user's pointer is
+   on). `deskpilot hover WINDOW X Y --shot ID` rests the pointer there and prints a shot taken
    meanwhile, for tooltips; `--click X2 Y2` clicks next, for a menu that opens on hover.
    To film a run for a person, `deskpilot record WINDOW -o clip.mp4` (MCP `record_start` and `record_stop`; `--hidden`
    for a window you launched): the clip shows the agent cursor landing and pressing, which `shot` never does.

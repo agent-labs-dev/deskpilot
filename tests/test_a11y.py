@@ -166,7 +166,13 @@ def test_showing_is_dropped_for_a_box_on_no_surface_of_the_window(tmp_path, monk
     assert {top.name: "showing" in top.states for top in later.elements} == {key: showing[key] for key in boxes}
     # With no compositor to ask for popups, a box that misses the window is left as the app states it.
     bare = a11y.snapshot(window(), bus=fake)
-    assert "showing" in next(child for child in bare.children if child.name == "/far").states
+    far = next(child for child in bare.children if child.name == "/far")
+    assert "showing" in far.states
+    # An action on such an element is refused the same way, before any input is sent.
+    with pytest.raises(a11y.A11yError) as refused:
+        a11y.locate(window(), far.id, bus=fake, popups=popups)
+    assert refused.value.code == "offscreen"
+    assert a11y.locate(window(), tree.children[0].id, bus=fake, popups=popups).width > 0
 
 
 def test_an_element_says_what_it_can_do(tmp_path, monkeypatch):

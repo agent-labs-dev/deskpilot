@@ -470,7 +470,7 @@ class Desk:
     def _element_point(self, win: Window, element: str) -> tuple[int, int, list[str]]:
         """An element's centre as a global position, and its surface step. A GTK 3 popup element is placed through
         its popup's surface, and its centre must lie in the popup."""
-        at = a11y.locate(win, element)
+        at = a11y.locate(win, element, popups=lambda: self._popups(win))
         cx, cy = at.x + at.width / 2, at.y + at.height / 2
         popup = a11y.resolve(self._popups(win), at.keys) if at.known else None
         if popup is None:

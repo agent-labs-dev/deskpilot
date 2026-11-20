@@ -1172,7 +1172,7 @@ def _popup_keys(bus: _Bus, element: tuple[str, str], key: Key, root: tuple[str, 
     raise A11yError(f"Element {element[1]} is no longer in the window's tree; take a new snapshot.", "stale")
 
 
-def locate(window: Window, element_id: str, bus: _Bus | None = None) -> Located:
+def locate(window: Window, element_id: str, bus: _Bus | None = None, popups: Popups | None = None) -> Located:
     """Read an element's current visible bounds from the application. The id is `e5`, from the window's latest
     snapshot, or `<snapshot>:e5`, which is refused unless that snapshot is still the latest. An element whose role or
     name has changed since its snapshot is stale: the id no longer names what the caller saw."""
@@ -1212,6 +1212,12 @@ def locate(window: Window, element_id: str, bus: _Bus | None = None) -> Located:
         root = payload.get("root")
         if payload.get("gtk3") is not True or not isinstance(root, list) or len(root) != 2:
             # WINDOW coordinates are relative to the app's toplevel, which is the Hyprland window's origin.
+            if not _Shown(window, popups)(bounds):
+                raise A11yError(
+                    f"Element {element_id} is on no surface of the window, though the app calls it showing; open "
+                    "what holds it or take a new snapshot.",
+                    "offscreen",
+                )
             return Located(*bounds)
         root = (str(root[0]), str(root[1]))
         root_offset = _root_offset(connection, root)
