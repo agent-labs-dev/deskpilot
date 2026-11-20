@@ -107,7 +107,7 @@ class Type(_Step):
 
 class Paste(_Step):
     action: Literal["paste"]
-    text: str = Field(description="text pasted through a clipboard only the window sees")
+    text: str = Field(min_length=1, description="text pasted through a clipboard only the window sees")
     keys: str = Field("ctrl+v", min_length=1, description="the app's paste chord")
 
     @model_validator(mode="after")

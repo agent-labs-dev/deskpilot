@@ -18,7 +18,7 @@ from collections.abc import Callable, Generator
 from contextlib import contextmanager
 from dataclasses import dataclass, replace
 from pathlib import Path
-from typing import Any, Protocol
+from typing import Any, NoReturn, Protocol
 
 from . import screen
 from .a11y import Element
@@ -520,6 +520,8 @@ class NativeDesk(BaseDesk):
         hidden: bool = False,
         agent_keyboard: bool = False,
     ) -> None:
+        if not text:
+            raise ValueError("no text to type")
         if agent_keyboard:
             raise Unavailable("an agent keyboard is a Hyprland plugin feature; type without it")
         win = self._key_target(query, take_focus, show, hidden)
@@ -664,6 +666,12 @@ class NativeDesk(BaseDesk):
 
     def adopt(self, address: str) -> Window:
         raise self._hidden_unavailable("adopting a window")
+
+    def record(self, query: str, out: object, stop: object, *args: object, **kwargs: object) -> NoReturn:
+        raise Unavailable("record films the agent cursor the Hyprland plugin draws, and this platform has none")
+
+    def press_cursor(self, down: bool) -> NoReturn:
+        raise Unavailable("the agent cursor is drawn by the Hyprland plugin; there is no plugin on this platform")
 
     def release(self, address: str) -> Window:
         raise self._hidden_unavailable("releasing a window")

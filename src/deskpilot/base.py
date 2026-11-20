@@ -91,6 +91,7 @@ class BaseDesk:
         base = screen.load(shot)
         if win.address != base.address:
             raise screen.StaleShot(f"shot {shot} is of window {base.address}, not {win.address}")
+        base.check_identity(win)
         x, y, w, h = region or (0, 0, base.width, base.height)
         if w <= 0 or h <= 0 or x < 0 or y < 0 or x + w > base.width or y + h > base.height:
             raise ValueError(f"region {x},{y} {w}x{h} is not inside shot {shot} ({base.width}x{base.height})")

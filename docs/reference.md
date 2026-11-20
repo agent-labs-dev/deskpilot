@@ -62,13 +62,17 @@ showing is offscreen. `elements --peek` reads the tree without replacing the lat
 what changed before it acts on an id it already holds. An item of a GTK 3 popup menu (an open combo box, a menu or
 submenu) is placed on the popup it is in, so its bounds line up with a shot showing the popup and a click lands on it;
 when the popup cannot be told exactly the action is refused (`stale` once it closed, `ambiguous` when several could be
-it) and `elements` reports the item with zero bounds. An element's click is also refused `covered` when another
+it) and `elements` reports the item with zero bounds, as it does an element whose app gives it a negative size (GTK 4
+does for a tab panel whose page is not realized), which a click refuses `offscreen`. An element's click is also refused `covered` when another
 surface, such as a submenu over its menu, takes the point. GTK and Qt apps expose a tree; Chromium, Electron and
 Firefox expose one only when started with accessibility on (`--force-renderer-accessibility` for Chromium and
 Electron), and Wine games expose none. An app with no tree is an error saying so, never a guessed one.
 
 A shell started before Hyprland restarted keeps a stale `HYPRLAND_INSTANCE_SIGNATURE`. deskpilot then talks to
 the one instance whose socket answers, and with several live instances it stops and names them.
+
+A chord's character is the key that gives it unmodified, else that key with the modifiers it needs, so `key ctrl++`
+presses Ctrl and `+` (Ctrl+Shift+= on a US layout). A chord with an empty key, such as `ctrl+`, is an error.
 
 `key --hold SECONDS` holds each key down that long, up to 10, for auto-repeat or a game's movement.
 
@@ -108,7 +112,9 @@ keeps one input device open for the session, and the apps it launched close when
 Every expected failure has a code, one stable word to branch on: `not_found`, `ambiguous`, `not_visible`,
 `offscreen`, `stale`, `covered` (another window is over the point), `gone` (the window closed), `owns_clipboard`
 (a paste's target app holds the user's clipboard), `refused`, `busy`, `no_tree`, `unavailable`, `timeout` or
-`invalid`. The CLI prints `deskpilot: CODE: message`. An MCP tool returns an error result whose text is `CODE: message` and whose structured content is `{"code": ..., "message": ...}`.
+`invalid`. The CLI prints `deskpilot: CODE: message` on stderr, or `{"code": ..., "message": ...}` with `--json`, and
+exits 2. `release` of a window the agent has not adopted is `not_found`. An MCP tool refuses an argument it does not
+take, and otherwise returns an error result whose text is `CODE: message` and whose structured content is `{"code": ..., "message": ...}`.
 
 ```sh
 claude mcp add deskpilot -- deskpilot mcp
@@ -125,6 +131,29 @@ claude mcp add deskpilot -- deskpilot mcp
   avoids that wait.
 - `drag` stays within one window: a drag and drop into another app is not supported.
 - Hyprland only, Linux only.
+
+## Recipes
+
+`deskpilot recipe run FILE` replays a saved recipe: one window, 1 to 200 steps, an optional launched app and an
+optional MP4 of the run. `deskpilot recipe check FILE` validates one and prints it with defaults filled in, and
+`deskpilot recipe schema` prints the format as JSON Schema. `--record MP4` overrides the recipe's own output. The
+recording is the window film `deskpilot record` makes. The steps are the batch actions, where a point is in window pixels (or in
+the pixels of the shot it names), plus three the batch does not have:
+
+| Action | Required fields | Optional fields |
+|---|---|---|
+| `pause` | none | `seconds` (0 to 60, default 0.6) |
+| `wait` | none | `window`, `timeout`, `focused`, `title`, `size`, `gone` |
+| `shot` | none | `out`, `max_width` |
+
+The document holds `version` (1), `name`, `window`, and `steps`, plus optional `description`, `launch`, `env`,
+`timeout` and `size` in window pixels to wait for, and a `record` object of `output` and `fps` (1 to 60, default 25). The
+window is pinned once, so a window Hyprland replaces under the same address stops the run. Results have `ok`,
+`name`, `window`, `completed`, `results`, `failed` and `recording`; a failure carries the step's `index`, `action`,
+`code` and `message`. The recording is stopped and kept on failure too. A recipe never takes the user's pointer,
+focus or view: it has no `show`, `take_focus` or `take_pointer`.
+
+[Recipes](recipes.md) has the format, the recording and its limits.
 
 ## Batch
 

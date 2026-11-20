@@ -30,7 +30,10 @@ unnamed cursor. Actions still run one at a time; the cursors show whose each one
 
 An agent can run apps of its own out of the user's sight. `DESKPILOT_AGENT=NAME deskpilot launch CMD...` starts
 an app on the hidden special workspace `special:agent-NAME` and prints its first window. Every window the app opens,
-then or later, lands there without taking focus, so a dialog never pops up on the user's screen. `deskpilot show`
+then or later, lands there without taking focus, so a dialog never pops up on the user's screen. A GTK app draws its
+own file dialogs there, since launch turns off its portal (`GDK_DEBUG=no-portals`, `GTK_USE_PORTAL=0`). A file dialog
+another toolkit hands to xdg-desktop-portal, as Qt, Chromium and Electron apps may, is a window of the user's portal
+and opens on the user's screen, so avoid file dialogs in those apps. `deskpilot show`
 toggles that workspace on the focused monitor for the user to watch or step in, and `deskpilot stop` closes the
 agent's apps. They also close when the process named by `DESKPILOT_OWNER_PID` exits (the MCP server names itself),
 or with no owner after 30 minutes unused. For web pages and signed-in browsers use
@@ -63,7 +66,8 @@ action shows the result. Tooltips and menus it opens show in that screenshot and
 grab the user's input. It works for native Wayland windows. An XWayland window (X11 and Wine apps) is refused,
 since X clients read the one X pointer only the user's pointer moves; so is a window of the app the user's pointer is
 on, unless that app took the `deskpilot` seat, and a drag and drop the press starts is cancelled. A single-instance
-app that hands its window to a copy the user already runs opens nothing for the agent.
+app that hands its window to a copy the user already runs opens nothing for the agent, and `launch` says so when it
+times out; start such an app with its own instance where it has one (`gnome-text-editor --standalone`).
 
 Hidden `key`, `type` and `paste` need `--window` naming one of the agent's launched or adopted windows, go to that window's own
 client and never hold the user's input. By default keys use the regular keyboard, so an XWayland window is refused, and so

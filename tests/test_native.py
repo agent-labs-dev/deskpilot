@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import threading
 from pathlib import Path
 
 import pytest
@@ -132,12 +133,14 @@ def test_a_button_is_let_go_when_the_action_fails():
     assert [e for e in driver.events if e[1] == "up"], "the pressed button was released"
 
 
-def test_hidden_actions_and_paste_are_unavailable():
+def test_hidden_actions_paste_and_the_agent_cursor_are_unavailable():
     d, _ = desk()
     for action in (
         lambda: d.click("notes", 1, 1, scale=1, hidden=True),
         lambda: d.paste("hi", "notes"),
         lambda: d.adopt("0x10"),
+        lambda: d.record("notes", Path("out.mp4"), threading.Event()),
+        lambda: d.press_cursor(True),
         lambda: d.key("a", "notes", hidden=True),
     ):
         with pytest.raises(Unavailable) as error:

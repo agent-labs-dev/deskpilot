@@ -41,6 +41,8 @@ are thin layers over the desk `open_desk` picks: `Desk` on Hyprland, `NativeDesk
 - `scripts/wordmark.py`: the wordmark, its dark variant and the GitHub social preview, from `assets/logo.svg` and
   Liberation Sans (`uv run python scripts/wordmark.py`)
 - `src/deskpilot/a11y.py`: the target app's AT-SPI accessibility tree over D-Bus, and element ids for actions
+- `src/deskpilot/recipe.py`: saved recipes (steps, `pause`, `wait`, `shot`), the window pinned once, filmed
+  through `Desk.record`; `recipes/` holds the examples
 
 ## Rules
 
@@ -59,8 +61,10 @@ are thin layers over the desk `open_desk` picks: `Desk` on Hyprland, `NativeDesk
 - Each dispatcher tries Hyprland 0.57's Lua form first and falls back to the string form. Keep both working.
 - A window name that matches several windows is an error listing them, and a point outside the window or under
   another window is refused. Never guess a target.
-- The agent cursor is feedback, never input: it never changes what an action does, and window captures never
-  include it.
+- The agent cursor is feedback, never input: it never changes what an action does. Only a window capture that asks for a
+  cursor (`grim -c`, which `record` uses) carries it, drawn by the plugin so a recording needs no cursor of its own;
+  `shot` never asks, so what a model reads never includes it, and no capture includes the user's own pointer. A
+  hidden cursor is drawn into captures of its window only, never on an output.
 - A hidden action never moves the user's pointer, focus or view. Where it cannot reach a window without doing so
   (XWayland, the app under the user's pointer, a drag and drop), it is refused, never quietly run on screen.
 - Text is typed as written on the user's active keymap, resolved in the plugin, never through a fixed layout table.

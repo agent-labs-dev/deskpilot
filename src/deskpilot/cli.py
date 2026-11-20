@@ -18,7 +18,10 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import shlex
+import signal
 import sys
+import threading
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -39,6 +42,15 @@ def _print(data, as_json: bool) -> None:
             print(row if isinstance(row, str) else json.dumps(row))
     else:
         print(data if isinstance(data, str) else json.dumps(data))
+
+
+def _fail(code: str, message: str, as_json: bool) -> int:
+    """Report an expected failure on stderr, as `{"code", "message"}` with --json, and give the exit status."""
+    if as_json:
+        print(json.dumps({"code": code, "message": message}), file=sys.stderr)
+    else:
+        print(f"deskpilot: {code}: {message}", file=sys.stderr)
+    return 2
 
 
 def _view_args(s: argparse.ArgumentParser) -> None:
@@ -209,13 +221,108 @@ def _batch_command(sub) -> None:
     s.add_argument("--hidden", action="store_true", help="act on a window this agent launched or adopted, out of view")
 
 
-def _parser() -> argparse.ArgumentParser:
-    p = argparse.ArgumentParser(
-        prog="deskpilot", description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
+class _Parser(argparse.ArgumentParser):
+    """Reports a bad command line as the same `{"code", "message"}` JSON as any other failure when --json is given."""
+
+    json_errors = False
+
+    def error(self, message: str):
+        if not _Parser.json_errors:
+            super().error(message)
+        self.exit(_fail("invalid", message, True))
+
+
+def _recipe_command(sub) -> None:
+    s = sub.add_parser(
+        "recipe",
+        help="check, run, or export the schema of a saved recipe: a JSON sequence of steps with reading beats, "
+        "waits and shots, replayed in order and optionally recorded to an MP4",
     )
+    s.add_argument("action", choices=["run", "check", "schema"])
+    s.add_argument("file", nargs="?", help="the recipe JSON file (run and check); - reads it from stdin")
+    s.add_argument(
+        "--record",
+        type=Path,
+        metavar="MP4",
+        help="with run: film the window to this MP4, instead of the recipe's own output",
+    )
+
+
+def _recipe(args: argparse.Namespace):
+    """The recipe from its file, read whole and validated before anything is launched or clicked."""
+    from . import recipe
+
+    if args.action != "run" and args.record:
+        raise ValueError(f"recipe {args.action} does not take --record: only run films")
+    if args.action == "schema":
+        if args.file:
+            raise ValueError("recipe schema takes no file")
+        return recipe.schema()
+    if not args.file:
+        raise ValueError(f"recipe {args.action} needs a file")
+    if args.file == "-":
+        return recipe.parse(json.loads(sys.stdin.read()))
+    return recipe.load(Path(args.file))
+
+
+def _run_recipe(args: argparse.Namespace, desk: Desk | NativeDesk) -> object:
+    from . import recipe as recipes
+
+    loaded = _recipe(args)
+    if args.action != "run":
+        return loaded if isinstance(loaded, dict) else loaded.model_dump(mode="json")
+    # A recipe launches its app on the agent's hidden workspace and records it with the agent cursor, both plugin work.
+    hyprland_only("recipe run")
+    from .desk import Desk
+
+    assert isinstance(desk, Desk)
+    return recipes.run(desk, loaded, args.record).to_dict()
+
+
+def _parser() -> argparse.ArgumentParser:
+    p = _Parser(prog="deskpilot", description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("--session", action="store_true", help="use this agent's private compositor, clipboard and bus")
     p.add_argument("--json", action="store_true", help="print JSON")
     return p
+
+
+def _record_parser(sub) -> None:
+    s = sub.add_parser(
+        "record",
+        help="film a window with the agent cursor the plugin draws, to an mp4 or as PPM frames on stdout (-o -)",
+    )
+    s.add_argument("window")
+    s.add_argument("-o", "--out", default="-", help="an .mp4 path, or - for PPM frames at a constant rate on stdout")
+    s.add_argument("--fps", type=int, default=25)
+    s.add_argument("--seconds", type=float, help="stop after this long (Ctrl-C or SIGTERM also stops)")
+    s.add_argument("--hidden", action="store_true", help="film a window this agent launched or adopted, out of view")
+
+
+def _hidden_commands(sub) -> None:
+    s = sub.add_parser(
+        "launch",
+        help="start an app for this agent (DESKPILOT_AGENT) on its hidden workspace, for --hidden actions; print its "
+        "first window",
+    )
+    s.add_argument("command", nargs=argparse.REMAINDER, help="the app and its arguments")
+    s.add_argument("--timeout", type=float, default=30, help="seconds to wait for its first window")
+    for name, description in (
+        ("adopt", "hand one unfocused native window to this agent for hidden actions"),
+        ("release", "return one adopted window to its original workspace without closing it"),
+    ):
+        s = sub.add_parser(name, help=description)
+        s.add_argument("address", help="exact address from deskpilot windows")
+    sub.add_parser("show", help="show this agent's hidden workspace on the focused monitor, or hide it again")
+    sub.add_parser("stop", help="close this agent's launched apps and return its adopted windows")
+
+
+def _env_parser(sub) -> None:
+    sub.add_parser(
+        "env",
+        help="with --session, start this agent's private desktop if it is not running and print what another tool needs"
+        " to reach it: its Wayland display, Hyprland instance, runtime directory and buses, as shell exports (or JSON"
+        " with --json)",
+    )
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -233,6 +340,8 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("--max-width", type=int, default=1400, help="scale down wider windows to this width")
     _view_args(s)
 
+    _record_parser(sub)
+
     _point_parser(sub, "move", "show the agent cursor at a point")
     s = _point_parser(sub, "click", "click a point")
     s.add_argument("--button", choices=["left", "right", "middle"], default="left")
@@ -248,7 +357,11 @@ def build_parser() -> argparse.ArgumentParser:
     _path_commands(sub)
 
     s = sub.add_parser("plugin", help="build, load or check the deskpilot Hyprland plugin")
-    s.add_argument("action", choices=["build", "load", "status"])
+    s.add_argument(
+        "action",
+        choices=["build", "load", "status"],
+        help="build: the plugin (for the running Hyprland, else the installed headers) and the --session keyboard",
+    )
 
     focus_help = "focus the window first and leave it focused, for an app that ignores keys while unfocused"
     s = sub.add_parser("key", help="press a key or chord, e.g. Return, ctrl+a, alt+F4")
@@ -282,37 +395,42 @@ def build_parser() -> argparse.ArgumentParser:
 
     _wait_command(sub)
 
-    s = sub.add_parser(
-        "launch",
-        help="start an app for this agent (DESKPILOT_AGENT) on its hidden workspace, for --hidden actions; print its "
-        "first window",
-    )
-    s.add_argument("command", nargs=argparse.REMAINDER, help="the app and its arguments")
-    s.add_argument("--timeout", type=float, default=30, help="seconds to wait for its first window")
-    for name, description in (
-        ("adopt", "hand one unfocused native window to this agent for hidden actions"),
-        ("release", "return one adopted window to its original workspace without closing it"),
-    ):
-        s = sub.add_parser(name, help=description)
-        s.add_argument("address", help="exact address from deskpilot windows")
-    sub.add_parser("show", help="show this agent's hidden workspace on the focused monitor, or hide it again")
-    sub.add_parser("stop", help="close this agent's launched apps and return its adopted windows")
+    _hidden_commands(sub)
+    _env_parser(sub)
 
-    sub.add_parser("cursor", help="print the cursor's global position")
-    sub.add_parser("mcp", help="run the MCP server on stdio")
+    for name, text in (("cursor", "print the cursor's global position"), ("mcp", "run the MCP server on stdio")):
+        sub.add_parser(name, help=text)
+    _recipe_command(sub)
     return p
 
 
 def _plugin(action: str, desk: Desk | NativeDesk) -> dict:
     hyprland_only("the compositor plugin")
     from .desk import Desk
+    from .session import keyboard_binary  # after the guard: it needs fcntl, which Windows lacks
 
     assert isinstance(desk, Desk)
     if action == "build":
-        return {"path": str(desk.plugin.build())}
+        return {"path": str(desk.plugin.build()), "keyboard": str(keyboard_binary())}
     if action == "load":
         return {"path": str(desk.plugin.load()), **desk.plugin.status()}
     return desk.plugin.status()
+
+
+def _record(desk: Desk | NativeDesk, args: argparse.Namespace) -> object:
+    stop = threading.Event()
+    for number in (signal.SIGINT, signal.SIGTERM):
+        signal.signal(number, lambda *_: stop.set())
+    to_stdout = args.out == "-"
+    result = desk.record(
+        args.window, sys.stdout.buffer if to_stdout else Path(args.out), stop, args.fps, args.seconds, args.hidden
+    )
+    result.raise_if_empty()
+    if to_stdout:
+        # stdout carries the frames, so the summary goes to stderr.
+        print(json.dumps(result.to_dict()), file=sys.stderr)
+        return None
+    return result.to_dict() | {"path": args.out}
 
 
 def run(args: argparse.Namespace, desk: Desk | NativeDesk) -> object:
@@ -460,17 +578,19 @@ def run(args: argparse.Namespace, desk: Desk | NativeDesk) -> object:
         case "cursor":
             x, y = desk.cursor()
             return {"x": x, "y": y}
+        case "recipe":
+            return _run_recipe(args, desk)
     raise AssertionError(args.cmd)
 
 
 def main(argv: list[str] | None = None) -> int:
+    _Parser.json_errors = "--json" in (sys.argv[1:] if argv is None else argv)
     args = build_parser().parse_args(argv)
     if args.session:
         try:
             hyprland_only("a private --session")
         except EXPECTED as error:
-            print(f"deskpilot: {error_code(error)}: {error}", file=sys.stderr)
-            return 2
+            return _fail(error_code(error), str(error), args.json)
         from . import session  # after the guard: it needs fcntl, which Windows lacks
 
         try:
@@ -480,10 +600,16 @@ def main(argv: list[str] | None = None) -> int:
                 session.stop()
                 _print("ok", args.json)
                 return 0
-            os.environ.update(session.environment())
+            env = session.environment()
+            os.environ.update(env)
         except EXPECTED as error:
-            print(f"deskpilot: {error_code(error)}: {error}", file=sys.stderr)
-            return 2
+            return _fail(error_code(error), str(error), args.json)
+        if args.cmd == "env":
+            reach = {k: env[k] for k in session.REACH_ENV if k in env}
+            _print(reach if args.json else [f"export {k}={shlex.quote(v)}" for k, v in reach.items()], args.json)
+            return 0
+    elif args.cmd == "env":
+        return _fail("invalid", "env needs --session", args.json)
     if args.cmd == "mcp":
         from .mcp_server import serve
 
@@ -491,15 +617,17 @@ def main(argv: list[str] | None = None) -> int:
         return 0
     desk = open_desk()
     try:
-        output = run(args, desk)
-        _print(output, args.json)
+        output = _record(desk, args) if args.cmd == "record" else run(args, desk)
+        if output is not None:
+            _print(output, args.json)
         if args.cmd == "batch" and isinstance(output, dict) and not output["ok"]:
             failed = output["failed"]
-            print(f"deskpilot: {failed['code']}: {failed['message']} ({failed['action']})", file=sys.stderr)
-            return 2
+            return _fail(failed["code"], f"{failed['message']} ({failed['action']})", args.json)
+        if args.cmd == "recipe" and args.action == "run" and isinstance(output, dict) and not output["ok"]:
+            failed = output["failed"]
+            return _fail(failed["code"], f"{failed['message']} (step {failed['index']} {failed['action']})", args.json)
     except EXPECTED as error:
-        print(f"deskpilot: {error_code(error)}: {error}", file=sys.stderr)
-        return 2
+        return _fail(error_code(error), str(error), args.json)
     finally:
         desk.close()
     return 0

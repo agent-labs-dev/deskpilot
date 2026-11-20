@@ -48,7 +48,7 @@ A local demo app on Hyprland, operated by deskpilot with its agent cursor and cl
 | Click, scroll, drag, hover | in the compositor, to the app's own pointer | window messages posted to the window | events posted to the app's process |
 | Element click | at the element's centre | UI Automation Invoke, else its centre | AX Press, else its centre |
 | Keys and text | on your keymap, in the compositor | posted to the focused control, with its buttons and modifiers in the app's key state | posted to the app's process |
-| Hidden agent windows, adoption, private paste, `--session` | yes | no (`unavailable`) | no (`unavailable`) |
+| Hidden agent windows, adoption, private paste, `record`, recipes, `--session` | yes | no (`unavailable`) | no (`unavailable`) |
 
 On Hyprland every action is exact. On Windows and macOS, input posted to an app that is not in front reaches most
 standard controls. Some apps read the real keyboard or pointer and ignore it, such as games, many Electron and
@@ -123,6 +123,10 @@ JSON
 ```
 
 This example replaces text in the target app's current field. Run it only after inspecting that field.
+To film a window with the agent cursor (brackets closing in on a landing, the marker squeezing on a press), run
+`deskpilot record WINDOW -o clip.mp4 --seconds 10`, or `-o -` for PPM frames at a constant rate on stdout. It works for
+hidden windows too (`--hidden`), and the cursor shows in the clip alone. Screenshots from `shot` never include it.
+
 Supported steps are `click`, `move`, `scroll`, `drag`, `key`, `type` and `paste`. Element IDs and shot IDs work
 on the corresponding pointer steps. `--final-shot` returns a capture after all steps succeed.
 
@@ -131,6 +135,22 @@ refusals as a single action. A failure stops the batch and reports the completed
 earlier actions stay done. Other agents and the user can act between steps.
 
 [Batch format and results](docs/reference.md#batch)
+
+## Record a demo from a recipe (Hyprland)
+
+A recipe is a saved sequence of steps for one window, with the beats a viewer needs, recorded in one run:
+
+```sh
+deskpilot recipe check recipes/export-an-asset.json
+deskpilot recipe run recipes/export-an-asset.json --record demo.mp4
+```
+
+The steps are the batch actions plus `pause`, `wait` and `shot`; a recipe may also start its own app and name the
+MP4 it records. The recording is `deskpilot record` of the window, so the video holds the agent cursor deskpilot
+draws. `deskpilot recipe schema` prints the format as JSON Schema. Nothing is launched or clicked until the whole
+file validates, and a failed step stops the run, keeps the recording and exits 2.
+
+[Recipe format and recording](docs/recipes.md)
 
 ## Work on your own hidden window (Hyprland)
 
@@ -155,6 +175,28 @@ For a private desktop with separate profiles, clipboard and X server, put `--ses
 starting with `DESKPILOT_AGENT=NAME deskpilot --session launch APP`. End it with `deskpilot --session stop`.
 
 [Hidden-window behaviour, adoption and private desktops](docs/input-routing.md)
+
+`eval "$(deskpilot --session env)"` starts that desktop if needed and exports what reaches it (`WAYLAND_DISPLAY`,
+`HYPRLAND_INSTANCE_SIGNATURE`, `XDG_RUNTIME_DIR`, `DBUS_SESSION_BUS_ADDRESS` and `AT_SPI_BUS_ADDRESS`), so other tools
+such as `grim` or `wf-recorder` can use it; `--json` prints it as JSON. Your shell keeps its own profile, and `stop`
+leaves what you started this way running.
+
+### With no desktop: a container
+
+`container/Dockerfile` builds an image whose `--session` desktop needs no GPU and no compositor around it: with
+`DESKPILOT_STANDALONE=1` and `DESKPILOT_AGENT=agent` (set in the image) Hyprland runs on its own DRM backend on the
+kernel's virtual display, vkms, rendered in software by Mesa. On the host, load vkms and pass its display node in:
+
+```sh
+sudo modprobe vkms
+docker build -f container/Dockerfile -t deskpilot .
+docker run --rm --device /dev/dri deskpilot bash -c 'eval "$(deskpilot --session env)"; deskpilot --session launch APP'
+```
+
+The entrypoint gives the image's `agent` user the display node's group and runs the command as that user, since
+Hyprland refuses to run as root. The image's plugin is prebuilt against its pinned Hyprland. `container/smoke.sh` is
+the check CI runs in it: it launches a GTK app, clicks its entry, types and reads the text back, recording a clip.
+GitHub's `ubuntu-24.04` runners can load vkms; a runner without the module cannot run it.
 
 ## Your input stays yours
 
@@ -181,6 +223,7 @@ Python 3.12 or later and `uv` everywhere. On Windows and macOS that is all; macO
 ## Documentation and contributing
 
 - [Command guide](docs/reference.md): actions, screenshots, accessibility, MCP and error codes.
+- [Recipes](docs/recipes.md): a demo as data, replayed in order and recorded to an MP4.
 - [Input routing](docs/input-routing.md): dedicated seats, keymaps, agent cursors and hidden windows.
 - [Live calibration](docs/calibration.md): isolated input checks and cleanup verification.
 - [Contributing](CONTRIBUTING.md): setup, checks and bug reports.

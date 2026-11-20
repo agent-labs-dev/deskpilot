@@ -264,6 +264,7 @@ namespace {
         uintptr_t                          window = 0;
         eMode                              mode   = eMode::SHOWN;
         std::string                        agent;  // whose agent cursor shows the action, "" for an unnamed agent
+        bool                               film = false; // a hidden action on a window being filmed: its cursor shows in captures
         Vector2D                           start;  // the first point, where the agent cursor glides before the action
         Vector2D                           target; // where the pointer is: the latest point of the action
         Vector2D                           saved;
@@ -793,6 +794,11 @@ namespace {
     // still runs; the action starts once it lands, as lock-on brackets close in around it. It then follows each move
     // of the action, shrinks while a button is down, and sends a ring out at each press. It fades out after IDLE_HIDE
     // with nothing to show, and is forgotten once faded.
+    //
+    // A window capture requested with a cursor (grim -c -T, as `deskpilot record` takes) draws the same cursors into
+    // the frame, the one capture that does. Such a capture also makes the window filmed for FILM_LEASE, and a hidden
+    // action on a filmed window then shows its cursor, as a shown one does, but only in captures: a hidden action
+    // never draws on any output. The cursor is only ever feedback: nothing it draws changes what an action does.
     namespace agentcursor {
         constexpr double RING        = 5.5;  // the marker's ring radius in logical pixels
         constexpr double WING        = 13;   // from the centre to a wing tip
@@ -844,10 +850,22 @@ namespace {
             STexture             marker, tag;
             double               tagWidth = 0; // logical pixels; 0 for no tag
             CBox                 drawn;        // the global box last drawn, damaged again when it moves or goes
+            bool                 filmOnly = false; // a hidden action's cursor, drawn in captures and on no output
+            PHLWINDOWREF         filmOf;           // the window a film-only cursor acts on: only its captures show it
+            std::optional<Time::steady_tp> letGo; // when a visual press lets go: no earlier than it was held for, never later than its cap
+        };
+
+        // Where a cursor is drawn: a monitor, or a window capture, as the box of global logical pixels it shows, its
+        // top left, and the pixels it has per logical pixel.
+        struct SSurface {
+            Vector2D origin;
+            double   scale = 1;
+            CBox     bounds;
         };
 
         struct SState {
-            std::map<std::string, SCursor> cursors; // by agent name, "" for an unnamed agent
+            std::map<std::string, SCursor> cursors;
+            std::map<uintptr_t, std::pair<PHLWINDOWREF, Time::steady_tp>> filmed; // windows last captured with a cursor, by address, and when
             SP<CEventLoopTimer>            timer;
             CHyprSignalListener            render;
         };
@@ -1053,28 +1071,28 @@ namespace {
         void damage(SCursor& cursor) {
             if (!cursor.drawn.empty())
                 g_pHyprRenderer->damageBox(cursor.drawn);
-            cursor.drawn = cursor.placed && alpha(cursor) > 0 ? extent(cursor) : CBox{};
+            cursor.drawn = cursor.placed && !cursor.filmOnly && alpha(cursor) > 0 ? extent(cursor) : CBox{};
             if (!cursor.drawn.empty())
                 g_pHyprRenderer->damageBox(cursor.drawn);
         }
 
-        void rect(Render::CRenderContext& ctx, const PHLMONITOR& monitor, const CBox& global, const CHyprColor& color, double round) {
+        void rect(Render::CRenderContext& ctx, const SSurface& surface, const CBox& global, const CHyprColor& color, double round) {
             CRectPassElement::SRectData data;
-            data.box   = CBox{global.pos() - monitor->m_position, global.size()}.scale(monitor->m_scale).round();
-            data.round = std::round(round * monitor->m_scale);
+            data.box   = CBox{global.pos() - surface.origin, global.size()}.scale(surface.scale).round();
+            data.round = std::round(round * surface.scale);
             data.color = color;
             g_pHyprRenderer->addPassElement(ctx, makeUnique<CRectPassElement>(data));
         }
 
-        void drawOne(Render::CRenderContext& ctx, const PHLMONITOR& monitor, const std::string& name, SCursor& cursor) {
+        void drawOne(Render::CRenderContext& ctx, const SSurface& surface, const std::string& name, SCursor& cursor) {
             const auto A = alpha(cursor);
-            if (!cursor.placed || A <= 0 || CBox{monitor->m_position, monitor->m_size}.intersection(extent(cursor)).empty())
+            if (!cursor.placed || A <= 0 || surface.bounds.intersection(extent(cursor)).empty())
                 return;
             const auto& COLOR = cursor.color;
             for (const auto& [at, start] : cursor.pulses) {
                 const auto T      = std::clamp(seconds(start) / secondsOf(PULSE), 0.0, 1.0);
                 const auto RADIUS = PULSE_SIZE * (0.3 + 0.7 * (1 - std::pow(1 - T, 3)));
-                rect(ctx, monitor, CBox{at - Vector2D{RADIUS, RADIUS}, {2 * RADIUS, 2 * RADIUS}}, COLOR.modifyA(static_cast<float>(0.3 * (1 - T) * A)), RADIUS);
+                rect(ctx, surface, CBox{at - Vector2D{RADIUS, RADIUS}, {2 * RADIUS, 2 * RADIUS}}, COLOR.modifyA(static_cast<float>(0.3 * (1 - T) * A)), RADIUS);
             }
             // Lock-on brackets: four corners that close in from LOCK_FROM to LOCK_TO as the cursor lands.
             const auto L    = lock(cursor);
@@ -1086,22 +1104,22 @@ namespace {
                     const Vector2D CORNER = cursor.pos + Vector2D{SX * HALF, SY * HALF};
                     const double   HX     = SX < 0 ? CORNER.x - T / 2 : CORNER.x - BRACKET + T / 2;
                     const double   VY     = SY < 0 ? CORNER.y - T / 2 : CORNER.y - BRACKET + T / 2;
-                    rect(ctx, monitor, CBox{HX, CORNER.y - T / 2, BRACKET, T}, BA, T / 2);
-                    rect(ctx, monitor, CBox{CORNER.x - T / 2, VY, T, BRACKET}, BA, T / 2);
+                    rect(ctx, surface, CBox{HX, CORNER.y - T / 2, BRACKET, T}, BA, T / 2);
+                    rect(ctx, surface, CBox{CORNER.x - T / 2, VY, T, BRACKET}, BA, T / 2);
                 }
             }
             const auto                   SCALE = cursor.pressed ? PRESSED : 1.0;
             CTexPassElement::SRenderData data;
-            data.tex        = marker(cursor, monitor->m_scale);
-            const auto SIZE = data.tex->m_size / monitor->m_scale * SCALE;
-            data.box        = CBox{cursor.pos - monitor->m_position - SIZE / 2, SIZE}.scale(monitor->m_scale).round();
+            data.tex        = marker(cursor, surface.scale);
+            const auto SIZE = data.tex->m_size / surface.scale * SCALE;
+            data.box        = CBox{cursor.pos - surface.origin - SIZE / 2, SIZE}.scale(surface.scale).round();
             data.a          = A;
             g_pHyprRenderer->addPassElement(ctx, makeUnique<CTexPassElement>(std::move(data)));
             if (cursor.tagWidth > 0) {
                 CTexPassElement::SRenderData label;
-                label.tex = tag(cursor, name, monitor->m_scale);
-                label.box = CBox{cursor.pos + Vector2D{TAG_GAP, -TAG_HEIGHT / 2} - monitor->m_position - Vector2D{1, 1} / monitor->m_scale, label.tex->m_size / monitor->m_scale}
-                                .scale(monitor->m_scale)
+                label.tex = tag(cursor, name, surface.scale);
+                label.box = CBox{cursor.pos + Vector2D{TAG_GAP, -TAG_HEIGHT / 2} - surface.origin - Vector2D{1, 1} / surface.scale, label.tex->m_size / surface.scale}
+                                .scale(surface.scale)
                                 .round();
                 label.a = A;
                 g_pHyprRenderer->addPassElement(ctx, makeUnique<CTexPassElement>(std::move(label)));
@@ -1109,9 +1127,50 @@ namespace {
         }
 
         void draw(Render::CRenderContext& ctx, const PHLMONITOR& monitor) {
-            for (auto& [name, cursor] : g_state->cursors)
-                drawOne(ctx, monitor, name, cursor);
+            const SSurface SURFACE{monitor->m_position, monitor->m_scale, {monitor->m_position, monitor->m_size}};
+            for (auto& [name, cursor] : g_state->cursors) {
+                if (!cursor.filmOnly)
+                    drawOne(ctx, SURFACE, name, cursor);
+            }
         }
+
+        // The cursors in a capture of `window`, which the capture draws at `scale` pixels per logical pixel from the
+        // window's own top left: wherever a cursor is within its box, a hidden window's included, since a cursor is
+        // placed in global coordinates and the hidden workspace keeps its windows where it placed them.
+        void drawCapture(Render::CRenderContext& ctx, const PHLWINDOW& window, double scale) {
+            const auto BOX = window->getWindowMainSurfaceBox();
+            const SSurface SURFACE{BOX.pos(), scale, BOX};
+            for (auto& [name, cursor] : g_state->cursors) {
+                if (!cursor.filmOnly || cursor.filmOf.lock() == window)
+                    drawOne(ctx, SURFACE, name, cursor);
+            }
+        }
+
+        // How long a capture with a cursor keeps its window filmed. A recorder captures many times a second, so it
+        // holds the lease for as long as it records and the window is no longer filmed soon after it stops.
+        constexpr auto FILM_LEASE = std::chrono::seconds(3);
+
+        void film(const PHLWINDOW& window) {
+            if (!g_state)
+                return;
+            // Forget the windows no longer filmed, so a closed window's address is not taken for a later one.
+            std::erase_if(g_state->filmed, [](const auto& entry) { return entry.second.first.expired() || Time::steadyNow() - entry.second.second >= FILM_LEASE; });
+            g_state->filmed[reinterpret_cast<uintptr_t>(window.get())] = {window, Time::steadyNow()};
+        }
+
+        bool filmed(const PHLWINDOW& window) {
+            if (!g_state || !window)
+                return false;
+            const auto IT = g_state->filmed.find(reinterpret_cast<uintptr_t>(window.get()));
+            return IT != g_state->filmed.end() && IT->second.first.lock() == window && Time::steadyNow() - IT->second.second < FILM_LEASE;
+        }
+
+        // The window a capture with a cursor is of while its frame renders, and its scale.
+        struct SCapture {
+            PHLWINDOW window;
+            double    scale = 1;
+        };
+        std::optional<SCapture> g_capture;
 
         // A point on the glide's arc (a quadratic Bezier through a bend to one side), at an eased fraction of the way.
         Vector2D along(const SGlide& glide, double t) {
@@ -1125,7 +1184,7 @@ namespace {
             if (!g_state)
                 return;
             std::vector<std::function<void()>> landed;
-            bool                               moving = false;
+            bool                               moving = false, onScreen = false;
             auto                               untilFade = ms::max();
             for (auto it = g_state->cursors.begin(); it != g_state->cursors.end();) {
                 auto& cursor = it->second;
@@ -1139,22 +1198,29 @@ namespace {
                         cursor.landed = Time::steadyNow();
                     }
                 }
+                if (cursor.letGo && Time::steadyNow() >= *cursor.letGo) {
+                    cursor.pressed = false;
+                    cursor.letGo.reset();
+                }
                 std::erase_if(cursor.pulses, [](const auto& pulse) { return seconds(pulse.second) >= secondsOf(PULSE); });
                 damage(cursor);
                 const bool VISIBLE = cursor.placed && alpha(cursor) > 0;
+                onScreen |= VISIBLE && !cursor.filmOnly;
                 if (!cursor.glide && cursor.pulses.empty() && !VISIBLE) {
                     it = g_state->cursors.erase(it);
                     continue;
                 }
                 const auto FADE_IN = std::chrono::duration_cast<ms>(cursor.active + IDLE_HIDE - Time::steadyNow());
-                if (cursor.glide || !cursor.pulses.empty() || lock(cursor) < 1 || FADE_IN <= FRAME)
+                if (cursor.glide || !cursor.pulses.empty() || cursor.letGo || lock(cursor) < 1 || FADE_IN <= FRAME)
                     moving = true;
                 else
                     untilFade = std::min(untilFade, FADE_IN);
                 ++it;
             }
-            for (const auto& monitor : State::monitorState()->monitors())
-                monitor->scheduleFrame();
+            if (onScreen) {
+                for (const auto& monitor : State::monitorState()->monitors())
+                    monitor->scheduleFrame();
+            }
             // Waiting out the idle time needs no frames: the next one is when the first fade starts.
             if (moving)
                 g_state->timer->updateTimeout(FRAME);
@@ -1172,9 +1238,15 @@ namespace {
         }
 
         // Glides `name`'s cursor to `to` (global), then runs `then`. With no position yet it appears there at once.
-        void glideTo(const std::string& name, const Vector2D& to, std::function<void()> then) {
+        void glideTo(const std::string& name, const Vector2D& to, std::function<void()> then, const PHLWINDOW& film = nullptr) {
+            const bool filmOnly = film != nullptr;
             auto&      cursor = cursorOf(name);
-            const auto FROM   = cursor.placed ? cursor.pos : to;
+            // A cursor changing between shown and filmed-only starts again where it lands: the two are not one path.
+            if (cursor.filmOnly != filmOnly)
+                cursor.placed = false;
+            cursor.filmOnly = filmOnly;
+            cursor.filmOf   = film;
+            const auto FROM = cursor.placed ? cursor.pos : to;
             const auto DIST   = FROM.distance(to);
             cursor.placed     = true;
             if (DIST < 2) {
@@ -1192,9 +1264,11 @@ namespace {
             wake(cursor);
         }
 
-        void moveTo(const std::string& name, const Vector2D& to) {
-            auto& cursor  = cursorOf(name);
-            cursor.placed = true;
+        void moveTo(const std::string& name, const Vector2D& to, const PHLWINDOW& film = nullptr) {
+            auto& cursor    = cursorOf(name);
+            cursor.filmOnly = film != nullptr;
+            cursor.filmOf   = film;
+            cursor.placed   = true;
             cursor.pos    = to;
             wake(cursor);
         }
@@ -1203,6 +1277,27 @@ namespace {
             auto& cursor   = cursorOf(name);
             cursor.pressed = true;
             cursor.pulses.emplace_back(cursor.pos, Time::steadyNow());
+            wake(cursor);
+        }
+
+        // A press and release for show only, for an app the agent drives without deskpilot's input (a browser over CDP):
+        // the cursor squeezes and pulses as a real press does and no input is sent. The squeeze is held long enough to be
+        // seen in a recording, and a press never released lets go by itself.
+        constexpr auto VISUAL_HOLD = ms(120);
+        constexpr auto VISUAL_CAP  = ms(2000);
+
+        void pressVisual(const std::string& name) {
+            press(name);
+            cursorOf(name).letGo = Time::steadyNow() + VISUAL_CAP;
+        }
+
+        void releaseVisual(const std::string& name) {
+            auto& cursor = cursorOf(name);
+            if (!cursor.pressed)
+                return;
+            // The press was at `letGo - VISUAL_CAP`; hold it VISUAL_HOLD from then at least.
+            const auto PRESSED_AT = cursor.letGo ? *cursor.letGo - VISUAL_CAP : Time::steadyNow();
+            cursor.letGo          = std::max(PRESSED_AT + VISUAL_HOLD, Time::steadyNow());
             wake(cursor);
         }
 
@@ -1218,6 +1313,8 @@ namespace {
             g_state->timer  = makeShared<CEventLoopTimer>(std::nullopt, tick, nullptr);
             g_pEventLoopManager->addTimer(g_state->timer);
             g_state->render = Event::bus()->m_events.render.stage.listen([](const Event::SRenderStageEvent& event) {
+                if (event.stage == RENDER_POST_WINDOW && event.context && g_state && g_capture)
+                    drawCapture(event.context->get(), g_capture->window, g_capture->scale);
                 if (event.stage == RENDER_LAST_MOMENT && event.context && g_state)
                     draw(event.context->get(), event.monitor);
             });
@@ -1409,8 +1506,8 @@ namespace {
         g_op->target = pos;
         if (!onElementSurface(*g_op, pos))
             return;
-        if (g_op->mode == eMode::SHOWN)
-            agentcursor::moveTo(g_op->agent, pos);
+        if (g_op->mode == eMode::SHOWN || g_op->film)
+            agentcursor::moveTo(g_op->agent, pos, g_op->film ? windowOf(*g_op) : nullptr);
         if (direct()) {
             if (clearAt())
                 hiddenEnter(*g_op, pos);
@@ -1434,8 +1531,8 @@ namespace {
         g_op->target = pos;
         // The element's surface is that of the first point alone.
         g_op->onSurface.reset();
-        if (g_op->mode == eMode::SHOWN)
-            agentcursor::moveTo(g_op->agent, pos);
+        if (g_op->mode == eMode::SHOWN || g_op->film)
+            agentcursor::moveTo(g_op->agent, pos, g_op->film ? windowOf(*g_op) : nullptr);
         if (direct()) {
             if (!g_op->down.empty() || clearAt())
                 hiddenMove(*g_op, pos);
@@ -1461,7 +1558,7 @@ namespace {
             return;
         if (direct() ? !(clearAt() && hiddenReady(*g_op)) : !targetUnderPointer())
             return;
-        if (g_op->mode == eMode::SHOWN)
+        if (g_op->mode == eMode::SHOWN || g_op->film)
             agentcursor::press(g_op->agent);
         if (direct())
             hiddenButton(*g_op, button, WL_POINTER_BUTTON_STATE_PRESSED);
@@ -1486,7 +1583,7 @@ namespace {
         if (IT == g_op->down.end())
             return;
         g_op->down.erase(IT);
-        if (g_op->mode == eMode::SHOWN && g_op->down.empty())
+        if ((g_op->mode == eMode::SHOWN || g_op->film) && g_op->down.empty())
             agentcursor::release(g_op->agent);
         if (direct()) {
             hiddenButton(*g_op, button, WL_POINTER_BUTTON_STATE_RELEASED);
@@ -1544,7 +1641,7 @@ namespace {
         g_op.reset();
         dropTimer(op.timer);
         op.focusChange.reset();
-        if (op.mode == eMode::SHOWN && !op.down.empty())
+        if ((op.mode == eMode::SHOWN || op.film) && !op.down.empty())
             agentcursor::release(op.agent);
         // An action that ends early (an error, `end`, an unload) still lets go of every button it holds. A drag and
         // drop started while it held one is its own, since the user's input is held meanwhile: it is cancelled rather
@@ -1637,17 +1734,22 @@ namespace {
     // Runs a queued pointer action. A SHOWN one starts once the agent cursor has glided to its first point; the user's
     // input runs on through the glide, and the queue waits behind it.
     std::optional<std::string> beginPointer(SOp op, uint64_t ticket) {
-        if (op.mode != eMode::SHOWN)
+        op.film = op.mode == eMode::HIDDEN && agentcursor::filmed(windowOf(op));
+        if (op.mode != eMode::SHOWN && !op.film)
             return startPointer(std::move(op), ticket);
         g_gliding         = true;
         const auto START  = op.start;
         const auto AGENT  = op.agent;
-        agentcursor::glideTo(AGENT, START, [op = std::move(op), ticket]() mutable {
-            g_gliding = false;
-            if (const auto ERROR = startPointer(std::move(op), ticket))
-                complete(ticket, errorReply(*ERROR));
-            startNext();
-        });
+        const auto FILM   = op.film ? windowOf(op) : nullptr;
+        agentcursor::glideTo(
+            AGENT, START,
+            [op = std::move(op), ticket]() mutable {
+                g_gliding = false;
+                if (const auto ERROR = startPointer(std::move(op), ticket))
+                    complete(ticket, errorReply(*ERROR));
+                startNext();
+            },
+            FILM);
         return std::nullopt;
     }
 
@@ -2020,6 +2122,38 @@ namespace {
         if (!pointer)
             return nullptr;
         return reinterpret_cast<CursorSessionFn>(g_cursorSessionHook->m_original)(self, client, pointer);
+    }
+
+    // A window capture is drawn by CScreenshareFrame::renderWindow, which sends only the window stages of Hyprland's
+    // render event. A capture that asked for a cursor (ext-image-copy-capture's paint_cursors, grim -c) gets the agent
+    // cursors drawn above the window, and films the window (see agentcursor): the capture is where a hidden window's
+    // cursor shows, and the one place any capture shows one. A capture without it, as a model's `shot`, is untouched.
+    struct SFrameSession { friend constexpr auto member(SFrameSession); };
+    struct SFrameOverlay { friend constexpr auto member(SFrameOverlay); };
+    struct SSessionWindow { friend constexpr auto member(SSessionWindow); };
+    struct SSessionType { friend constexpr auto member(SSessionType); };
+    template struct SAccess<&Screenshare::CScreenshareFrame::m_session, SFrameSession>;
+    template struct SAccess<&Screenshare::CScreenshareFrame::m_overlayCursor, SFrameOverlay>;
+    template struct SAccess<&Screenshare::CScreenshareSession::m_window, SSessionWindow>;
+    template struct SAccess<&Screenshare::CScreenshareSession::m_type, SSessionType>;
+
+    using RenderWindowFn         = void (*)(Screenshare::CScreenshareFrame*, Render::CRenderContext&);
+    CFunctionHook* g_frameHook = nullptr;
+
+    void hkRenderWindow(Screenshare::CScreenshareFrame* self, Render::CRenderContext& ctx) {
+        const auto SESSION = (self->*member(SFrameSession{})).get();
+        const auto WINDOW  = SESSION && (SESSION->*member(SSessionType{})) == Screenshare::SHARE_WINDOW ? (SESSION->*member(SSessionWindow{})).lock() : nullptr;
+        auto&      overlay = self->*member(SFrameOverlay{});
+        const bool WAS     = overlay;
+        if (WINDOW && WAS && agentcursor::g_state) {
+            agentcursor::film(WINDOW);
+            const auto BOX = WINDOW->getWindowMainSurfaceBox();
+            agentcursor::g_capture = agentcursor::SCapture{WINDOW, BOX.w > 0 ? self->bufferSize().x / BOX.w : 1.0};
+            overlay                = false; // Hyprland would add the user's own pointer; the frame shows the agent's alone
+        }
+        reinterpret_cast<RenderWindowFn>(g_frameHook->m_original)(self, ctx);
+        overlay = WAS;
+        agentcursor::g_capture.reset();
     }
 
     // A gesture or relative pointer asked for with an agent pointer (Hyprland ignores which pointer it names).
@@ -3359,6 +3493,7 @@ namespace {
             uint32_t              code = 0;
             SMods                 mods;
             std::vector<uint32_t> modifiers;
+            bool                  bare = false;
         };
         std::map<std::pair<uint32_t, bool>, SResolved> found;
         KeyEvents                                      out;
@@ -3370,16 +3505,22 @@ namespace {
             const bool BARE = event.kind == SKeyEvent::KEY_OF;
             auto       it   = found.find({event.code, BARE});
             if (it == found.end()) {
-                const auto KEY = keyFor(keyboard->m_xkbKeymap, keysymOf(event.code), keyboard->m_modifiersState.locked, keyboard->m_modifiersState.group, BARE);
+                const auto& STATE = keyboard->m_modifiersState;
+                // A chord's character is the key that gives it unmodified, else that key with the modifiers it needs,
+                // as a hand presses ctrl++ as ctrl+shift+= on a US keymap.
+                auto       KEY       = keyFor(keyboard->m_xkbKeymap, keysymOf(event.code), STATE.locked, STATE.group, BARE);
+                const bool UNMODIFIED = BARE && KEY;
+                if (!KEY && BARE)
+                    KEY = keyFor(keyboard->m_xkbKeymap, keysymOf(event.code), STATE.locked, STATE.group, false);
                 if (!KEY)
-                    return std::format("no key on the active keymap gives U+{:04X}{}", event.code, BARE ? " without modifiers" : "");
-                const auto MODIFIERS = modifierKeys(keyboard->m_xkbKeymap, KEY->second.depressed, keyboard->m_modifiersState.group);
+                    return std::format("no key on the active keymap gives U+{:04X}", event.code);
+                const auto MODIFIERS = modifierKeys(keyboard->m_xkbKeymap, KEY->second.depressed, STATE.group);
                 if (!MODIFIERS)
                     return std::format("no key on the active keymap holds the modifiers U+{:04X} needs", event.code);
-                it = found.emplace(std::pair{event.code, BARE}, SResolved{.code = KEY->first, .mods = KEY->second, .modifiers = *MODIFIERS}).first;
+                it = found.emplace(std::pair{event.code, BARE}, SResolved{.code = KEY->first, .mods = KEY->second, .modifiers = *MODIFIERS, .bare = UNMODIFIED}).first;
             }
             const auto& KEY = it->second;
-            if (BARE) {
+            if (KEY.bare) {
                 out.push_back({.code = KEY.code, .press = event.press, .locks = std::nullopt});
                 continue;
             }
@@ -4144,7 +4285,7 @@ namespace {
             const auto IT      = g_agents.find(name);
             const auto ADOPTED = IT == g_agents.end() ? nullptr : adoption(IT->second, WINDOW);
             if (!ADOPTED)
-                return refuse(std::format("{} is not adopted by agent {}", describe(WINDOW), name), "gone");
+                return refuse(std::format("{} is not adopted by agent {}", describe(WINDOW), name), "not_found");
             if (WINDOW->m_workspace == ADOPTED->hidden && userIn(WINDOW))
                 return refuse(std::format("the user's focus or pointer is in {}, and returning it would take them from there", describe(WINDOW)));
             giveBack(*ADOPTED);
@@ -4254,9 +4395,16 @@ namespace {
     }
 
     IPC::Socket1::SResponse cursorCommand(const std::vector<std::string>& args, const std::string& agent) {
+        // `cursor press` and `cursor release` squeeze and let go of the cursor where it is, for show only: no input is sent.
+        if (args.size() == 3 && (args[2] == "press" || args[2] == "release")) {
+            if (!agentcursor::g_state)
+                return refuse("the agent cursor is not running");
+            args[2] == "press" ? agentcursor::pressVisual(agent) : agentcursor::releaseVisual(agent);
+            return IPC::Socket1::SResponse(okReply());
+        }
         const auto X = args.size() == 4 ? number(args[2]) : std::nullopt, Y = args.size() == 4 ? number(args[3]) : std::nullopt;
         if (!X || !Y)
-            return refuse("usage: deskpilot cursor [agent=NAME] <x> <y>");
+            return refuse("usage: deskpilot cursor [agent=NAME] <x> <y> | cursor [agent=NAME] press|release");
         const Vector2D POINT{*X, *Y};
         return enqueue([POINT, agent](uint64_t ticket) -> std::optional<SRefusal> {
             g_gliding = true;
@@ -4421,6 +4569,7 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE handle) {
     g_seatButtonHook    = hook(handle, "CSeatManager", "sendPointerButton", reinterpret_cast<void*>(&hkSendPointerButton));
     g_shapeHook         = hook(handle, "CCursorShapeProtocol", "onSetShape", reinterpret_cast<void*>(&hkOnSetShape));
     g_cursorSessionHook = hook(handle, "CScreenshareManager", "newCursorSession", reinterpret_cast<void*>(&hkNewCursorSession));
+    g_frameHook         = hook(handle, "Screenshare::CScreenshareFrame", "renderWindow", reinterpret_cast<void*>(&hkRenderWindow));
     g_swipeHook         = hook(handle, "CPointerGesturesProtocol", "onGetSwipeGesture", reinterpret_cast<void*>(&hkGetForPointer<g_swipeHook, eInert::SWIPE, CPointerGesturesProtocol, CZwpPointerGesturesV1>));
     g_pinchHook         = hook(handle, "CPointerGesturesProtocol", "onGetPinchGesture", reinterpret_cast<void*>(&hkGetForPointer<g_pinchHook, eInert::PINCH, CPointerGesturesProtocol, CZwpPointerGesturesV1>));
     g_holdHook          = hook(handle, "CPointerGesturesProtocol", "onGetHoldGesture", reinterpret_cast<void*>(&hkGetForPointer<g_holdHook, eInert::HOLD, CPointerGesturesProtocol, CZwpPointerGesturesV1>));

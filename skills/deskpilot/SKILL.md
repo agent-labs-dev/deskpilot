@@ -26,7 +26,8 @@ Recording access for the app running deskpilot; an `unavailable` error names the
    window on a hidden workspace or scrolled off screen; acting on it is refused unless you pass `--show`, which
    focuses it and moves the user's view, so ask the user before `--show`.
    To work out of the user's sight, set `DESKPILOT_AGENT` to a name and start your own copy of the app with
-   `deskpilot launch CMD...`: it and every window it opens later stay on your hidden workspace, and `--hidden` acts
+   `deskpilot launch CMD...`: it and every window it opens later stay on your hidden workspace (a file dialog of a Qt,
+   Chromium or Electron app may open on the user's screen through their portal, so avoid one), and `--hidden` acts
    on them, or windows explicitly handed to you with `adopt ADDRESS`, on `shot`, `click`, `scroll`, `drag`, `hover`,
    `elements`, `key`,
    `type`, `paste` and `wait-for --changed`. An XWayland window is refused hidden. Hidden keys need `--window` and
@@ -48,12 +49,16 @@ Recording access for the app running deskpilot; an `unavailable` error names the
    refused. `deskpilot drag WINDOW X1 Y1 X2 Y2 --shot ID` presses, moves and releases (sliders, selections, drag and
    drop within the window). `deskpilot hover WINDOW X Y --shot ID` rests the pointer there and prints a shot taken
    meanwhile, for tooltips; `--click X2 Y2` clicks next, for a menu that opens on hover.
+   To film a run for a person, `deskpilot record WINDOW -o clip.mp4` (MCP `record_start` and `record_stop`; `--hidden`
+   for a window you launched): the clip shows the agent cursor landing and pressing, which `shot` never does.
+   MCP `cursor_press` (down, then up) is a visual-only press of the cursor where it is, for an app you drive some
+   other way; it sends no input.
    For a GTK or Qt app, `deskpilot elements WINDOW` lists its accessibility tree with ids, and
    `--element ID` replaces X Y on `click`, `move`, `scroll` and `hover`. Prefer it where the app has a tree: the
    app reports where the element is. An app without one says so; use a shot instead. An item of an open GTK 3 menu
    or combo box is clicked on its popup; an item `elements` lists with zero bounds is on a popup that cannot be told
    apart, so take a new snapshot or use the keyboard.
-5. Type with `deskpilot type "TEXT" --window WINDOW` and press keys with `deskpilot key ctrl+a --window WINDOW`. Games
+5. Type with `deskpilot type "TEXT" --window WINDOW` and press keys with `deskpilot key ctrl+a --window WINDOW` (`ctrl++` is Ctrl and `+`). Games
    read keys once per frame, so add `--delay 0.1` or more for them (other apps take keys with no delay; use `paste` for long text), and `key --hold SECONDS` to keep a key down: each key is held that long, with the same gap
    before the next. Text arrives as written on the user's keymap; a character no key on it types is an error, so
    send such text, or a long one, with `deskpilot paste "TEXT" --window WINDOW` (`--keys ctrl+shift+v` in a
@@ -77,6 +82,10 @@ For an app that needs its own X server or clipboard, set `DESKPILOT_AGENT=NAME` 
 separate from the user's desktop. `--hidden` may focus a window inside it without changing the user's view.
 Use a stable agent name to reuse its persistent profile. Stop it with `deskpilot --session stop` when done.
 For browsers, prefer fastbrowse. A new isolated profile does not contain the user's signed-in browser sessions.
+`eval "$(deskpilot --session env)"` exports that desktop's `WAYLAND_DISPLAY`, `HYPRLAND_INSTANCE_SIGNATURE`,
+runtime directory and bus addresses for other tools, such as `wf-recorder`; stop what you start that way yourself.
+In a container with no compositor (`DESKPILOT_STANDALONE=1`, as in deskpilot's image) `--session` runs the desktop
+on the host's vkms display instead.
 
 For native GTK 4 apps, `key` and `type` support `--agent-keyboard` (`agent_keyboard` over MCP). This uses the
 independent seat's keyboard and the active keymap, including while the user's keyboard focus is in the same app.
@@ -86,6 +95,9 @@ the events. Use the regular route for Qt, Chromium, XWayland and paste.
 ## Chaining known steps
 
 Use `deskpilot batch WINDOW [FILE] --final-shot` or MCP `batch` to run 1 to 32 known actions in one request.
+To record a demo of known steps, write a recipe and run `deskpilot recipe check FILE` then
+`deskpilot recipe run FILE --record demo.mp4`: it replays `pause`, `wait` and `shot` steps between the batch actions
+and films the window, agent cursor included, as `deskpilot record` does. See [recipes.md](../../docs/recipes.md).
 The CLI reads a JSON array from the file or stdin. For example, after inspecting the focused text field in
 that window, `[{"action":"key","combo":"ctrl+a"},{"action":"type","text":"Hello"}]` replaces its contents.
 Supported steps are `click`, `move`, `scroll`, `drag`, `key`, `type` and `paste`, with element and shot IDs
@@ -115,11 +127,13 @@ press into the focused window, which may be the user's own: always pass `--windo
 
 ## Errors
 
-Each error starts with a code: `deskpilot: CODE: message`, or in MCP the result's structured `code`.
+Each error starts with a code: `deskpilot: CODE: message`, `{"code", "message"}` on stderr with `--json`, or in MCP the
+result's structured `code`. An MCP tool refuses an argument it does not take.
 
 - "is not on screen": the window is on a hidden workspace or scrolled off. Ask the user before passing `--show`,
   or `deskpilot launch` your own copy of the app and act on it with `--hidden`.
-- `not_found` with `--hidden`: hidden acts only on windows you launched or explicitly adopted.
+- `not_found` with `--hidden`: hidden acts only on windows you launched or explicitly adopted. From `release`: you
+  did not adopt that window.
 - "take a new shot": the window changed size since the shot. Shoot again and pick the point anew.
 - A plugin build failure names the missing headers or compiler.
 - A stale `HYPRLAND_INSTANCE_SIGNATURE` is handled: deskpilot finds the live Hyprland, and stops with a list when

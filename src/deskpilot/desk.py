@@ -14,10 +14,13 @@ import os
 import shlex
 import shutil
 import subprocess
+import threading
 import time
 from pathlib import Path
+from typing import BinaryIO
 
 from . import a11y, clipboard, keys, screen
+from . import record as recording
 from .backend import owner_from_env
 from .base import BaseDesk
 from .errors import EXPECTED, NotVisible, SessionLocked, error_code
@@ -179,7 +182,8 @@ class Desk(BaseDesk):
             "WINEPREFIX",
             "XDG_RUNTIME_DIR",
         )
-        argv = ["env", "--chdir", os.getcwd(), *[f"{k}={os.environ[k]}" for k in names if k in os.environ], *command]
+        env = self.hypr.client_env()
+        argv = ["env", "--chdir", os.getcwd(), *[f"{k}={env[k]}" for k in names if k in env], *command]
         shell_command = shlex.join(argv)
         self.hypr._dispatch(f"hl.dsp.exec_cmd({json.dumps(shell_command)})", f"exec {shell_command}")
         deadline = time.monotonic() + timeout
@@ -210,9 +214,16 @@ class Desk(BaseDesk):
         workspace = agent["workspace"]
         # Hyprland reuses a closed window's address, so a window is known by its stable id too.
         before = {(w.address, w.stable_id) for w in self.hypr.windows()}
-        env = {**os.environ, "HL_EXEC_RULE_TOKEN": agent["token"]}
+        env = {**self.hypr.client_env(), "HL_EXEC_RULE_TOKEN": agent["token"]}
         # Hyprland places a window carrying this on the workspace its launcher was started from, ahead of rules.
         env.pop("HL_INITIAL_WORKSPACE_TOKEN", None)
+        # GTK hands a file chooser to xdg-desktop-portal on the session bus, and the user's portal process draws it on
+        # the user's compositor: on their workspace, and off the instance driven when that is nested. These switches
+        # make GTK 4 and GTK 3 draw it in the app, so it is one of the app's windows, placed with it. The bus stays
+        # the user's, since a bus of the app's own would start its own accessibility bus and hide its tree. A --session
+        # desktop needs neither: a portal its private bus starts draws on its own compositor.
+        env["GDK_DEBUG"] = ",".join(filter(None, (env.get("GDK_DEBUG"), "no-portals")))
+        env["GTK_USE_PORTAL"] = "0"
         self._launched = [p for p in self._launched if p.poll() is None]
         if shutil.which(command[0], path=env.get("PATH")) is None:
             raise ValueError(f"cannot start {command[0]}: No such file or directory")
@@ -254,6 +265,14 @@ class Desk(BaseDesk):
             if proc.poll() not in (None, 0):
                 raise RuntimeError(f"{command[0]} exited {proc.returncode} before opening a window")
             if time.monotonic() >= deadline:
+                if proc.poll() == 0:
+                    # Exiting cleanly without a window is what a single-instance app does when it hands the request
+                    # to its running copy; an app that forks off its real process can too, so this is not refused early.
+                    raise TimeoutError(
+                        f"{command[0]} exited without a window of its own: a single-instance app hands its window to "
+                        "a copy already running, which opens nothing here. Start it with its own instance (as "
+                        "gnome-text-editor --standalone does) or adopt that copy's window"
+                    )
                 raise TimeoutError(f"{command[0]} opened no window within {timeout:g}s")
             time.sleep(0.1)
 
@@ -312,6 +331,32 @@ class Desk(BaseDesk):
         hidden: bool = False,
     ) -> screen.Shot:
         return screen.capture(self._shootable(self._target(query, show, hidden, refresh=True)), out, max_width)
+
+    def record(
+        self,
+        query: str,
+        out: Path | BinaryIO,
+        stop: threading.Event,
+        fps: int = recording.FPS,
+        seconds: float | None = None,
+        hidden: bool = False,
+        started: threading.Event | None = None,
+    ) -> recording.Result:
+        """Film a window, with the agent cursor the plugin draws into the capture, into an mp4 at `out` or, given a
+        binary stream, as constant-rate PPM frames. Frames are of the window as it is each time, hidden included.
+        `started` is set when the first frame is in an mp4 at `out`."""
+        if not 1 <= fps <= 60:
+            raise ValueError("fps is between 1 and 60")
+        win = self._shootable(self._target(query, False, hidden, refresh=True))
+        # The cursor in the frames is the plugin's, so it is loaded, at this source's build, before the first capture.
+        self.plugin.load()
+
+        def take() -> bytes:
+            return screen.frame(win)
+
+        if isinstance(out, Path):
+            return recording.to_file(take, out, stop, fps, seconds, started)
+        return recording.to_stdout(take, out, stop, fps, seconds)
 
     def _shootable(self, win: Window) -> Window:
         """The window, if a shot of it can get a frame. Hyprland copies a window's frame only while the window lies
@@ -426,6 +471,12 @@ class Desk(BaseDesk):
         if take_pointer:
             self._take_pointer(win, gx, gy)
         return gx, gy
+
+    def press_cursor(self, down: bool) -> None:
+        """Squeeze or let go of the agent cursor where it is, for show only. It sends no input: it is for an app driven
+        some other way, which marks the press it makes itself so a recording shows it."""
+        if self._mode(False) == "shown":
+            self.plugin.cursor_press(down)
 
     def click(
         self,
@@ -593,6 +644,8 @@ class Desk(BaseDesk):
     ) -> None:
         """Type text as written, on the user's own keymap. Each key is held `delay` seconds, and the next follows
         `delay` seconds later."""
+        if not text:
+            raise ValueError("no text to type")
         if agent_keyboard and query is None:
             raise ValueError("agent keyboard needs a named window")
         target = self._key_target(query, take_focus, show, hidden, focus_private=not agent_keyboard)
@@ -611,20 +664,22 @@ class Desk(BaseDesk):
     ) -> None:
         """Paste text into a window: it becomes that window's clipboard alone, never the user's, and `combo` (the app's
         paste chord, ctrl+shift+v in most terminals) is pressed there. Any text pastes, whatever the keymap types."""
+        if not text:
+            raise ValueError("no text to paste")
         target = self._key_target(query, take_focus, show, hidden)
         if self._isolated() and target.xwayland:
-            clipboard.write(text)
+            clipboard.write(text, self.hypr.client_env())
             self.plugin.keys(target.address, keys.chord_words(combo), mode="plain")
         else:
             self.plugin.keys(target.address, keys.chord_words(combo), paste=text, mode=self._mode(hidden, cursor=False))
 
     def clipboard(self) -> str:
         """The user's clipboard text."""
-        return clipboard.read()
+        return clipboard.read(self.hypr.client_env())
 
     def set_clipboard(self, text: str) -> None:
         """Replace the user's clipboard with text."""
-        clipboard.write(text)
+        clipboard.write(text, self.hypr.client_env())
 
     def _key_target(
         self,

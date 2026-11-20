@@ -370,3 +370,16 @@ def test_a_new_window_at_a_reused_address_has_no_prior_elements(tmp_path, monkey
             a11y.locate(reused, "e2", bus=fake)
         assert error.value.code == "stale"
     assert a11y.locate(window(), "e2", bus=fake) == a11y.Located(10, 20, 80, 20)
+
+
+def test_an_element_with_a_negative_size_has_no_bounds(tmp_path, monkeypatch):
+    # GTK 4 leaves GetExtents' width and height unset for a stack page whose widget is not realized.
+    monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path))
+    fake = FakeBus()
+    fake.bounds["/button"] = (0, 0, -554081264, 32650)
+    tree = a11y.snapshot(window(), bus=fake)
+    button = tree.children[0]
+    assert (button.x, button.y, button.width, button.height) == (0, 0, 0, 0)
+    with pytest.raises(a11y.A11yError) as error:
+        a11y.locate(window(), "e2", bus=fake)
+    assert error.value.code == "offscreen"

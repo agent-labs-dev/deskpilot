@@ -36,8 +36,9 @@ AGENT_NAME = re.compile(r"[A-Za-z0-9._-]{1,32}")
 
 class PluginError(RuntimeError):
     """The plugin's refusal. `code` is the plugin's word for its kind: covered (another window or layer is over the
-    point), gone (the window or surface went away), owns_clipboard (a paste's target app holds the user's clipboard),
-    busy (its queue is full), unavailable, or refused."""
+    point), gone (the window or surface went away), not_found (release of a window the agent has not adopted),
+    owns_clipboard (a paste's target app holds the user's clipboard), busy (its queue is full), invalid, unavailable, or
+    refused."""
 
     def __init__(self, message: str, code: str = "refused"):
         super().__init__(message)
@@ -215,6 +216,11 @@ class Plugin:
         """Glide this agent's cursor to a global point, in turn with the actions, and return once it lands."""
         return self._call("cursor", *self._agent(), str(gx), str(gy))
 
+    def cursor_press(self, down: bool) -> dict:
+        """Squeeze (`down`) or let go of this agent's cursor where it is, with its press pulse, for show only: no input
+        is sent, so it marks a press an app takes some other way, such as a browser over CDP."""
+        return self._call("cursor", *self._agent(), "press" if down else "release")
+
     def register(self, owner: int | None = None) -> dict:
         """Have every window this agent launches open on its hidden workspace, and mark the agent in use. `owner` is
         the process whose exit stops the agent; with none it stops after 30 minutes unused. Returns the workspace and
@@ -332,7 +338,16 @@ class Plugin:
         return running
 
     def build(self) -> Path:
-        commit = self.running_commit()
+        """Build for the running Hyprland, or for the installed headers when no Hyprland is running, as in an image
+        build; a load still checks the running Hyprland's commit against the build's name."""
+        try:
+            self.commit()
+        except HyprctlError:
+            commit = headers_commit()
+            if commit is None:
+                raise PluginError("no Hyprland headers are installed: install Hyprland", "unavailable") from None
+        else:
+            commit = self.running_commit()
         out = build_path(commit)
         out.parent.mkdir(parents=True, exist_ok=True)
         result = subprocess.run(

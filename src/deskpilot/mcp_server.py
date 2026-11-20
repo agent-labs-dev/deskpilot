@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import functools
 import os
+import threading
 from importlib.metadata import version
+from pathlib import Path
 from typing import Annotated, Literal
 
 from mcp.server.mcpserver import Image, MCPServer
@@ -47,7 +49,15 @@ def _tool(**options):
                     is_error=True,
                 )
 
-        return mcp.tool(**options)(wrapper)
+        registered = mcp.tool(**options)(wrapper)
+        # The SDK drops an argument a tool does not take, so one the tool lacks (wait_for's hidden, a misspelt name)
+        # would run the action without it, where the CLI refuses the flag. Refuse it, and say so in the schema.
+        tool = mcp._tool_manager.get_tool(options.get("name") or fn.__name__)
+        assert tool is not None
+        tool.fn_metadata.arg_model.model_config["extra"] = "forbid"
+        tool.fn_metadata.arg_model.model_rebuild(force=True)
+        tool.parameters["additionalProperties"] = False
+        return registered
 
     return register
 
@@ -73,6 +83,44 @@ def shot(window: str, max_width: int = 1400, show: bool = False, hidden: bool = 
     screen is an error unless show is set, which focuses it; hidden captures a window the agent launched or adopted."""
     taken = desk.shot(window, max_width=max_width, show=show, hidden=hidden)
     return [Image(path=taken.path), taken.to_dict()]
+
+
+_recordings: dict[str, tuple[threading.Thread, threading.Event, list]] = {}
+
+
+@_tool()
+def record_start(window: str, path: str, fps: int = 25, hidden: bool = False) -> dict:
+    """Start filming a window into the mp4 at `path`, with the agent cursor the plugin draws: brackets closing in as it
+    lands, the marker squeezing on a press. One recording per path; end it with record_stop. Screenshots from `shot`
+    never show the cursor. hidden films a window the agent launched or adopted, out of view."""
+    if path in _recordings:
+        raise ValueError(f"already recording to {path}")
+    stop, outcome = threading.Event(), []
+
+    def film() -> None:
+        try:
+            outcome.append(desk.record(window, Path(path), stop, fps, None, hidden))
+        except EXPECTED as error:
+            outcome.append(error)
+
+    thread = threading.Thread(target=film, daemon=True)
+    thread.start()
+    _recordings[path] = (thread, stop, outcome)
+    return {"recording": path}
+
+
+@_tool()
+def record_stop(path: str) -> dict:
+    """End the recording to `path` and return its frame count and length once the mp4 is written."""
+    if path not in _recordings:
+        raise ValueError(f"not recording to {path}")
+    thread, stop, outcome = _recordings.pop(path)
+    stop.set()
+    thread.join()
+    if isinstance(outcome[0], BaseException):
+        raise outcome[0]
+    outcome[0].raise_if_empty()
+    return outcome[0].to_dict() | {"path": path}
 
 
 @_tool()
@@ -124,6 +172,15 @@ def move(
     the user's pointer there. For a hover the app must see, use hover, which leaves the user's pointer alone."""
     gx, gy = desk.move(window, x, y, take_pointer=take_pointer, shot=shot, show=show, element=element)
     return {"x": gx, "y": gy}
+
+
+@_tool()
+def cursor_press(down: bool) -> dict:
+    """Show a press: squeeze the agent cursor where it is and ring it (down), or let go (not down). VISUAL ONLY: no
+    input is sent and the window, the user's pointer and focus are untouched. For an app you drive some other way (a
+    browser over CDP): call it exactly when that press and release happen, so a recording shows them."""
+    desk.press_cursor(down)
+    return {"down": down}
 
 
 @_tool()

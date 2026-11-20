@@ -1,6 +1,6 @@
 {
   "name": "deskpilot",
-  "version": "0.7.4",
+  "version": "0.8.0",
   "description": "Desktop control for agents on Linux (Hyprland), Windows and macOS: screenshot a window, read its accessibility tree, then click, scroll and type in it while the user keeps their own pointer and keyboard focus.",
   "author": {
     "name": "Cillian Berragan",
