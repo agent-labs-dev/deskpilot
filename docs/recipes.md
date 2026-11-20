@@ -128,14 +128,15 @@ write the report in GNOME Text Editor, then recompute both figures with `awk` to
 same `1238x758` window, so the clips join without re-encoding:
 
 ```sh
+mkdir -p parts
 for part in 1-terminal 2-calculator 3-text-editor 4-check; do
   deskpilot recipe run recipes/expenses-$part.json --record parts/$part.mp4
-  echo "file '$part.mp4'" >> parts/list.txt
 done
+printf "file '%s.mp4'\n" 1-terminal 2-calculator 3-text-editor 4-check > parts/list.txt
 ffmpeg -f concat -safe 0 -i parts/list.txt -c copy -movflags +faststart trip-expenses.mp4
 ```
 
-Run it from the repository root, since the terminal parts open in `recipes/fixtures`, and create `parts/` first.
+Run it from the repository root, since the terminal parts open in `recipes/fixtures`.
 [The result](../assets/recipes/trip-expenses.mp4) was recorded this way inside `scripts/nested.py`'s compositor.
 
 ## Limits
