@@ -64,14 +64,14 @@ class SmokeApplication(AppKit.NSApplication):
             save()
         if not cover and kind == AppKit.NSEventTypeKeyDown:
             state["keys"].append([str(event.charactersIgnoringModifiers()), bool(event.modifierFlags() & SHORTCUT)])
+            # The field binds Command-A to select all itself, as Tk's entry binds Control-A, so the chord works
+            # whether or not the app is in front, as a key to a background Tk entry does on the other platforms.
+            command = event.modifierFlags() & AppKit.NSEventModifierFlagCommand
+            if mine and command and event.charactersIgnoringModifiers() == "a":
+                window.firstResponder().selectAll_(None)
+                save()
+                return
         objc.super(SmokeApplication, self).sendEvent_(event)
-        if not cover and kind == AppKit.NSEventTypeKeyDown:  # TEMPORARY CI DEBUG
-            responder = window.firstResponder()
-            selected = responder.selectedRange() if hasattr(responder, "selectedRange") else None
-            menu = self.mainMenu()
-            state.setdefault("debug", []).append([str(event.charactersIgnoringModifiers()), bool(self.isActive()),
-                self.keyWindow() is not None, type(responder).__name__, str(selected), int(event.windowNumber()),
-                menu.numberOfItems() if menu else None, int(event.modifierFlags())])  # fmt: skip
         if not cover and kind in (AppKit.NSEventTypeKeyDown, AppKit.NSEventTypeKeyUp):
             save()
 
@@ -156,12 +156,6 @@ def colored(cls, frame: tuple[int, int, int, int], color):
 
 app = SmokeApplication.sharedApplication()
 app.setActivationPolicy_(AppKit.NSApplicationActivationPolicyRegular)
-# Select All lives in the Edit menu in a Mac app, so Command-A reaches the field only through one.
-menubar, holder, edit = AppKit.NSMenu.alloc().init(), AppKit.NSMenuItem.alloc().init(), AppKit.NSMenu.alloc().init()
-edit.addItemWithTitle_action_keyEquivalent_("Select All", "selectAll:", "a")
-holder.setSubmenu_(edit)
-menubar.addItem_(holder)
-app.setMainMenu_(menubar)
 style = AppKit.NSWindowStyleMaskTitled | AppKit.NSWindowStyleMaskClosable
 handler = Handler.alloc().init()
 

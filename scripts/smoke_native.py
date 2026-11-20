@@ -20,9 +20,8 @@ from collections.abc import Callable
 from pathlib import Path
 
 APP = Path(__file__).with_name("smoke_app_macos.py" if sys.platform == "darwin" else "smoke_app.py")
-# Select all: Command-A on macOS, Control-A elsewhere. AppKit sends a menu shortcut such as Command-A only to the key
-# window, which an app in the background does not have, so on macOS the chord takes focus first.
-SELECT_ALL = ("cmd+a", "--take-focus") if sys.platform == "darwin" else ("ctrl+a",)
+# Select all: Command-A on macOS, Control-A elsewhere.
+SELECT_ALL = "cmd+a" if sys.platform == "darwin" else "ctrl+a"
 work = Path(tempfile.mkdtemp(prefix="deskpilot-smoke-"))
 
 
@@ -146,8 +145,8 @@ def app_smoke() -> None:  # noqa: PLR0915 - one check per action, in the order t
         deskpilot("click", *act["entry"])
         deskpilot("type", "hello deskpilot", "--window", address)
         until(state, lambda s: s["entry"] == "hello deskpilot", "typed text")
-        deskpilot("key", *SELECT_ALL, "--window", address)
-        until(state, lambda s: ["a", True] in s["keys"], SELECT_ALL[0])
+        deskpilot("key", SELECT_ALL, "--window", address)
+        until(state, lambda s: ["a", True] in s["keys"], SELECT_ALL)
         deskpilot("key", "BackSpace", "--window", address)
         until(state, lambda s: s["entry"] == "", "a chord then a key")
 
