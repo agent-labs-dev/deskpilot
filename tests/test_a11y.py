@@ -629,6 +629,16 @@ def test_an_element_with_a_negative_size_has_no_bounds(tmp_path, monkeypatch):
     assert error.value.code == "offscreen"
 
 
+def test_text_leaves_out_the_marks_where_child_elements_sit(tmp_path, monkeypatch):
+    # Chromium gives a paragraph holding a link the text "See \ufffc for more", and a document only the marks.
+    monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path))
+    fake = FakeBus()
+    fake.text["/button"] = "See \ufffc for more"
+    assert a11y.snapshot(window(), bus=fake).children[0].text == "See  for more"
+    fake.text["/button"] = "\ufffc\ufffc"
+    assert a11y.snapshot(window(), bus=fake).children[0].text == ""
+
+
 def test_a_gtk3_cell_scrolled_out_of_view_has_no_bounds(tmp_path, monkeypatch):
     # yad --list with 200 rows gave row 173 the extents (-2147483648, -2147483648, 1184, 23), still "showing".
     monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path))

@@ -57,6 +57,7 @@ GONE_ERRORS = frozenset(
 # The app's whole bus name is gone, not one of its objects: its tree cannot be read on with some elements left out.
 APP_GONE_ERRORS = frozenset({"org.freedesktop.DBus.Error.ServiceUnknown", "org.freedesktop.DBus.Error.NameHasNoOwner"})
 NO_POSITION = -(2**31)
+EMBEDDED_OBJECT = "\ufffc"
 TEXT_LIMIT = 4000
 
 _STATE_NAMES = (
@@ -618,7 +619,9 @@ def _text(bus: _Bus, destination: str, object_path: str, interfaces: tuple[str, 
             (0, length),
         )
     )
-    text = str(reply)
+    # AT-SPI puts U+FFFC in a text where a child element sits. The child is listed as an element of its own, so the
+    # mark says nothing: a Chromium page's document was 121 of them and no words.
+    text = str(reply).replace(EMBEDDED_OBJECT, "")
     if count > TEXT_LIMIT or len(text) > TEXT_LIMIT:
         return text[:TEXT_LIMIT] + " [truncated]"
     return text
