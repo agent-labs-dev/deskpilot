@@ -77,7 +77,8 @@ deskpilot shot WINDOW
 Read the image at the printed path, then click a point in that image with
 `deskpilot click WINDOW X Y --shot SHOT_ID`, replacing `X`, `Y` and `SHOT_ID` with the point and printed shot ID.
 A resized window or a point outside the recorded window is refused. Take a fresh shot to verify the result;
-use `wait-for WINDOW --changed SHOT_ID` when the app needs time to draw it.
+use `wait-for WINDOW --changed SHOT_ID` when the app needs time to draw it. `-o FILE` (`out` over MCP) writes the
+image to a path you choose instead of deskpilot's cache, so you can remove it however the call ends.
 
 [More actions and targeting rules](docs/reference.md) | [Accessibility and popup handling](docs/reference.md#use)
 
