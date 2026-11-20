@@ -3,7 +3,7 @@ name: Release
 # Pushing a vX.Y.Z tag publishes a GitHub release whose notes are that version's CHANGELOG.md entry, then uploads
 # the package to PyPI through trusted publishing and pushes the AUR package. The tag must be on main, where CI has
 # already checked the commit. The AUR job needs AUR_SSH_PRIVATE_KEY in the `aur` environment: the private half of a
-# key on the maintainer's AUR account.
+# key on the maintainer's AUR account. Limit that environment to `v*.*.*` tags so no other ref can read it.
 on:
   push:
     tags: ["v*.*.*"]
@@ -81,6 +81,10 @@ jobs:
     needs: release
     runs-on: ubuntu-24.04
     timeout-minutes: 10
+    # One push at a time: a second tag's push would be refused as behind the first.
+    concurrency:
+      group: aur-push
+      cancel-in-progress: false
     environment:
       name: aur
       url: https://aur.archlinux.org/packages/deskpilot

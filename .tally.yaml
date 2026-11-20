@@ -12,7 +12,7 @@ keys:
     group: release
     owner: cjber
     locations:
-      - github: AUR_SSH_PRIVATE_KEY
+      - github: env:aur/AUR_SSH_PRIVATE_KEY
     expires: none
     expiresNote: an SSH key pair carries no expiry
     limit: none
