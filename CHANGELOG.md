@@ -7,6 +7,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+- `elements` reads a tree up to 100 levels deep, where it stopped at 30. The items of an open menu in GNOME Files sit 31 levels below the window, so they were left out and an agent could open the menu but not pick New Folder. The text form now ends with a `truncated` line when the tree was cut short, as the JSON form already said.
+
 - `elements` names an element that has no name of its own from the label it says labels it. A GTK 4 menu item, such as Save in GNOME Text Editor's main menu, was listed with an empty name, so an agent reading the tree could not tell the items apart.
 
 - `docs/recipes.md` shows fastbrowse driving GNOME Text Editor through deskpilot from one plain sentence, with the fixture `recipes/fixtures/flat-bills.txt` and the recording `assets/recipes/flat-bills.mp4`.

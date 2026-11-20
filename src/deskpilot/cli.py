@@ -499,7 +499,9 @@ def run(args: argparse.Namespace, desk: Desk) -> object:  # noqa: PLR0915 (one b
             tree = desk.elements(args.window, args.show, args.hidden, args.peek).to_dict()
             if args.json:
                 return tree
-            return [f"snapshot {tree['snapshot']}", *_tree(tree)] if "snapshot" in tree else _tree(tree)
+            lines = [f"snapshot {tree['snapshot']}", *_tree(tree)] if "snapshot" in tree else _tree(tree)
+            # A cut walk leaves elements out: say so, or the reader takes a partial tree for the whole window.
+            return [*lines, "truncated: the tree is larger than was read"] if tree.get("truncated") else lines
         case "key":
             desk.key(
                 args.combo,

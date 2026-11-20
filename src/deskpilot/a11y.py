@@ -690,7 +690,7 @@ def _closed_is_gone():
 
 def snapshot(
     window: Window,
-    max_depth: int = 30,
+    max_depth: int = 100,
     max_nodes: int = 2000,
     bus: _Bus | None = None,
     peek: bool = False,

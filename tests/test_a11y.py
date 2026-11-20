@@ -272,6 +272,31 @@ def test_snapshot_to_dict_marks_a_walk_cut_by_max_nodes(tmp_path, monkeypatch):
     assert tree.children == ()
 
 
+def test_snapshot_reads_a_tree_as_deep_as_a_gtk4_popover_menu(tmp_path, monkeypatch):
+    # Nautilus puts the items of its folder menu 31 levels below the window, with more below them.
+    monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path))
+    fake = FakeBus()
+    parent = "/button"
+    for level in range(40):
+        path = f"/deep{level}"
+        fake.refs[parent] = [("app.bus", path)]
+        fake.refs[path] = []
+        fake.names[path] = f"level {level}"
+        fake.roles[path] = (43, "push button")
+        fake.states[path] = fake.states["/button"]
+        fake.interfaces[path] = ["org.a11y.atspi.Component"]
+        fake.bounds[path] = (10, 20, 80, 20)
+        parent = path
+
+    tree = a11y.snapshot(window(), bus=fake)
+
+    element, depth = tree, 0
+    while element.children:
+        element, depth = element.children[0], depth + 1
+    assert (element.name, depth) == ("level 39", 41)
+    assert "truncated" not in tree.to_dict()
+
+
 def gtk3_bus(toolkit=("gtk", "3.24.52")):
     """A GTK 3 window with a button on the toplevel, an open menu whose item has an open submenu. GTK 3 reports each
     popup element relative to its popup's surface, and its SCREEN extents shifted by the popup's position: the menu's
@@ -520,3 +545,19 @@ def test_an_app_that_leaves_the_bus_while_its_toplevel_is_chosen_is_gone(tmp_pat
     with pytest.raises(a11y.A11yError) as error:
         a11y.snapshot(window(), bus=Leaving())
     assert error.value.code == "gone"
+
+
+def test_elements_text_says_when_the_tree_was_cut_short():
+    from deskpilot import cli
+
+    class CutDesk:
+        def elements(self, query, show=False, hidden=False, peek=False):
+            return a11y.Element("e1", "frame", "Editor", (), None, 0, 0, 800, 600, (), truncated=True, snapshot="abc-1")
+
+    args = cli.build_parser().parse_args(["elements", "Editor"])
+
+    lines = cli.run(args, CutDesk())  # ty: ignore[invalid-argument-type]
+
+    assert isinstance(lines, list)
+    assert lines[0] == "snapshot abc-1"
+    assert lines[-1] == "truncated: the tree is larger than was read"
