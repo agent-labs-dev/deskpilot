@@ -212,6 +212,16 @@ def editor_smoke(command: str, roles: tuple[str, ...]) -> None:
     debug_editor(win["pid"], "typed")
     time.sleep(1)
     debug_editor(win["pid"], "typed+1s")
+    if sys.platform == "darwin":  # TEMPORARY CI DEBUG: does typing land once TextEdit is not the active app?
+        import AppKit  # ty: ignore[import-not-found]
+
+        finder = AppKit.NSRunningApplication.runningApplicationsWithBundleIdentifier_("com.apple.finder")[0]
+        print("DEBUG finder activate", finder.activateWithOptions_(AppKit.NSApplicationActivateIgnoringOtherApps))
+        time.sleep(1)
+        debug_editor(win["pid"], "finder front")
+        deskpilot("type", "xyz", "--window", address)
+        time.sleep(1)
+        debug_editor(win["pid"], "typed xyz")
     deadline = time.monotonic() + 5
     while True:
         found = [t for t in texts(deskpilot("elements", address)) if t]
