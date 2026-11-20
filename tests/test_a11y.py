@@ -142,6 +142,16 @@ def test_snapshot_takes_a_lone_titled_toplevel_that_reports_no_window_role(tmp_p
     assert (tree.role, tree.name) == ("filler", "Qt5 Configuration Tool")
 
 
+def test_snapshot_of_a_qt_message_box_reads_the_box_not_its_parent_window(tmp_path, monkeypatch):
+    # Qt reports a QMessageBox toplevel as an "alert message" beside the main window's frame.
+    monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path))
+    fake = FakeBus(title="CMake", duplicate_title=True)
+    fake.roles["/dialog"] = (2, "alert message")
+    fake.names["/dialog"] = "Delete Cache"
+    tree = a11y.snapshot(window(title="Delete Cache"), bus=fake)
+    assert (tree.role, tree.name) == ("alert message", "Delete Cache")
+
+
 def test_snapshot_refuses_untitled_toplevels_that_report_no_window_role(tmp_path, monkeypatch):
     monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path))
     fake = FakeBus(title="Same", duplicate_title=True)

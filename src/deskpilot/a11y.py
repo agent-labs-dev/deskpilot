@@ -691,17 +691,17 @@ def _choose_toplevel(bus: _Bus, app_bus: str, app_path: str, window: Window) -> 
             "cannot be told.",
             "gone",
         )
+    # Every child of the application object is one of its toplevels whatever role it gives: Qt reports a message box
+    # as an "alert message" and Qt 5 a plain QWidget window, such as qt5ct's, as a "filler". The one toplevel carrying
+    # the window's exact title is it, before a lone toplevel in a window role, which may be the dialog's parent.
+    titled = [ref for ref, name in zip(refs, names, strict=True) if name == window.title]
+    if len(titled) == 1:
+        return titled[0]
     if len(candidates) == 1:
         return candidates[0][0]
     exact = [candidate for candidate in candidates if candidate[2] == window.title]
     if len(exact) == 1:
         return exact[0][0]
-    # Every child of the application object is one of its toplevels whatever role it gives: Qt 5 reports a plain
-    # QWidget window, such as qt5ct's, as a "filler". With no toplevel in a window role, the one carrying the window's
-    # exact title is it.
-    titled = [ref for ref, name in zip(refs, names, strict=True) if name == window.title]
-    if not candidates and len(titled) == 1:
-        return titled[0]
     listed = ", ".join(repr(name) for name in names) or "none"
     raise A11yError(
         f"Could not choose an accessibility toplevel for {window.title!r}: candidates are {listed}. "
