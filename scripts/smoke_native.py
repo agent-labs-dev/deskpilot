@@ -39,7 +39,8 @@ def deskpilot(*args: str):
 
 def refused(code: str, *args: str) -> None:
     result = run(*args)
-    assert result.returncode != 0 and f"deskpilot: {code}:" in result.stderr, f"expected {code}"
+    # With --json an error is one JSON object on stderr.
+    assert result.returncode != 0 and json.loads(result.stderr)["code"] == code, f"expected {code}"
 
 
 def until(state: Path, check: Callable[[dict], bool], what: str, timeout: float = 5) -> dict:
