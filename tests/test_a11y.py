@@ -1,4 +1,5 @@
 import json
+import sys
 from dataclasses import replace
 from types import SimpleNamespace
 
@@ -264,37 +265,209 @@ def test_a_malformed_record_is_stale(tmp_path, monkeypatch):
     assert error.value.code == "stale"
 
 
-def test_snapshot_to_dict_marks_a_walk_cut_by_max_nodes(tmp_path, monkeypatch):
+def add(fake, parent, path, name):
+    """Hang a button named `name` at `path` below `parent` in a FakeBus tree."""
+    fake.refs.setdefault(parent, []).append(("app.bus", path))
+    fake.refs[path] = []
+    fake.names[path] = name
+    fake.roles[path] = (43, "push button")
+    fake.states[path] = fake.states["/button"]
+    fake.interfaces[path] = ["org.a11y.atspi.Component"]
+    fake.bounds[path] = (10, 20, 80, 20)
+
+
+def wide_bus(rows=250, cells=2):
+    """A window of `rows` rows of `cells` cells each below its one button: 2 + rows * (1 + cells) elements."""
+    fake = FakeBus()
+    for row in range(rows):
+        add(fake, "/frame", f"/row{row}", f"row {row}")
+        for cell in range(cells):
+            add(fake, f"/row{row}", f"/row{row}/cell{cell}", f"cell {row}.{cell}")
+    return fake
+
+
+def flat(element, parent=""):
+    """Every element of a tree as (id, name, the id it hangs under), in document order."""
+    rows, pending = [], [(element, element.parent or parent)]
+    while pending:
+        element, above = pending.pop()
+        rows.append((element.id, element.name, above))
+        pending.extend((child, element.id) for child in reversed(element.children))
+    return rows
+
+
+def read_in_batches(fake, size):
+    """A snapshot read `size` elements at a time until nothing is left: its batches as flat rows, and its id."""
+    first = a11y.snapshot(window(), max_nodes=size, bus=fake)
+    batches, truncated = [flat(first)], first.truncated
+    while truncated:
+        batch = a11y.more(window(), first.snapshot, max_nodes=size, bus=fake)
+        batches.append([row for top in batch.elements for row in flat(top)])
+        truncated = batch.truncated
+    return batches, first.snapshot
+
+
+def test_a_snapshot_the_budget_ends_says_how_to_read_on(tmp_path, monkeypatch):
     monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path))
     tree = a11y.snapshot(window(), max_nodes=1, bus=FakeBus())
 
-    assert tree.to_dict()["truncated"] is True
     assert tree.children == ()
+    assert tree.to_dict()["truncated"] is True
+    assert tree.to_dict()["more"] == tree.snapshot
 
 
-def test_snapshot_reads_a_tree_as_deep_as_a_gtk4_popover_menu(tmp_path, monkeypatch):
-    # Nautilus puts the items of its folder menu 31 levels below the window, with more below them.
+def test_snapshot_reads_a_tree_far_deeper_than_the_call_stack_allows(tmp_path, monkeypatch):
+    # Nautilus puts the items of its folder menu 31 levels below the window; no depth is cut, however deep.
     monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path))
     fake = FakeBus()
     parent = "/button"
-    for level in range(40):
-        path = f"/deep{level}"
-        fake.refs[parent] = [("app.bus", path)]
-        fake.refs[path] = []
-        fake.names[path] = f"level {level}"
-        fake.roles[path] = (43, "push button")
-        fake.states[path] = fake.states["/button"]
-        fake.interfaces[path] = ["org.a11y.atspi.Component"]
-        fake.bounds[path] = (10, 20, 80, 20)
-        parent = path
+    for level in range(500):
+        add(fake, parent, f"/deep{level}", f"level {level}")
+        parent = f"/deep{level}"
+    monkeypatch.setattr(sys, "setrecursionlimit", lambda limit: pytest.fail("the read raised the limit"))
+    sys_limit = sys.getrecursionlimit()
 
     tree = a11y.snapshot(window(), bus=fake)
 
     element, depth = tree, 0
     while element.children:
         element, depth = element.children[0], depth + 1
-    assert (element.name, depth) == ("level 39", 41)
-    assert "truncated" not in tree.to_dict()
+    assert (element.name, depth) == ("level 499", 501)
+    assert sys.getrecursionlimit() == sys_limit
+    data = tree.to_dict()
+    assert "truncated" not in data and "more" not in data
+    for _ in range(501):
+        data = data["children"][0]
+    assert data["name"] == "level 499"
+
+
+def test_a_tree_that_loops_back_on_itself_is_read_once(tmp_path, monkeypatch):
+    monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path))
+    fake = FakeBus()
+    add(fake, "/button", "/inner", "inner")
+    fake.refs["/inner"] = [("app.bus", "/frame"), ("app.bus", "/button")]
+
+    tree = a11y.snapshot(window(), bus=fake)
+
+    assert [row[1] for row in flat(tree)] == ["Editor", "Save", "inner"]
+    assert not tree.truncated
+
+
+def test_batches_of_100_together_are_the_whole_tree_with_the_same_ids(tmp_path, monkeypatch):
+    monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path))
+    whole = flat(a11y.snapshot(window(), bus=wide_bus()))
+    assert len(whole) == 752
+
+    batches, _ = read_in_batches(wide_bus(), 100)
+
+    assert [len(batch) for batch in batches] == [100] * 7 + [52]
+    # The same elements, under the same ids and the same parents, as one read of the whole tree gives.
+    assert [row for batch in batches for row in batch] == whole
+
+
+def test_a_later_batch_names_the_parent_each_subtree_hangs_under(tmp_path, monkeypatch):
+    monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path))
+    first = a11y.snapshot(window(), max_nodes=4, bus=wide_bus(rows=3))
+    # e1 frame, e2 Save, e3 row 0, e4 cell 0.0: row 0's second cell and the other rows are still to read.
+    batch = a11y.more(window(), first.snapshot, max_nodes=100, bus=wide_bus(rows=3))
+
+    assert [(top.id, top.name, top.parent) for top in batch.elements] == [
+        ("e5", "cell 0.1", "e3"),
+        ("e6", "row 1", "e1"),
+        ("e9", "row 2", "e1"),
+    ]
+    assert batch.to_dict()["elements"][1]["children"][0]["id"] == "e7"
+    assert "parent" not in batch.to_dict()["elements"][1]["children"][0]
+    assert not batch.truncated and "more" not in batch.to_dict()
+    assert a11y.more(window(), first.snapshot, bus=wide_bus(rows=3)) == a11y.Batch(first.snapshot, ())
+
+
+def test_ids_from_every_batch_resolve_while_the_snapshot_is_the_latest(tmp_path, monkeypatch):
+    monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path))
+    fake = wide_bus()
+    fake.bounds["/row40/cell1"] = (300, 400, 50, 20)
+    batches, snapshot_id = read_in_batches(fake, 100)
+    first, later = batches[0][1], next(row for row in batches[1] if row[1] == "cell 40.1")
+
+    assert a11y.locate(window(), f"{snapshot_id}:{later[0]}", bus=fake) == a11y.Located(300, 400, 50, 20)
+    assert a11y.locate(window(), f"{snapshot_id}:{first[0]}", bus=fake) == a11y.Located(10, 20, 80, 20)
+
+
+def test_a_later_batch_keeps_what_a_selection_chose_and_reads_no_element_twice(tmp_path, monkeypatch):
+    monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path))
+    fake = wide_bus(rows=3)
+    fake.interfaces["/frame"].append(a11y.SELECTION_INTERFACE)
+    fake.selected["/frame"] = [("app.bus", "/row2")]
+    first = a11y.snapshot(window(), max_nodes=4, bus=fake)
+    fake.calls.clear()
+
+    batch = a11y.more(window(), first.snapshot, bus=fake)
+
+    assert "selected" in batch.elements[2].states
+    assert not {call[1] for call in fake.calls} & {"/frame", "/button", "/row0", "/row0/cell0"}
+
+
+def test_reading_on_from_a_replaced_snapshot_is_stale(tmp_path, monkeypatch):
+    monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path))
+    fake = wide_bus(rows=3)
+    old = a11y.snapshot(window(), max_nodes=4, bus=fake)
+    a11y.snapshot(window(), max_nodes=4, bus=fake)
+
+    with pytest.raises(a11y.A11yError, match="was replaced") as error:
+        a11y.more(window(), old.snapshot, bus=fake)
+    assert error.value.code == "stale"
+    with pytest.raises(a11y.A11yError) as error:
+        a11y.more(replace(window(), pid=7), old.snapshot, bus=fake)
+    assert error.value.code == "stale"
+
+
+def test_reading_on_when_an_element_kept_for_later_is_gone_is_stale(tmp_path, monkeypatch):
+    monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path))
+    first = a11y.snapshot(window(), max_nodes=4, bus=wide_bus(rows=3))
+    unknown = SimpleNamespace(
+        header=SimpleNamespace(fields={HeaderFields.error_name: "org.freedesktop.DBus.Error.UnknownObject"}), body=()
+    )
+
+    class RowGone(FakeBus):
+        def call(self, destination, object_path, interface, method, signature, body):
+            if object_path == "/row1":
+                raise DBusErrorResponse(unknown)
+            return super().call(destination, object_path, interface, method, signature, body)
+
+    changed = RowGone()
+    changed.__dict__.update(wide_bus(rows=3).__dict__)
+    with pytest.raises(a11y.A11yError, match="changed since snapshot") as error:
+        a11y.more(window(), first.snapshot, bus=changed)
+    assert error.value.code == "stale"
+    # Nothing was half read: the snapshot still reads on once the tree is as it was.
+    assert len(a11y.more(window(), first.snapshot, bus=wide_bus(rows=3)).elements) == 3
+
+
+def test_a_peek_the_budget_ends_keeps_nothing_to_read_on(tmp_path, monkeypatch):
+    monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path))
+    peek = a11y.snapshot(window(), max_nodes=1, bus=FakeBus(), peek=True).to_dict()
+
+    assert peek["truncated"] is True and "more" not in peek and "snapshot" not in peek
+    with pytest.raises(ValueError, match="at least one"):
+        a11y.snapshot(window(), max_nodes=0, bus=FakeBus())
+
+
+def test_narrow_keeps_what_fits_and_the_elements_above_it(tmp_path, monkeypatch):
+    monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path))
+    fake = wide_bus(rows=3)
+    fake.states["/row1/cell1"] = [1 << 8, 0]  # enabled, not showing
+    tree = a11y.snapshot(window(), bus=fake).to_dict()
+
+    found = a11y.narrow(tree, query="CELL 1.")
+
+    assert (found["read"], found["matched"], found["snapshot"]) == (11, 2, tree["snapshot"])
+    assert [(row["id"], [cell["id"] for cell in row["children"]]) for row in found["children"]] == [
+        ("e6", ["e7", "e8"])
+    ]
+    shown = a11y.narrow(tree, query="cell 1.", showing=True)
+    assert [cell["id"] for cell in shown["children"][0]["children"]] == ["e7"]
+    assert a11y.narrow(tree, query="nothing like it")["children"] == []
+    assert a11y.narrow(tree) is tree
 
 
 def gtk3_bus(toolkit=("gtk", "3.24.52")):
@@ -547,17 +720,68 @@ def test_an_app_that_leaves_the_bus_while_its_toplevel_is_chosen_is_gone(tmp_pat
     assert error.value.code == "gone"
 
 
-def test_elements_text_says_when_the_tree_was_cut_short():
+class PagedDesk:
+    """A Desk whose window's tree is larger than one read: the first page, then with `more` the rest."""
+
+    def __init__(self):
+        self.asked = []
+
+    def elements(self, query, show=False, hidden=False, peek=False, max_nodes=a11y.MAX_NODES, more=""):
+        self.asked.append((query, hidden, peek, max_nodes, more))
+        root = a11y.Element("e1", "frame", "Editor", (), None, 0, 0, 800, 600, ())
+        if peek:
+            return replace(root, truncated=True)
+        if not more:
+            return replace(root, truncated=True, snapshot="abc-1")
+        cell = a11y.Element("e3", "push button", "Save", ("showing",), None, 1, 2, 3, 4, ())
+        row = a11y.Element("e2", "panel", "", (), None, 0, 0, 5, 5, (cell,), parent="e1")
+        return a11y.Batch("abc-1", (row, replace(cell, id="e4", name="Open", parent="e1")))
+
+
+def test_elements_text_names_the_command_that_reads_the_rest_of_a_larger_tree():
     from deskpilot import cli
 
-    class CutDesk:
-        def elements(self, query, show=False, hidden=False, peek=False):
-            return a11y.Element("e1", "frame", "Editor", (), None, 0, 0, 800, 600, (), truncated=True, snapshot="abc-1")
-
-    args = cli.build_parser().parse_args(["elements", "Editor"])
-
-    lines = cli.run(args, CutDesk())  # ty: ignore[invalid-argument-type]
+    desk = PagedDesk()
+    args = cli.build_parser().parse_args(["elements", "My Editor", "--max-nodes", "100", "--hidden"])
+    lines = cli.run(args, desk)  # ty: ignore[invalid-argument-type]
 
     assert isinstance(lines, list)
     assert lines[0] == "snapshot abc-1"
-    assert lines[-1] == "truncated: the tree is larger than was read"
+    assert lines[-1] == (
+        "more: the tree is larger than this batch; read on with: "
+        "deskpilot elements 'My Editor' --more abc-1 --max-nodes 100 --hidden"
+    )
+    assert desk.asked == [("My Editor", True, False, 100, "")]
+
+
+def test_elements_more_prints_each_subtree_under_the_id_it_hangs_from():
+    from deskpilot import cli
+
+    desk = PagedDesk()
+    args = cli.build_parser().parse_args(["elements", "Editor", "--more", "abc-1"])
+    lines = cli.run(args, desk)  # ty: ignore[invalid-argument-type]
+
+    assert lines == [
+        "snapshot abc-1",
+        "under e1:",
+        "  e2 panel 0,0 5x5",
+        "    e3 push button 'Save' 1,2 3x4 [showing]",
+        "  e4 push button 'Open' 1,2 3x4 [showing]",
+    ]
+    assert desk.asked == [("Editor", False, False, a11y.MAX_NODES, "abc-1")]
+    args = cli.build_parser().parse_args(["--json", "elements", "Editor", "--more", "abc-1", "--query", "open"])
+    found = cli.run(args, desk)  # ty: ignore[invalid-argument-type]
+    assert isinstance(found, dict)
+    assert ([top["id"] for top in found["elements"]], found["read"], found["matched"]) == (["e4"], 3, 1)
+
+
+def test_elements_text_of_a_peek_the_budget_ended_says_it_cannot_be_read_on():
+    from deskpilot import cli
+
+    args = cli.build_parser().parse_args(["elements", "Editor", "--peek"])
+    lines = cli.run(args, PagedDesk())  # ty: ignore[invalid-argument-type]
+
+    assert isinstance(lines, list)
+    assert lines[-1].startswith("truncated: the tree is larger than was read") and "--max-nodes" in lines[-1]
+    with pytest.raises(SystemExit):
+        cli.build_parser().parse_args(["elements", "Editor", "--max-nodes", "0"])

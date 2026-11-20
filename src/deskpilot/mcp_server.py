@@ -13,6 +13,7 @@ from mcp.server.mcpserver import Image, MCPServer
 from mcp.types import CallToolResult, TextContent
 from pydantic import Field
 
+from . import a11y
 from . import batch as batching
 from .batch import MAX_ACTIONS, Action
 from .desk import EXPECTED, Desk, error_code, owner_from_env
@@ -252,14 +253,29 @@ def drag(
 
 
 @_tool()
-def elements(window: str, show: bool = False, hidden: bool = False, peek: bool = False) -> dict:
+def elements(
+    window: str,
+    show: bool = False,
+    hidden: bool = False,
+    peek: bool = False,
+    max_nodes: int = a11y.MAX_NODES,
+    more: str = "",
+    query: str = "",
+    showing: bool = False,
+) -> dict:
     """The window's accessibility tree: each element's id, role, name, states, text and bounds in window pixels,
     and on the root the snapshot id. click, hover, move and scroll take an id as `element` and act on where the app
     says it is now. Each snapshot numbers its elements afresh: `<snapshot>:<id>` is refused (stale) once a newer
     snapshot replaces that one, and an element whose role or name changed since is stale too. An app that exposes no
-    tree is an error (no_tree). peek reads the tree without replacing the latest snapshot, so its ids stay good, to
-    check what changed before acting; a peek's own ids name nothing and it has no snapshot id."""
-    return desk.elements(window, show, hidden, peek).to_dict()
+    tree is an error (no_tree). One call reads at most max_nodes elements. A larger tree is never cut quietly: the
+    result has `truncated` and `more`, the snapshot id; pass that as `more` to read the next batch, {snapshot,
+    elements}, whose ids number on and whose subtrees each name the `parent` id they hang under, until a result has
+    no `more`. Earlier ids stay good. A `more` whose snapshot was replaced, or whose tree changed, is stale. query
+    keeps only elements whose role, name or text contains it, and showing only those on screen, each with the
+    elements above it; `read` and `matched` then count what was looked through and what fit. peek reads the tree
+    without replacing the latest snapshot, so its ids stay good, to check what changed before acting; a peek's own
+    ids name nothing, it has no snapshot id and cannot be read on."""
+    return a11y.narrow(desk.elements(window, show, hidden, peek, max_nodes, more).to_dict(), query, showing)
 
 
 @_tool()

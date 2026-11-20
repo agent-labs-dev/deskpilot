@@ -59,7 +59,21 @@ element's centre where the app reports it at that moment. Each `elements` call p
 `SNAPSHOT:e5` pins an id to that snapshot: it is refused as stale once a newer snapshot replaces it, since every
 snapshot numbers its elements afresh. An element whose role or name changed since is stale too, and one no longer
 showing is offscreen. `elements --peek` reads the tree without replacing the latest snapshot, so a program can check
-what changed before it acts on an id it already holds. An item of a GTK 3 popup menu (an open combo box, a menu or
+what changed before it acts on an id it already holds.
+
+One `elements` call reads at most `--max-nodes N` elements (2000 unless given), however deep the tree goes. A larger
+tree is never cut quietly: the output ends with a `more:` line holding the command that reads the next batch,
+`deskpilot elements WINDOW --more SNAPSHOT --max-nodes N`, and with `--json` the result has `truncated` and `more`,
+the snapshot id. A batch is `{snapshot, elements}`: its ids number on from the batch before, each subtree names the
+`parent` id it hangs under (the text form groups them under `under e7:` lines), and ids from earlier batches stay
+good. Read on until a batch has no `more`. Reading on from a snapshot a newer one replaced, or whose tree changed
+since, is refused `stale`: take a new snapshot. A peek the limit cut short has no snapshot to read on from, so peek
+again with a larger `--max-nodes`. `--query TEXT` prints only the elements whose role, name or text contains `TEXT`,
+and `--showing` only those on screen now, each with the elements above it and its id unchanged; the output then says
+how many of the elements read matched. Both narrow what one call read, so on a tree larger than one read they apply
+batch by batch.
+
+An item of a GTK 3 popup menu (an open combo box, a menu or
 submenu) is placed on the popup it is in, so its bounds line up with a shot showing the popup and a click lands on it;
 when the popup cannot be told exactly the action is refused (`stale` once it closed, `ambiguous` when several could be
 it) and `elements` reports the item with zero bounds, as it does an element whose app gives it a negative size (GTK 4

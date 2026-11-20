@@ -7,7 +7,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
-- `elements` reads a tree up to 100 levels deep, where it stopped at 30. The items of an open menu in GNOME Files sit 31 levels below the window, so they were left out and an agent could open the menu but not pick New Folder. The text form now ends with a `truncated` line when the tree was cut short, as the JSON form already said.
+- `elements` never leaves part of a tree out quietly. It reads a tree however deep it is: the items of an open menu in GNOME Files sit 31 levels below the window, past the 30 levels it stopped at, so an agent could open the menu but not pick New Folder. One call reads at most `--max-nodes` elements (2000 unless told otherwise), and when the tree is larger the output ends with the exact command that reads the next batch, `deskpilot elements WINDOW --more SNAPSHOT`, and the JSON form carries `truncated` and `more`. Each batch numbers its ids on from the last, says which element each of its subtrees hangs under, and leaves earlier ids good, so a caller can read a large tree 100 elements at a time. Reading on from a snapshot that was replaced, or whose tree changed, is refused `stale`. `--query TEXT` and `--showing` print only the elements that match or are on screen, with the elements above them. The MCP `elements` tool takes the same as `max_nodes`, `more`, `query` and `showing`.
 
 - `elements` names an element that has no name of its own from the label it says labels it. A GTK 4 menu item, such as Save in GNOME Text Editor's main menu, was listed with an empty name, so an agent reading the tree could not tell the items apart.
 
