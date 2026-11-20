@@ -214,6 +214,27 @@ def editor_smoke(command: str, roles: tuple[str, ...]) -> None:
     debug_editor(win["pid"], "typed+1s")
     if sys.platform == "darwin":  # TEMPORARY CI DEBUG: does typing land once TextEdit is not the active app?
         import AppKit  # ty: ignore[import-not-found]
+        import Quartz as q  # ty: ignore[import-not-found]
+
+        def post(char, source, stamp):
+            for down in (True, False):
+                made = q.CGEventCreateKeyboardEvent(source, 0, down)
+                q.CGEventKeyboardSetUnicodeString(made, 1, char)
+                q.CGEventSetFlags(made, 0)
+                if stamp:
+                    for field, value in ((51, int(address, 16)), (58, 1), (q.kCGEventTargetUnixProcessID, win["pid"])):
+                        q.CGEventSetIntegerValueField(made, field, value)
+                q.CGEventPostToPid(win["pid"], made)
+            time.sleep(0.5)
+            debug_editor(win["pid"], f"posted {char} source={source is not None} stamp={stamp}")
+
+        session = q.CGEventSourceCreate(q.kCGEventSourceStateCombinedSessionState)
+        hid = q.CGEventSourceCreate(q.kCGEventSourceStateHIDSystemState)
+        post("1", None, False)
+        post("2", session, False)
+        post("3", None, True)
+        post("4", session, True)
+        post("5", hid, False)
 
         finder = AppKit.NSRunningApplication.runningApplicationsWithBundleIdentifier_("com.apple.finder")[0]
         print("DEBUG finder activate", finder.activateWithOptions_(AppKit.NSApplicationActivateIgnoringOtherApps))

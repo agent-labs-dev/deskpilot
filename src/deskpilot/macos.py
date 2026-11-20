@@ -8,6 +8,7 @@ grants the app running deskpilot; without them actions fail as `unavailable`, na
 
 from __future__ import annotations
 
+import ctypes
 import shutil
 import subprocess
 import sys
@@ -40,6 +41,29 @@ FLAGS = {
 WINDOW_UNDER_POINTER = 91
 WINDOW_THAT_CAN_HANDLE = 92
 CLICK_STATE = 1
+# The private fields the WindowServer stamps on an event it routes to a window: 51 holds the window number and 58
+# marks it valid. An event posted to a pid skips that routing, and without them AppKit delivers it with no window
+# (windowNumber 0), so no view ever receives it. Warp and Cua post background clicks the same way.
+WINDOW_NUMBER = 51
+WINDOW_NUMBER_VALID = 58
+
+
+class _Point(ctypes.Structure):
+    _fields_ = (("x", ctypes.c_double), ("y", ctypes.c_double))
+
+
+def _window_location_setter() -> Any:
+    """CoreGraphics' private CGEventSetWindowLocation, which stamps the point within the window that AppKit reads as
+    the event's locationInWindow; a posted event otherwise carries none."""
+    graphics = ctypes.CDLL("/System/Library/Frameworks/CoreGraphics.framework/CoreGraphics")
+    setter = getattr(graphics, "CGEventSetWindowLocation", None)
+    if setter is None:
+        raise Unavailable("this macOS has no CGEventSetWindowLocation, so input posted to a window cannot reach it")
+    setter.argtypes = (ctypes.c_void_p, _Point)
+    setter.restype = None
+    return setter
+
+
 SETTINGS = "System Settings > Privacy & Security"
 
 
@@ -65,6 +89,7 @@ class MacDriver:
         self.ax: Any = ApplicationServices
         self.appkit: Any = AppKit
         self.cf: Any = CoreFoundation
+        self._set_window_location: Any = None
 
     def _trusted(self) -> None:
         if not self.ax.AXIsProcessTrusted():
@@ -214,7 +239,6 @@ class MacDriver:
     ) -> None:
         self._trusted()
         q = self.q
-        number = int(window.address, 16)
         if event == "wheel":
             made = q.CGEventCreateScrollWheelEvent(None, q.kCGScrollEventUnitLine, 1, dy)
             q.CGEventSetLocation(made, (x, y))
@@ -237,9 +261,22 @@ class MacDriver:
             made = q.CGEventCreateMouseEvent(None, kind, (x, y), code)
             if event in ("down", "up"):
                 q.CGEventSetIntegerValueField(made, CLICK_STATE, clicks)
-        q.CGEventSetIntegerValueField(made, WINDOW_UNDER_POINTER, number)
-        q.CGEventSetIntegerValueField(made, WINDOW_THAT_CAN_HANDLE, number)
+        if not seat:
+            self._address(made, window, x, y)
         self._post(window, made, seat)
+
+    def _address(self, made: Any, window: Window, x: int, y: int) -> None:
+        """Stamp what the WindowServer would on an event it routed to this window, since a posted one skips that."""
+        q = self.q
+        number = int(window.address, 16)
+        for field, value in ((WINDOW_UNDER_POINTER, number), (WINDOW_THAT_CAN_HANDLE, number),
+                             (WINDOW_NUMBER, number), (WINDOW_NUMBER_VALID, 1),
+                             (q.kCGEventTargetUnixProcessID, window.pid)):  # fmt: skip
+            q.CGEventSetIntegerValueField(made, field, value)
+        if self._set_window_location is None:
+            self._set_window_location = _window_location_setter()
+        # Window-local, top-left origin, as the window's frame is listed.
+        self._set_window_location(made.__c_void_p__(), _Point(x - window.x, y - window.y))
 
     def _keys_reach(self, window: Window) -> None:
         """Keys posted to a process go to its focused window, whichever that is: refuse unless it is this one, so
