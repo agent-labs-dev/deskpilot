@@ -7,6 +7,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+- MCP `shot` takes `out`, the path to write the PNG to, as `deskpilot shot -o` does. A client that names the file before the call can remove it however the call ends, including when it is cancelled after the capture but before the reply that carries the path.
+
 - `launch` starts its app with `ACCESSIBILITY_ENABLED=1`, so a Chromium or Electron app started with `--force-renderer-accessibility` has a tree. With the flag alone it joined the accessibility bus only when accessibility was already on as it started, and otherwise `elements` failed `no_tree` with a hint that named only the flag.
 
 - `adopt` and `release` wait their turn behind the actions already running or queued, as other actions do, instead of being refused `busy` whenever any action ran. Before, an agent could be refused for as long as another agent kept acting. An adoption still waiting when its agent is stopped is refused rather than run after the stop, so it never moves a window for an agent that is gone.

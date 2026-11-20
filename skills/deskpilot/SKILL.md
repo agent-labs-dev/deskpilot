@@ -35,7 +35,7 @@ If `deskpilot` is not on `PATH`, ask the user before installing it with
    windows to their original workspace without closing their shared process. A user-moved or regrouped window stays where
    the user put it. Adoption is unavailable inside `--session`.
 3. Run `deskpilot shot WINDOW`, read the image at the `path` it prints, and choose a point in that image. Note its
-   `shot` id.
+   `shot` id. `-o FILE` (MCP `out`) writes the image there instead of deskpilot's cache, so the caller can remove it.
 4. Act with that point as given, passing the id: `deskpilot click WINDOW X Y --shot ID` (`--button right`,
    `--double`), `deskpilot scroll WINDOW X Y DY --shot ID` (positive is up), or `deskpilot move WINDOW X Y --shot ID`
    to show the agent cursor there. Points are pixels in that shot, so never rescale them yourself; `--scale 1` means

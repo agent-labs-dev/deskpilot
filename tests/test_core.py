@@ -1026,6 +1026,28 @@ def test_mcp_tools_report_why_an_action_was_refused(tmp_path, monkeypatch):
     assert refusal("type_text", {"text": "x", "hidden": True})["code"] == "invalid"
 
 
+def test_mcp_shot_writes_the_png_where_the_caller_names_it(tmp_path, monkeypatch):
+    """A caller that names the file before the call can remove it however the call ends, cancellation included."""
+    import asyncio
+
+    from mcp.types import CallToolResult, TextContent
+
+    from deskpilot import mcp_server
+
+    desk, _, _, _ = make_desk(tmp_path, monkeypatch)
+    monkeypatch.setattr(mcp_server, "desk", desk)
+    fake_grim(monkeypatch, (100, 50))
+    out = tmp_path / "caller" / "frame.png"
+    out.parent.mkdir()
+    result = asyncio.run(mcp_server.mcp.call_tool("shot", {"window": "battle", "out": str(out)}))
+    assert isinstance(result, CallToolResult) and not result.is_error
+    text = result.content[1]
+    assert isinstance(text, TextContent)
+    reply = json.loads(text.text)
+    assert reply["path"] == str(out) and screen.load(reply["shot"]).path == str(out)
+    assert Image.open(out).size == (100, 50)
+
+
 def test_clipboard_reads_plain_text_and_not_another_text_type(monkeypatch):
     offered, asked = ["text/x-moz-url", "text/html"], []
 
