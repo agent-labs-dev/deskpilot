@@ -58,24 +58,6 @@ class SmokeApplication(AppKit.NSApplication):
 
     def sendEvent_(self, event):
         kind = event.type()
-        if not cover and kind not in (
-            AppKit.NSEventTypeAppKitDefined,
-            AppKit.NSEventTypeSystemDefined,
-            AppKit.NSEventTypePeriodic,
-        ):  # TEMPORARY CI DEBUG
-            point = event.locationInWindow()
-            state.setdefault("events", []).append(
-                [
-                    int(kind),
-                    int(event.windowNumber()),
-                    round(point.x),
-                    round(point.y),
-                    event.window() is not None,
-                    bool(self.isActive()),
-                    self.keyWindow() is not None,
-                    int(event.modifierFlags()),
-                ]
-            )
         mine = not cover and event.windowNumber() == window.windowNumber()
         if mine and kind == AppKit.NSEventTypeMouseMoved and inside(widgets["spot"], event):
             state["hover"] += 1

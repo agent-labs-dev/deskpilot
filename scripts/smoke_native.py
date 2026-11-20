@@ -20,8 +20,9 @@ from collections.abc import Callable
 from pathlib import Path
 
 APP = Path(__file__).with_name("smoke_app_macos.py" if sys.platform == "darwin" else "smoke_app.py")
-# Select all: Command-A on macOS, Control-A elsewhere.
-SELECT_ALL = "cmd+a" if sys.platform == "darwin" else "ctrl+a"
+# Select all: Command-A on macOS, Control-A elsewhere. AppKit sends a menu shortcut such as Command-A only to the key
+# window, which an app in the background does not have, so on macOS the chord takes focus first.
+SELECT_ALL = ("cmd+a", "--take-focus") if sys.platform == "darwin" else ("ctrl+a",)
 work = Path(tempfile.mkdtemp(prefix="deskpilot-smoke-"))
 
 
@@ -145,8 +146,8 @@ def app_smoke() -> None:  # noqa: PLR0915 - one check per action, in the order t
         deskpilot("click", *act["entry"])
         deskpilot("type", "hello deskpilot", "--window", address)
         until(state, lambda s: s["entry"] == "hello deskpilot", "typed text")
-        deskpilot("key", SELECT_ALL, "--window", address)
-        until(state, lambda s: ["a", True] in s["keys"], SELECT_ALL)
+        deskpilot("key", *SELECT_ALL, "--window", address)
+        until(state, lambda s: ["a", True] in s["keys"], SELECT_ALL[0])
         deskpilot("key", "BackSpace", "--window", address)
         until(state, lambda s: s["entry"] == "", "a chord then a key")
 
@@ -179,70 +180,13 @@ def app_smoke() -> None:  # noqa: PLR0915 - one check per action, in the order t
     os.kill(win["pid"], signal.SIGTERM)
 
 
-def debug_editor(pid: int, when: str) -> None:  # TEMPORARY CI DEBUG
-    if sys.platform != "darwin":
-        return
-    import AppKit  # ty: ignore[import-not-found]
-    import ApplicationServices as ax  # ty: ignore[import-not-found]
-
-    def attr(element, name):
-        error, value = ax.AXUIElementCopyAttributeValue(element, name, None)
-        return value if error == 0 else f"<error {error}>"
-
-    app = ax.AXUIElementCreateApplication(pid)
-    focused = attr(app, "AXFocusedUIElement")
-    window = attr(app, "AXFocusedWindow")
-    detail = focused if isinstance(focused, str) else f"{attr(focused, 'AXRole')} {attr(focused, 'AXValue')!r}"
-    title = window if isinstance(window, str) else attr(window, "AXTitle")
-    windows = [attr(w, "AXTitle") for w in attr(app, "AXWindows") or []]
-    running = AppKit.NSRunningApplication.runningApplicationWithProcessIdentifier_(pid)
-    print(f"DEBUG {when}: focused {detail} window {title!r} windows {windows} active {running.isActive()}",
-          f"frontmost {attr(ax.AXUIElementCreateSystemWide(), 'AXFocusedApplication')}", flush=True)  # fmt: skip
-
-
 def editor_smoke(command: str, roles: tuple[str, ...]) -> None:
     win = deskpilot("launch", command)
     address = win["address"]
-    debug_editor(win["pid"], "launched")
     tree = deskpilot("elements", address)
     edit = next(e for e in walk(tree) if e["role"] in roles)
     deskpilot("click", address, "--element", f"{tree['snapshot']}:{edit['id']}")
-    debug_editor(win["pid"], "clicked")
     deskpilot("type", "deskpilot smoke", "--window", address)
-    debug_editor(win["pid"], "typed")
-    time.sleep(1)
-    debug_editor(win["pid"], "typed+1s")
-    if sys.platform == "darwin":  # TEMPORARY CI DEBUG: does typing land once TextEdit is not the active app?
-        import AppKit  # ty: ignore[import-not-found]
-        import Quartz as q  # ty: ignore[import-not-found]
-
-        def post(char, source, stamp):
-            for down in (True, False):
-                made = q.CGEventCreateKeyboardEvent(source, 0, down)
-                q.CGEventKeyboardSetUnicodeString(made, 1, char)
-                q.CGEventSetFlags(made, 0)
-                if stamp:
-                    for field, value in ((51, int(address, 16)), (58, 1), (q.kCGEventTargetUnixProcessID, win["pid"])):
-                        q.CGEventSetIntegerValueField(made, field, value)
-                q.CGEventPostToPid(win["pid"], made)
-            time.sleep(0.5)
-            debug_editor(win["pid"], f"posted {char} source={source is not None} stamp={stamp}")
-
-        session = q.CGEventSourceCreate(q.kCGEventSourceStateCombinedSessionState)
-        hid = q.CGEventSourceCreate(q.kCGEventSourceStateHIDSystemState)
-        post("1", None, False)
-        post("2", session, False)
-        post("3", None, True)
-        post("4", session, True)
-        post("5", hid, False)
-
-        finder = AppKit.NSRunningApplication.runningApplicationsWithBundleIdentifier_("com.apple.finder")[0]
-        print("DEBUG finder activate", finder.activateWithOptions_(AppKit.NSApplicationActivateIgnoringOtherApps))
-        time.sleep(1)
-        debug_editor(win["pid"], "finder front")
-        deskpilot("type", "xyz", "--window", address)
-        time.sleep(1)
-        debug_editor(win["pid"], "typed xyz")
     deadline = time.monotonic() + 5
     while True:
         found = [t for t in texts(deskpilot("elements", address)) if t]

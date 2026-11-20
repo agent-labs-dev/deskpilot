@@ -118,7 +118,8 @@ them instead:
 - `--take-pointer` on `click`, `move` or `scroll` moves the user's own pointer there, through a virtual mouse that
   needs write access to `/dev/uinput`. Use it only when a plain click or `hover` did not work.
 - `--take-focus` on `key` or `type` focuses the window and leaves it focused. Use it only for an app that ignores
-  keys while unfocused, after a plain `--window` attempt did nothing.
+  keys while unfocused, after a plain `--window` attempt did nothing. On macOS a menu shortcut such as `cmd+a` is
+  one of these: AppKit sends it only to the app in front.
 - `--take-focus` on `click` does the same before clicking. Use it when a menu or dropdown you clicked open is gone
   in the next `shot`: its app closes popups while its window is not the focused one.
 
