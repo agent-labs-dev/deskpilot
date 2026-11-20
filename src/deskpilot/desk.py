@@ -463,6 +463,11 @@ class Desk:
         gx, gy = screen.to_global(win, x, y, scale)
         return win, gx, gy, []
 
+    def _size(self, win: Window) -> tuple[int, int]:
+        """The window's size now, or none it could match if it has gone."""
+        now = next((other for other in self.hypr.windows() if other.address == win.address), None)
+        return (now.width, now.height) if now else (-1, -1)
+
     def _popups(self, win: Window) -> list[a11y.Popup]:
         """The window's mapped popups, as the plugin reports them."""
         return [a11y.Popup(**popup) for popup in self.plugin.popups(win.address)]
@@ -470,7 +475,7 @@ class Desk:
     def _element_point(self, win: Window, element: str) -> tuple[int, int, list[str]]:
         """An element's centre as a global position, and its surface step. A GTK 3 popup element is placed through
         its popup's surface, and its centre must lie in the popup."""
-        at = a11y.locate(win, element)
+        at = a11y.locate(win, element, popups=lambda: self._popups(win))
         cx, cy = at.x + at.width / 2, at.y + at.height / 2
         popup = a11y.resolve(self._popups(win), at.keys) if at.known else None
         if popup is None:
@@ -599,8 +604,9 @@ class Desk:
         show: bool = False,
         hidden: bool = False,
     ) -> tuple[int, int]:
-        """Press at `start`, move to `end` over `duration` seconds and release there, for a slider, a selection or a
-        drag and drop within the window. Both points are in the same shot's pixels. The user's pointer stays put."""
+        """Press at `start`, move to `end` over `duration` seconds and release there, for a slider or a selection.
+        Both points are in the same shot's pixels. The user's pointer stays put. A drag and drop the press starts
+        is carried only where the plugin reaches the window through the seat; elsewhere it is cancelled and refused."""
         win, x1, y1 = self.point(query, *start, scale, shot, show, hidden=hidden)
         _, x2, y2 = self.point(query, *end, scale, shot, show, hidden=hidden)
         if not 0 < duration <= 5:
@@ -668,7 +674,7 @@ class Desk:
         win = self._target(query, show, hidden)
         if more:
             return a11y.more(win, more, max_nodes, popups=lambda: self._popups(win))
-        return a11y.snapshot(win, max_nodes, peek=peek, popups=lambda: self._popups(win))
+        return a11y.snapshot(win, max_nodes, peek=peek, popups=lambda: self._popups(win), size=lambda: self._size(win))
 
     def key(
         self,

@@ -47,7 +47,9 @@ open for the next click.
 pointer there and press through the input device instead.
 
 `drag` presses at one point, moves to another over `--duration` seconds (0.3 by default, up to 5) and releases, with
-the user's pointer left where it is: sliders, text selection, drawing, and drag and drop within the window. `hover`
+the user's pointer left where it is: sliders, text selection and drawing. A press that starts a drag and drop is
+cancelled and the drag refused, hidden or on screen, unless the window is XWayland or of the app the user's pointer
+is on, where the drop is carried within the window. `hover`
 rests the pointer on a point for `--wait` seconds and prints a screenshot taken while it is there, so a tooltip or a
 hover state shows in it; `--click X Y` clicks a second point next instead, before the pointer leaves, for a menu
 that opens on hover. Both are bounded, and a drag or hover that fails, or whose window closes, still lets go of its
