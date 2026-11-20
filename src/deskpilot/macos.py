@@ -85,9 +85,9 @@ class MacDriver:
         found: list[Window] = []
         focused_done = False
         for entry in info:
-            # App window levels run from normal (0) through floating and modal panels; the Dock, menu bar and
-            # desktop sit outside that range.
-            if not 0 <= entry.get(q.kCGWindowLayer, -1) <= q.kCGModalPanelWindowLevel or not entry.get(
+            # App window levels run from normal (0) through floating, modal panel and utility windows (19, where a
+            # Tk -topmost window sits); the Dock (20), menu bar and desktop sit outside that range.
+            if not 0 <= entry.get(q.kCGWindowLayer, -1) <= q.kCGUtilityWindowLevel or not entry.get(
                 q.kCGWindowAlpha, 1
             ):
                 continue
