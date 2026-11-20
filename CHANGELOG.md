@@ -7,6 +7,14 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+- `elements --json` and the MCP `elements` tool give each element's `interfaces`, the AT-SPI interfaces it implements (`Action`, `EditableText`, `Value`, `Selection`), and `actions`, the names the app gives what it can do (`click`, `toggle`, `Press`). A caller can offer a control by what it does instead of by a list of role names, which every toolkit words its own way: a GTK 4 switch, a Qt spin box and a Qt list item that toggles all say so here.
+
+- The `showing` state, and so `--showing`, is kept only for an element whose box has area and lies on the window or one of its open popups. Qt calls the items of a closed combo box showing at x=-10000 and GTK 4 the rows it has not laid out, with no size, so `--showing` listed things nobody could see and a click on one was refused.
+
+- Windows of one app that share a title are told apart by size. An open combo box in a GTK 3 dialog made every `elements` call fail with `ambiguous`, since the dialog and the combo's popup both report an empty name; so did two Text Editor windows of different sizes on new documents. Two that share both title and size are still `ambiguous`, and the error now says so.
+
+- A `drag` whose press starts a drag and drop says the window's own pointer cannot carry it. It said a hidden action cannot, also for a drag on screen. The reference no longer says drag and drop works within any window: it is carried only for an XWayland window or one of the app the user's pointer is on.
+
 - An element's text leaves out the U+FFFC marks an app puts where a child element sits. A Chromium page's document read as 121 of those marks and no words, and 4,569 of the 10,719 elements of a large page had text made only of them, so a model reading the tree saw a page of blanks. The children are listed as elements of their own.
 
 - A click, hover or scroll on a GTK 3 list row that is scrolled out of view fails with `offscreen` and says to scroll it into view. Such a row reports its position as the smallest integer, so `elements` listed it at x and y -2147483648 and the action failed with `invalid: (-2147483056.0, -2147483636.5) at scale 1.0 is outside yad`. It is now listed with no bounds, like any element that has no place.

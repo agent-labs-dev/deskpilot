@@ -26,6 +26,8 @@ ACCESSIBLE_INTERFACE = "org.a11y.atspi.Accessible"
 COMPONENT_INTERFACE = "org.a11y.atspi.Component"
 TEXT_INTERFACE = "org.a11y.atspi.Text"
 SELECTION_INTERFACE = "org.a11y.atspi.Selection"
+ACTION_INTERFACE = "org.a11y.atspi.Action"
+ATSPI_PREFIX = "org.a11y.atspi."
 APPLICATION_INTERFACE = "org.a11y.atspi.Application"
 PROPERTIES_INTERFACE = "org.freedesktop.DBus.Properties"
 DBUS_INTERFACE = "org.freedesktop.DBus"
@@ -176,6 +178,11 @@ class Element:
     truncated: bool = False  # on the root: the node budget ended the read before the whole tree was read
     snapshot: str = ""  # on the root: the id of the snapshot whose element ids these are
     parent: str = ""  # at the top of a later batch: the id of the element, read in an earlier batch, this hangs under
+    # What the app says the element can do, so a caller need not infer it from the role, which every toolkit names
+    # its own way: the AT-SPI interfaces it implements ("Action", "EditableText", "Value", "Selection") and the names
+    # of its actions ("click", "toggle", "Press").
+    interfaces: tuple[str, ...] = ()
+    actions: tuple[str, ...] = ()
 
     def _own(self) -> dict:
         result = {
@@ -183,6 +190,8 @@ class Element:
             "role": self.role,
             "name": self.name,
             "states": list(self.states),
+            "interfaces": list(self.interfaces),
+            "actions": list(self.actions),
             "text": self.text,
             "x": self.x,
             "y": self.y,
@@ -526,6 +535,30 @@ def _interfaces(bus: _Bus, destination: str, object_path: str) -> tuple[str, ...
     return _as_strings(_reply_value(_call(bus, destination, object_path, ACCESSIBLE_INTERFACE, "GetInterfaces")))
 
 
+def _actions(bus: _Bus, destination: str, object_path: str, interfaces: tuple[str, ...]) -> tuple[str, ...]:
+    """The names of the element's actions. GetName is the name the app's code uses; GetActions would be one call,
+    but GTK gives the translated name there and Chromium an empty one."""
+    if ACTION_INTERFACE not in interfaces:
+        return ()
+    count = _property(bus, destination, object_path, ACTION_INTERFACE, "NActions")
+    try:
+        count = int(cast(Any, count))
+    except (TypeError, ValueError) as exc:
+        raise A11yError(f"Accessibility object {object_path} returned an invalid action count: {count!r}") from exc
+    names = []
+    for index in range(count):
+        try:
+            names.append(
+                str(_reply_value(_call(bus, destination, object_path, ACTION_INTERFACE, "GetName", "i", (index,))))
+            )
+        except A11yError as exc:
+            # GTK 4 counts actions it then answers "No action with index" for, as on an open menu's items: an action
+            # the app will not name is not one a caller can ask for. The object going, or no answer, is still raised.
+            if exc.code != "unavailable" or not isinstance(exc.__cause__, DBusErrorResponse):
+                raise
+    return tuple(name for name in names if name)
+
+
 def _bounds(
     bus: _Bus, destination: str, object_path: str, coordinates: int = COORDINATE_WINDOW
 ) -> tuple[int, int, int, int]:
@@ -707,12 +740,24 @@ def _choose_toplevel(bus: _Bus, app_bus: str, app_path: str, window: Window) -> 
     exact = [candidate for candidate in candidates if candidate[2] == window.title]
     if len(exact) == 1:
         return exact[0][0]
+    # Toplevels the title cannot tell apart, two windows on one document or a GTK 3 window and its open combo's
+    # popup, are told apart by size: a toplevel reports the extents of its window exactly.
+    sized = [ref for ref in titled or [candidate[0] for candidate in candidates] if _sized_as(bus, ref, window)]
+    if len(sized) == 1:
+        return sized[0]
     listed = ", ".join(repr(name) for name in names) or "none"
     raise A11yError(
         f"Could not choose an accessibility toplevel for {window.title!r}: candidates are {listed}. "
-        "The title must match exactly and uniquely.",
+        f"The title must match exactly and uniquely, or one alone be {window.width}x{window.height} as the window is"
+        f"{': ' + str(len(sized)) + ' are' if sized else ''}.",
         "ambiguous",
     )
+
+
+def _sized_as(bus: _Bus, ref: tuple[str, str], window: Window) -> bool:
+    if COMPONENT_INTERFACE not in _interfaces(bus, *ref):
+        return False
+    return _bounds(bus, *ref)[2:] == (window.width, window.height)
 
 
 @dataclass
@@ -727,6 +772,7 @@ class _Walk:
     count: int = 0  # ids given out: the next element is e{count + 1}
     # The unread part of the tree in document order: (parent id, bus, path, the parent's popup keys).
     frontier: list[tuple[str, str, str, tuple[Key, ...]]] = field(default_factory=list)
+    shown: _Shown | None = None
 
 
 def _write_records(window: Window, snapshot_id: str, state: _Walk, gtk3: bool, root: tuple[str, str]) -> None:
@@ -791,6 +837,32 @@ class _Placer:
         return (round(popup.sx + x), round(popup.sy + y), width, height), keys
 
 
+class _Shown:
+    """Whether a box an app calls showing is on a surface of the window: it has area and meets the window or one of
+    its mapped popups. Apps state `showing` for what nobody can see: Qt for the items of a closed combo box, far off
+    the window, and GTK 4 for rows it has not laid out, with no size. The popups are asked for once, and only when a
+    box misses the window; with no compositor to ask, such a box is left as the app states it."""
+
+    def __init__(self, window: Window, popups: Popups | None):
+        self._window = window
+        self._popups = popups
+        self._mapped: list[Popup] | None = None
+
+    def __call__(self, bounds: tuple[int, int, int, int]) -> bool:
+        x, y, width, height = bounds
+        if width <= 0 or height <= 0:
+            return False
+
+        def meets(left: float, top: float, across: float, down: float) -> bool:
+            return x < left + across and left < x + width and y < top + down and top < y + height
+
+        if meets(0, 0, self._window.width, self._window.height) or self._popups is None:
+            return True
+        if self._mapped is None:
+            self._mapped = self._popups()
+        return any(meets(popup.x, popup.y, popup.width, popup.height) for popup in self._mapped)
+
+
 def _leave_out(exc: A11yError, records: dict[str, dict[str, str]], recorded: int) -> None:
     """Drop the records a walk of an element added after the first `recorded`, when the app removed that element while
     the tree was read, as a dialog's button goes once a click on it closes the dialog: it is no longer in the tree.
@@ -824,6 +896,8 @@ class _Node:
     id: str
     parent: str
     fields: tuple[str, str, tuple[str, ...], str | None, int, int, int, int]
+    interfaces: tuple[str, ...]
+    actions: tuple[str, ...]
     refs: list[tuple[str, str]]
     keys: tuple[Key, ...]
     children: list[Element] = field(default_factory=list)
@@ -831,7 +905,21 @@ class _Node:
 
     def element(self) -> Element:
         role, name, states, text, x, y, width, height = self.fields
-        return Element(self.id, role, name, states, text, x, y, width, height, tuple(self.children), parent=self.parent)
+        return Element(
+            self.id,
+            role,
+            name,
+            states,
+            text,
+            x,
+            y,
+            width,
+            height,
+            tuple(self.children),
+            parent=self.parent,
+            interfaces=self.interfaces,
+            actions=self.actions,
+        )
 
 
 def _read_batch(
@@ -911,9 +999,15 @@ def _read_node(
     bounds = _bounds(connection, destination, object_path) if COMPONENT_INTERFACE in interfaces else (0, 0, 0, 0)
     if placer is not None and COMPONENT_INTERFACE in interfaces:
         bounds, keys = placer.place(destination, object_path, bounds, "showing" in states, keys)
+    if state.shown is not None and "showing" in states and not state.shown(bounds):
+        states = tuple(name for name in states if name != "showing")
     text = _text(connection, destination, object_path, interfaces)
     refs = _children(connection, destination, object_path)
-    return _Node(element_id, parent, (role, name, states, text, *bounds), refs, keys)
+    listed = tuple(
+        interface.removeprefix(ATSPI_PREFIX) for interface in interfaces if interface.startswith(ATSPI_PREFIX)
+    )
+    actions = _actions(connection, destination, object_path, interfaces)
+    return _Node(element_id, parent, (role, name, states, text, *bounds), listed, actions, refs, keys)
 
 
 def _budget(max_nodes: int) -> None:
@@ -940,7 +1034,7 @@ def snapshot(
         root = _choose_toplevel(connection, app_bus, app_path, window)
         gtk3 = _gtk3(connection, app_bus, app_path)
         placer = _Placer(connection, popups, _root_offset(connection, root)) if gtk3 else None
-        state = _Walk({}, set(), set(), frontier=[("", *root, ())])
+        state = _Walk({}, set(), set(), frontier=[("", *root, ())], shown=_Shown(window, popups))
         tops = _read_batch(connection, state, max_nodes, placer)
         if not tops:
             # The toplevel went between being chosen and being read.
@@ -984,6 +1078,7 @@ def more(
                 )
                 for entry in payload["frontier"]
             ],
+            _Shown(window, popups),
         )
         root_bus, root_path = payload["root"]
         root = (str(root_bus), str(root_path))

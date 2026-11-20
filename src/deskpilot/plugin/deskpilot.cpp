@@ -2321,7 +2321,7 @@ namespace {
         }
         if (PROTO::data->dndActive()) {
             PROTO::data->abortDndIfPresent();
-            op.error = "the press started a drag and drop, which a hidden action cannot carry: it was cancelled";
+            op.error = "the press started a drag and drop, which an action sent to the window's own pointer cannot carry: it was cancelled";
             return false;
         }
         return true;
@@ -2399,7 +2399,7 @@ namespace {
                     return;
                 // A drag and drop the press started takes the seat's pointer focus; finish() cancels it.
                 if (!g_op->down.empty() && PROTO::data->dndActive()) {
-                    g_op->error = "the press started a drag and drop, which a hidden action cannot carry: it was cancelled";
+                    g_op->error = "the press started a drag and drop, which an action sent to the window's own pointer cannot carry: it was cancelled";
                     return;
                 }
                 if (hiddenReady(*g_op))

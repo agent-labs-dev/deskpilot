@@ -599,8 +599,9 @@ class Desk:
         show: bool = False,
         hidden: bool = False,
     ) -> tuple[int, int]:
-        """Press at `start`, move to `end` over `duration` seconds and release there, for a slider, a selection or a
-        drag and drop within the window. Both points are in the same shot's pixels. The user's pointer stays put."""
+        """Press at `start`, move to `end` over `duration` seconds and release there, for a slider or a selection.
+        Both points are in the same shot's pixels. The user's pointer stays put. A drag and drop the press starts
+        is carried only where the plugin reaches the window through the seat; elsewhere it is cancelled and refused."""
         win, x1, y1 = self.point(query, *start, scale, shot, show, hidden=hidden)
         _, x2, y2 = self.point(query, *end, scale, shot, show, hidden=hidden)
         if not 0 < duration <= 5:
