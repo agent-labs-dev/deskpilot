@@ -4,7 +4,7 @@
   "description": "Type two commands into a kitty terminal, with a clean config so it looks the same on every machine.",
   "window": "kitty",
   "size": "1238x758",
-  "launch": ["kitty", "--config", "NONE", "-o", "font_size=18", "-o", "background=#1e1f22", "sh", "-c", "PS1='$ ' exec sh"],
+  "launch": ["kitty", "--config", "NONE", "-o", "confirm_os_window_close=0", "-o", "font_size=18", "-o", "background=#1e1f22", "sh", "-c", "PS1='$ ' exec sh"],
   "timeout": 30,
   "steps": [
     { "action": "click", "x": 600, "y": 400 },

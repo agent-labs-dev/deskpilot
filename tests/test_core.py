@@ -1497,6 +1497,16 @@ def test_a_launched_app_is_told_accessibility_is_on(tmp_path, monkeypatch):
     assert gate.env["ACCESSIBILITY_ENABLED"] == "1"
 
 
+def test_a_launched_qt_app_is_told_to_join_the_accessibility_bus(tmp_path, monkeypatch):
+    # Qt's AT-SPI bridge stays off without it unless a screen reader was on as the app started.
+    desk, fake, _ = gated_launch(tmp_path, monkeypatch)
+    monkeypatch.delenv("QT_LINUX_ACCESSIBILITY_ALWAYS_ON", raising=False)
+    GATE.on_start = lambda: fake.clients.append(AGENT_CLIENT)
+    desk.launch(["cmake-gui"])
+    (gate,) = GATE.made
+    assert gate.env["QT_LINUX_ACCESSIBILITY_ALWAYS_ON"] == "1"
+
+
 def test_client_env_names_the_selected_instance_s_x_display_or_none(tmp_path, monkeypatch):
     # The caller's DISPLAY is the user's X server; an X11 app given it would open on the user's screen.
     from deskpilot import hypr

@@ -1,0 +1,50 @@
+{
+  "version": 1,
+  "name": "trip expenses, part 3: text editor",
+  "description": "Part 3 of the trip expenses demo: write the expense report in GNOME Text Editor with the totals from part 2, then open its document statistics.",
+  "window": "org.gnome.TextEditor",
+  "size": "1238x758",
+  "launch": [
+    "sh",
+    "-c",
+    "d=$(mktemp -d); XDG_DATA_HOME=$d XDG_CONFIG_HOME=$d/c XDG_CACHE_HOME=$d/k GSETTINGS_BACKEND=memory exec gnome-text-editor --standalone"
+  ],
+  "timeout": 30,
+  "steps": [
+    {
+      "action": "click",
+      "x": 600,
+      "y": 300
+    },
+    {
+      "action": "pause",
+      "seconds": 1
+    },
+    {
+      "action": "type",
+      "text": "# Lisbon trip expenses\n\nFlights   412.50\nHotel     389.00\nMeals      96.40\nTaxi       42.10\n\nTotal     940.00\nEach of 4 235.00\n\nChecked in Calculator, typed by deskpilot.\n",
+      "delay": 0.04
+    },
+    {
+      "action": "pause",
+      "seconds": 1.5
+    },
+    {
+      "action": "click",
+      "x": 1032,
+      "y": 23
+    },
+    {
+      "action": "pause",
+      "seconds": 3
+    },
+    {
+      "action": "shot",
+      "out": "expenses-3-text-editor.png"
+    }
+  ],
+  "record": {
+    "output": "assets/recipes/expenses-3-text-editor.mp4",
+    "fps": 30
+  }
+}

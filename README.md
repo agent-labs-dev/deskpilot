@@ -59,6 +59,9 @@ deskpilot windows
 deskpilot elements WINDOW
 ```
 
+A tree larger than one read ends with the command that reads the next batch, and
+`deskpilot elements WINDOW --query TEXT` prints only the elements whose role, name or text contains `TEXT`.
+
 In an app with an accessibility tree, choose a control from the output and replace `ELEMENT` with its ID:
 
 ```sh
@@ -123,7 +126,15 @@ MP4 it records. The recording is `deskpilot record` of the window, so the video 
 draws. `deskpilot recipe schema` prints the format as JSON Schema. Nothing is launched or clicked until the whole
 file validates, and a failed step stops the run, keeps the recording and exits 2.
 
-[Recipe format and recording](docs/recipes.md)
+For a longer run, [trip expenses](assets/recipes/trip-expenses.mp4) is 70 seconds across three apps: deskpilot reads
+a CSV in a terminal, totals it on a calculator's keys, writes the report in a text editor and checks the figures.
+It is four recipes recorded in order and joined.
+
+With [fastbrowse](https://github.com/agent-labs-dev/fastbrowse) the steps come from one sentence instead of a file:
+in [flat bills](assets/recipes/flat-bills.mp4) it is asked who owes whom, works it out, writes the answer into the
+file in a text editor and saves it, all through deskpilot.
+
+[Recipe format, recording and the examples](docs/recipes.md)
 
 ## Work on your own hidden window
 

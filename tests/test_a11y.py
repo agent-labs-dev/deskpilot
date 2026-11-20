@@ -1,4 +1,5 @@
 import json
+import sys
 from dataclasses import replace
 from types import SimpleNamespace
 
@@ -48,6 +49,8 @@ class FakeBus:
         self.screen: dict[str, tuple[int, int, int, int]] = {}
         self.parents: dict[str, str] = {}
         self.layers: dict[str, int] = {}
+        # GetRelationSet's reply by path: (relation type, [(bus, path), ...]) pairs.
+        self.relations: dict[str, list[tuple[int, list[tuple[str, str]]]]] = {}
 
     def call(self, destination, object_path, interface, method, signature, body):
         self.calls.append((destination, object_path, interface, method, signature, body))
@@ -61,6 +64,8 @@ class FakeBus:
             return (self.roles[object_path][0],)
         if (interface, method) == (a11y.ACCESSIBLE_INTERFACE, "GetRoleName"):
             return (self.roles[object_path][1],)
+        if (interface, method) == (a11y.ACCESSIBLE_INTERFACE, "GetRelationSet"):
+            return (self.relations.get(object_path, []),)
         if (interface, method) == (a11y.ACCESSIBLE_INTERFACE, "GetState"):
             return (self.states[object_path],)
         if (interface, method) == (a11y.ACCESSIBLE_INTERFACE, "GetInterfaces"):
@@ -128,6 +133,34 @@ def test_snapshot_reports_ambiguous_toplevel_names(tmp_path, monkeypatch):
     assert error.value.code == "ambiguous"
 
 
+def test_snapshot_takes_a_lone_titled_toplevel_that_reports_no_window_role(tmp_path, monkeypatch):
+    # Qt 5 reports a plain QWidget toplevel, such as qt5ct's window, as a "filler".
+    monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path))
+    fake = FakeBus(title="Qt5 Configuration Tool")
+    fake.roles["/frame"] = (22, "filler")
+    tree = a11y.snapshot(window(title="Qt5 Configuration Tool"), bus=fake)
+    assert (tree.role, tree.name) == ("filler", "Qt5 Configuration Tool")
+
+
+def test_snapshot_of_a_qt_message_box_reads_the_box_not_its_parent_window(tmp_path, monkeypatch):
+    # Qt reports a QMessageBox toplevel as an "alert message" beside the main window's frame.
+    monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path))
+    fake = FakeBus(title="CMake", duplicate_title=True)
+    fake.roles["/dialog"] = (2, "alert message")
+    fake.names["/dialog"] = "Delete Cache"
+    tree = a11y.snapshot(window(title="Delete Cache"), bus=fake)
+    assert (tree.role, tree.name) == ("alert message", "Delete Cache")
+
+
+def test_snapshot_refuses_untitled_toplevels_that_report_no_window_role(tmp_path, monkeypatch):
+    monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path))
+    fake = FakeBus(title="Same", duplicate_title=True)
+    fake.roles["/frame"] = fake.roles["/dialog"] = (22, "filler")
+    with pytest.raises(a11y.A11yError) as error:
+        a11y.snapshot(window(title="Same"), bus=fake)
+    assert error.value.code == "ambiguous"
+
+
 def test_snapshot_reports_an_app_without_accessibility(tmp_path, monkeypatch):
     monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path))
     fake = FakeBus(pid=99)
@@ -137,6 +170,7 @@ def test_snapshot_reports_an_app_without_accessibility(tmp_path, monkeypatch):
     assert "force-renderer-accessibility" in str(error.value)
     assert "ACCESSIBILITY_ENABLED=1" in str(error.value)
     assert "Wine and XWayland games" in str(error.value)
+    assert "QT_LINUX_ACCESSIBILITY_ALWAYS_ON=1" in str(error.value)
 
 
 def test_locate_reads_live_bounds_and_unknown_ids_are_actionable(tmp_path, monkeypatch):
@@ -173,6 +207,28 @@ def test_a_peek_leaves_the_latest_snapshot_and_its_ids_in_place(tmp_path, monkey
 
     assert peeked.snapshot == "" and "snapshot" not in peeked.to_dict()
     assert a11y.locate(window(), f"{taken}:e2", bus=fake) == a11y.Located(10, 20, 80, 20)
+
+
+def test_an_unnamed_element_is_named_by_the_label_it_points_to(tmp_path, monkeypatch):
+    monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path))
+    fake = FakeBus()
+    # A GTK 4 menu item: no name of its own, labelled by a nameless label whose text is the caption.
+    fake.refs["/frame"] = [("app.bus", "/item")]
+    fake.refs["/item"] = []
+    fake.names |= {"/item": "", "/label": ""}
+    fake.roles["/item"] = (35, "menu item")
+    fake.states["/item"] = fake.states["/frame"]
+    fake.bounds["/item"] = (10, 20, 80, 20)
+    fake.interfaces["/item"] = ["org.a11y.atspi.Component"]
+    fake.interfaces["/label"] = ["org.a11y.atspi.Text"]
+    fake.text["/label"] = "Save"
+    fake.relations["/item"] = [(3, [("app.bus", "/frame")]), (2, [("app.bus", "/label")])]
+
+    root = a11y.snapshot(window(), bus=fake)
+
+    assert (root.children[0].role, root.children[0].name) == ("menu item", "Save")
+    # The same naming holds when the element is found again, so its id is not taken for stale.
+    assert a11y.locate(window(), "e2", bus=fake).width == 80
 
 
 def test_an_element_whose_name_changed_is_stale_and_one_not_showing_is_offscreen(tmp_path, monkeypatch):
@@ -238,12 +294,217 @@ def test_a_malformed_record_is_stale(tmp_path, monkeypatch):
     assert error.value.code == "stale"
 
 
-def test_snapshot_to_dict_marks_a_walk_cut_by_max_nodes(tmp_path, monkeypatch):
+def add(fake, parent, path, name):
+    """Hang a button named `name` at `path` below `parent` in a FakeBus tree."""
+    fake.refs.setdefault(parent, []).append(("app.bus", path))
+    fake.refs[path] = []
+    fake.names[path] = name
+    fake.roles[path] = (43, "push button")
+    fake.states[path] = fake.states["/button"]
+    fake.interfaces[path] = ["org.a11y.atspi.Component"]
+    fake.bounds[path] = (10, 20, 80, 20)
+
+
+def wide_bus(rows=250, cells=2):
+    """A window of `rows` rows of `cells` cells each below its one button: 2 + rows * (1 + cells) elements."""
+    fake = FakeBus()
+    for row in range(rows):
+        add(fake, "/frame", f"/row{row}", f"row {row}")
+        for cell in range(cells):
+            add(fake, f"/row{row}", f"/row{row}/cell{cell}", f"cell {row}.{cell}")
+    return fake
+
+
+def flat(element, parent=""):
+    """Every element of a tree as (id, name, the id it hangs under), in document order."""
+    rows, pending = [], [(element, element.parent or parent)]
+    while pending:
+        element, above = pending.pop()
+        rows.append((element.id, element.name, above))
+        pending.extend((child, element.id) for child in reversed(element.children))
+    return rows
+
+
+def read_in_batches(fake, size):
+    """A snapshot read `size` elements at a time until nothing is left: its batches as flat rows, and its id."""
+    first = a11y.snapshot(window(), max_nodes=size, bus=fake)
+    batches, truncated = [flat(first)], first.truncated
+    while truncated:
+        batch = a11y.more(window(), first.snapshot, max_nodes=size, bus=fake)
+        batches.append([row for top in batch.elements for row in flat(top)])
+        truncated = batch.truncated
+    return batches, first.snapshot
+
+
+def test_a_snapshot_the_budget_ends_says_how_to_read_on(tmp_path, monkeypatch):
     monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path))
     tree = a11y.snapshot(window(), max_nodes=1, bus=FakeBus())
 
-    assert tree.to_dict()["truncated"] is True
     assert tree.children == ()
+    assert tree.to_dict()["truncated"] is True
+    assert tree.to_dict()["more"] == tree.snapshot
+
+
+def test_a_tree_deeper_than_one_read_nests_is_read_on_in_batches(tmp_path, monkeypatch):
+    # Nautilus puts the items of its folder menu 31 levels below the window, which one read holds. A read nests no
+    # deeper than MAX_DEPTH, so what carries it to the caller can serialise it; the rest is read on, nothing cut.
+    monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path))
+    fake = FakeBus()
+    parent = "/button"
+    for level in range(500):
+        add(fake, parent, f"/deep{level}", f"level {level}")
+        parent = f"/deep{level}"
+    monkeypatch.setattr(sys, "setrecursionlimit", lambda limit: pytest.fail("the read raised the limit"))
+
+    def depth(element):
+        levels = 1
+        while element.children:
+            element, levels = element.children[0], levels + 1
+        return levels, element
+
+    tree = a11y.snapshot(window(), bus=fake)
+    levels, last = depth(tree)
+    assert levels == a11y.MAX_DEPTH and tree.truncated
+    names = [last.name]
+    read_on = tree.to_dict()["more"]
+    while read_on:
+        batch = a11y.more(window(), read_on, bus=fake)
+        (top,) = batch.elements
+        assert top.parent == last.id
+        levels, last = depth(top)
+        assert levels <= a11y.MAX_DEPTH
+        names.append(last.name)
+        read_on = batch.to_dict().get("more")
+    assert names[-1] == "level 499" and len(names) == 11
+
+
+def test_a_tree_that_loops_back_on_itself_is_read_once(tmp_path, monkeypatch):
+    monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path))
+    fake = FakeBus()
+    add(fake, "/button", "/inner", "inner")
+    fake.refs["/inner"] = [("app.bus", "/frame"), ("app.bus", "/button")]
+
+    tree = a11y.snapshot(window(), bus=fake)
+
+    assert [row[1] for row in flat(tree)] == ["Editor", "Save", "inner"]
+    assert not tree.truncated
+
+
+def test_batches_of_100_together_are_the_whole_tree_with_the_same_ids(tmp_path, monkeypatch):
+    monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path))
+    whole = flat(a11y.snapshot(window(), bus=wide_bus()))
+    assert len(whole) == 752
+
+    batches, _ = read_in_batches(wide_bus(), 100)
+
+    assert [len(batch) for batch in batches] == [100] * 7 + [52]
+    # The same elements, under the same ids and the same parents, as one read of the whole tree gives.
+    assert [row for batch in batches for row in batch] == whole
+
+
+def test_a_later_batch_names_the_parent_each_subtree_hangs_under(tmp_path, monkeypatch):
+    monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path))
+    first = a11y.snapshot(window(), max_nodes=4, bus=wide_bus(rows=3))
+    # e1 frame, e2 Save, e3 row 0, e4 cell 0.0: row 0's second cell and the other rows are still to read.
+    batch = a11y.more(window(), first.snapshot, max_nodes=100, bus=wide_bus(rows=3))
+
+    assert [(top.id, top.name, top.parent) for top in batch.elements] == [
+        ("e5", "cell 0.1", "e3"),
+        ("e6", "row 1", "e1"),
+        ("e9", "row 2", "e1"),
+    ]
+    assert batch.to_dict()["elements"][1]["children"][0]["id"] == "e7"
+    assert "parent" not in batch.to_dict()["elements"][1]["children"][0]
+    assert not batch.truncated and "more" not in batch.to_dict()
+    assert a11y.more(window(), first.snapshot, bus=wide_bus(rows=3)) == a11y.Batch(first.snapshot, ())
+
+
+def test_ids_from_every_batch_resolve_while_the_snapshot_is_the_latest(tmp_path, monkeypatch):
+    monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path))
+    fake = wide_bus()
+    fake.bounds["/row40/cell1"] = (300, 400, 50, 20)
+    batches, snapshot_id = read_in_batches(fake, 100)
+    first, later = batches[0][1], next(row for row in batches[1] if row[1] == "cell 40.1")
+
+    assert a11y.locate(window(), f"{snapshot_id}:{later[0]}", bus=fake) == a11y.Located(300, 400, 50, 20)
+    assert a11y.locate(window(), f"{snapshot_id}:{first[0]}", bus=fake) == a11y.Located(10, 20, 80, 20)
+
+
+def test_a_later_batch_keeps_what_a_selection_chose_and_reads_no_element_twice(tmp_path, monkeypatch):
+    monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path))
+    fake = wide_bus(rows=3)
+    fake.interfaces["/frame"].append(a11y.SELECTION_INTERFACE)
+    fake.selected["/frame"] = [("app.bus", "/row2")]
+    first = a11y.snapshot(window(), max_nodes=4, bus=fake)
+    fake.calls.clear()
+
+    batch = a11y.more(window(), first.snapshot, bus=fake)
+
+    assert "selected" in batch.elements[2].states
+    assert not {call[1] for call in fake.calls} & {"/frame", "/button", "/row0", "/row0/cell0"}
+
+
+def test_reading_on_from_a_replaced_snapshot_is_stale(tmp_path, monkeypatch):
+    monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path))
+    fake = wide_bus(rows=3)
+    old = a11y.snapshot(window(), max_nodes=4, bus=fake)
+    a11y.snapshot(window(), max_nodes=4, bus=fake)
+
+    with pytest.raises(a11y.A11yError, match="was replaced") as error:
+        a11y.more(window(), old.snapshot, bus=fake)
+    assert error.value.code == "stale"
+    with pytest.raises(a11y.A11yError) as error:
+        a11y.more(replace(window(), pid=7), old.snapshot, bus=fake)
+    assert error.value.code == "stale"
+
+
+def test_reading_on_when_an_element_kept_for_later_is_gone_is_stale(tmp_path, monkeypatch):
+    monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path))
+    first = a11y.snapshot(window(), max_nodes=4, bus=wide_bus(rows=3))
+    unknown = SimpleNamespace(
+        header=SimpleNamespace(fields={HeaderFields.error_name: "org.freedesktop.DBus.Error.UnknownObject"}), body=()
+    )
+
+    class RowGone(FakeBus):
+        def call(self, destination, object_path, interface, method, signature, body):
+            if object_path == "/row1":
+                raise DBusErrorResponse(unknown)
+            return super().call(destination, object_path, interface, method, signature, body)
+
+    changed = RowGone()
+    changed.__dict__.update(wide_bus(rows=3).__dict__)
+    with pytest.raises(a11y.A11yError, match="changed since snapshot") as error:
+        a11y.more(window(), first.snapshot, bus=changed)
+    assert error.value.code == "stale"
+    # Nothing was half read: the snapshot still reads on once the tree is as it was.
+    assert len(a11y.more(window(), first.snapshot, bus=wide_bus(rows=3)).elements) == 3
+
+
+def test_a_peek_the_budget_ends_keeps_nothing_to_read_on(tmp_path, monkeypatch):
+    monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path))
+    peek = a11y.snapshot(window(), max_nodes=1, bus=FakeBus(), peek=True).to_dict()
+
+    assert peek["truncated"] is True and "more" not in peek and "snapshot" not in peek
+    with pytest.raises(ValueError, match="at least one"):
+        a11y.snapshot(window(), max_nodes=0, bus=FakeBus())
+
+
+def test_narrow_keeps_what_fits_and_the_elements_above_it(tmp_path, monkeypatch):
+    monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path))
+    fake = wide_bus(rows=3)
+    fake.states["/row1/cell1"] = [1 << 8, 0]  # enabled, not showing
+    tree = a11y.snapshot(window(), bus=fake).to_dict()
+
+    found = a11y.narrow(tree, query="CELL 1.")
+
+    assert (found["read"], found["matched"], found["snapshot"]) == (11, 2, tree["snapshot"])
+    assert [(row["id"], [cell["id"] for cell in row["children"]]) for row in found["children"]] == [
+        ("e6", ["e7", "e8"])
+    ]
+    shown = a11y.narrow(tree, query="cell 1.", showing=True)
+    assert [cell["id"] for cell in shown["children"][0]["children"]] == ["e7"]
+    assert a11y.narrow(tree, query="nothing like it")["children"] == []
+    assert a11y.narrow(tree) is tree
 
 
 def gtk3_bus(toolkit=("gtk", "3.24.52")):
@@ -386,6 +647,28 @@ def test_an_element_with_a_negative_size_has_no_bounds(tmp_path, monkeypatch):
     assert error.value.code == "offscreen"
 
 
+def test_text_leaves_out_the_marks_where_child_elements_sit(tmp_path, monkeypatch):
+    # Chromium gives a paragraph holding a link the text "See \ufffc for more", and a document only the marks.
+    monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path))
+    fake = FakeBus()
+    fake.text["/button"] = "See \ufffc for more"
+    assert a11y.snapshot(window(), bus=fake).children[0].text == "See  for more"
+    fake.text["/button"] = "\ufffc\ufffc"
+    assert a11y.snapshot(window(), bus=fake).children[0].text == ""
+
+
+def test_a_gtk3_cell_scrolled_out_of_view_has_no_bounds(tmp_path, monkeypatch):
+    # yad --list with 200 rows gave row 173 the extents (-2147483648, -2147483648, 1184, 23), still "showing".
+    monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path))
+    fake = FakeBus()
+    fake.bounds["/button"] = (-(2**31), -(2**31), 1184, 23)
+    button = a11y.snapshot(window(), bus=fake).children[0]
+    assert (button.x, button.y, button.width, button.height) == (0, 0, 0, 0)
+    with pytest.raises(a11y.A11yError, match="scroll it into view") as error:
+        a11y.locate(window(), "e2", bus=fake)
+    assert error.value.code == "offscreen"
+
+
 def _dbus_error(name):
     return DBusErrorResponse(SimpleNamespace(header=SimpleNamespace(fields={HeaderFields.error_name: name}), body=()))
 
@@ -494,3 +777,70 @@ def test_an_app_that_leaves_the_bus_while_its_toplevel_is_chosen_is_gone(tmp_pat
     with pytest.raises(a11y.A11yError) as error:
         a11y.snapshot(window(), bus=Leaving())
     assert error.value.code == "gone"
+
+
+class PagedDesk:
+    """A Desk whose window's tree is larger than one read: the first page, then with `more` the rest."""
+
+    def __init__(self):
+        self.asked = []
+
+    def elements(self, query, show=False, hidden=False, peek=False, max_nodes=a11y.MAX_NODES, more=""):
+        self.asked.append((query, hidden, peek, max_nodes, more))
+        root = a11y.Element("e1", "frame", "Editor", (), None, 0, 0, 800, 600, ())
+        if peek:
+            return replace(root, truncated=True)
+        if not more:
+            return replace(root, truncated=True, snapshot="abc-1")
+        cell = a11y.Element("e3", "push button", "Save", ("showing",), None, 1, 2, 3, 4, ())
+        row = a11y.Element("e2", "panel", "", (), None, 0, 0, 5, 5, (cell,), parent="e1")
+        return a11y.Batch("abc-1", (row, replace(cell, id="e4", name="Open", parent="e1")))
+
+
+def test_elements_text_names_the_command_that_reads_the_rest_of_a_larger_tree():
+    from deskpilot import cli
+
+    desk = PagedDesk()
+    args = cli.build_parser().parse_args(["elements", "My Editor", "--max-nodes", "100", "--hidden"])
+    lines = cli.run(args, desk)  # ty: ignore[invalid-argument-type]
+
+    assert isinstance(lines, list)
+    assert lines[0] == "snapshot abc-1"
+    assert lines[-1] == (
+        "more: the tree is larger than this batch; read on with: "
+        "deskpilot elements 'My Editor' --more abc-1 --max-nodes 100 --hidden"
+    )
+    assert desk.asked == [("My Editor", True, False, 100, "")]
+
+
+def test_elements_more_prints_each_subtree_under_the_id_it_hangs_from():
+    from deskpilot import cli
+
+    desk = PagedDesk()
+    args = cli.build_parser().parse_args(["elements", "Editor", "--more", "abc-1"])
+    lines = cli.run(args, desk)  # ty: ignore[invalid-argument-type]
+
+    assert lines == [
+        "snapshot abc-1",
+        "under e1:",
+        "  e2 panel 0,0 5x5",
+        "    e3 push button 'Save' 1,2 3x4 [showing]",
+        "  e4 push button 'Open' 1,2 3x4 [showing]",
+    ]
+    assert desk.asked == [("Editor", False, False, a11y.MAX_NODES, "abc-1")]
+    args = cli.build_parser().parse_args(["--json", "elements", "Editor", "--more", "abc-1", "--query", "open"])
+    found = cli.run(args, desk)  # ty: ignore[invalid-argument-type]
+    assert isinstance(found, dict)
+    assert ([top["id"] for top in found["elements"]], found["read"], found["matched"]) == (["e4"], 3, 1)
+
+
+def test_elements_text_of_a_peek_the_budget_ended_says_it_cannot_be_read_on():
+    from deskpilot import cli
+
+    args = cli.build_parser().parse_args(["elements", "Editor", "--peek"])
+    lines = cli.run(args, PagedDesk())  # ty: ignore[invalid-argument-type]
+
+    assert isinstance(lines, list)
+    assert lines[-1].startswith("truncated: the tree is larger than was read") and "--max-nodes" in lines[-1]
+    with pytest.raises(SystemExit):
+        cli.build_parser().parse_args(["elements", "Editor", "--max-nodes", "0"])
