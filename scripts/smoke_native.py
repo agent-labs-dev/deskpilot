@@ -184,8 +184,11 @@ def editor_smoke(command: str, roles: tuple[str, ...]) -> None:
     deskpilot("click", address, "--element", f"{tree['snapshot']}:{edit['id']}")
     deskpilot("type", "deskpilot smoke", "--window", address)
     deadline = time.monotonic() + 5
-    while not any("deskpilot smoke" in t for t in texts(deskpilot("elements", address))):
-        assert time.monotonic() < deadline, f"the typed text is not in {command}'s tree"
+    while True:
+        found = [t for t in texts(deskpilot("elements", address)) if t]
+        if any("deskpilot smoke" in t for t in found):
+            break
+        assert time.monotonic() < deadline, f"the typed text is not in {command}'s tree: {found}"
         time.sleep(0.5)
 
 
