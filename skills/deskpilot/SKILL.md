@@ -51,7 +51,7 @@ If `deskpilot` is not on `PATH`, ask the user before installing it with
    `--element ID` replaces X Y on `click`, `move`, `scroll` and `hover`. Prefer it where the app has a tree: the
    app reports where the element is. An app without one says so; use a shot instead. `--query TEXT` prints only
    the elements whose role, name or text contains TEXT and `--showing` only those on screen. A tree larger than one
-   read (`--max-nodes N`, 2000 unless given) ends with a `more:` line: run the command it names, `deskpilot elements
+   read (`--max-nodes N`, 2000 unless given, 50 levels deep) ends with a `more:` line: run the command it names, `deskpilot elements
    WINDOW --more SNAPSHOT`, until no `more:` line is left, or the element you want may be in a batch you never read.
    Ids from every batch stay good. An item of an open GTK 3 menu
    or combo box is clicked on its popup; an item `elements` lists with zero bounds is on a popup that cannot be told

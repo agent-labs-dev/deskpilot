@@ -345,8 +345,9 @@ def test_a_snapshot_the_budget_ends_says_how_to_read_on(tmp_path, monkeypatch):
     assert tree.to_dict()["more"] == tree.snapshot
 
 
-def test_snapshot_reads_a_tree_far_deeper_than_the_call_stack_allows(tmp_path, monkeypatch):
-    # Nautilus puts the items of its folder menu 31 levels below the window; no depth is cut, however deep.
+def test_a_tree_deeper_than_one_read_nests_is_read_on_in_batches(tmp_path, monkeypatch):
+    # Nautilus puts the items of its folder menu 31 levels below the window, which one read holds. A read nests no
+    # deeper than MAX_DEPTH, so what carries it to the caller can serialise it; the rest is read on, nothing cut.
     monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path))
     fake = FakeBus()
     parent = "/button"
@@ -354,20 +355,27 @@ def test_snapshot_reads_a_tree_far_deeper_than_the_call_stack_allows(tmp_path, m
         add(fake, parent, f"/deep{level}", f"level {level}")
         parent = f"/deep{level}"
     monkeypatch.setattr(sys, "setrecursionlimit", lambda limit: pytest.fail("the read raised the limit"))
-    sys_limit = sys.getrecursionlimit()
+
+    def depth(element):
+        levels = 1
+        while element.children:
+            element, levels = element.children[0], levels + 1
+        return levels, element
 
     tree = a11y.snapshot(window(), bus=fake)
-
-    element, depth = tree, 0
-    while element.children:
-        element, depth = element.children[0], depth + 1
-    assert (element.name, depth) == ("level 499", 501)
-    assert sys.getrecursionlimit() == sys_limit
-    data = tree.to_dict()
-    assert "truncated" not in data and "more" not in data
-    for _ in range(501):
-        data = data["children"][0]
-    assert data["name"] == "level 499"
+    levels, last = depth(tree)
+    assert levels == a11y.MAX_DEPTH and tree.truncated
+    names = [last.name]
+    read_on = tree.to_dict()["more"]
+    while read_on:
+        batch = a11y.more(window(), read_on, bus=fake)
+        (top,) = batch.elements
+        assert top.parent == last.id
+        levels, last = depth(top)
+        assert levels <= a11y.MAX_DEPTH
+        names.append(last.name)
+        read_on = batch.to_dict().get("more")
+    assert names[-1] == "level 499" and len(names) == 11
 
 
 def test_a_tree_that_loops_back_on_itself_is_read_once(tmp_path, monkeypatch):

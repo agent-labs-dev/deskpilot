@@ -267,7 +267,8 @@ def elements(
     and on the root the snapshot id. click, hover, move and scroll take an id as `element` and act on where the app
     says it is now. Each snapshot numbers its elements afresh: `<snapshot>:<id>` is refused (stale) once a newer
     snapshot replaces that one, and an element whose role or name changed since is stale too. An app that exposes no
-    tree is an error (no_tree). One call reads at most max_nodes elements. A larger tree is never cut quietly: the
+    tree is an error (no_tree). One call reads at most max_nodes elements, nested at most 50 levels. A larger or
+    deeper tree is never cut quietly: the
     result has `truncated` and `more`, the snapshot id; pass that as `more` to read the next batch, {snapshot,
     elements}, whose ids number on and whose subtrees each name the `parent` id they hang under, until a result has
     no `more`. Earlier ids stay good. A `more` whose snapshot was replaced, or whose tree changed, is stale. query

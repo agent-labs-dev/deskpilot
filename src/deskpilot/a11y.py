@@ -39,6 +39,11 @@ RELATION_LABELLED_BY = 2
 MAX_ANCESTORS = 200
 # How many elements one read of a tree takes unless the caller says: each costs the app several D-Bus round trips.
 MAX_NODES = 2000
+# How many levels one read nests. Each level is two levels of JSON, an element and its list of children, and what
+# carries a tree to its reader stops at a fixed depth: pydantic, which serialises an MCP result, at 255, serde_json,
+# which many callers parse with, at 128, and Python's own encoder at its call stack. 50 levels is 100 of JSON, clear
+# of all three with the envelope around it. Deeper elements stay unread for the next batch, as past the node budget.
+MAX_DEPTH = 50
 CALL_TIMEOUT = 2.0
 # D-Bus errors meaning the element's app or object no longer exists, so an id that named it is stale. Any other
 # failure, such as a timeout, is the bus being unavailable. GDBus, which GTK serves its tree over, answers a call on
@@ -834,16 +839,21 @@ def _read_batch(
 ) -> list[Element]:
     """Read up to `max_nodes` elements from the front of the frontier, depth first in document order, and leave
     what is still unread as the new frontier. Nothing is dropped: the read stops at the budget, and every child not
-    yet read stays on the frontier under its parent's id. A loop with its own stack, so no depth is too deep. `kept`
+    yet read stays on the frontier under its parent's id. A batch nests at most MAX_DEPTH levels: the children of an
+    element at that depth stay on the frontier too. A loop with its own stack, so no depth is too deep. `kept`
     says the frontier was kept from an earlier batch: one of its accessibles gone is then the tree having changed."""
     entries = state.frontier
     position = 0
     tops: list[Element] = []
     stack: list[_Node] = []
+    below: list[tuple[str, str, str, tuple[Key, ...]]] = []
     read = 0
     while True:
         if stack:
             node = stack[-1]
+            if len(stack) == MAX_DEPTH:
+                below.extend((node.id, *ref, node.keys) for ref in node.refs if ref not in state.seen)
+                node.index = len(node.refs)
             if node.index == len(node.refs):
                 stack.pop()
                 (stack[-1].children if stack else tops).append(node.element())
@@ -871,8 +881,10 @@ def _read_batch(
             if kept and not stack and _object_gone(exc):
                 raise _FrontierGone(ref[1]) from exc
             _leave_out(exc, state.records, recorded)
-    # The budget ended the read: what each open element has left comes first, deepest first, as a walk would go on.
+    # What lies below the deepest level read comes first, then, where the budget ended the read, what each open
+    # element has left, deepest first, as a walk would go on.
     state.frontier = [
+        *below,
         *((node.id, *ref, node.keys) for node in reversed(stack) for ref in node.refs[node.index :]),
         *entries[position:],
     ]
