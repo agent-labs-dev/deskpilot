@@ -33,6 +33,8 @@ DBUS_PATH = "/org/freedesktop/DBus"
 COORDINATE_SCREEN = 0
 COORDINATE_WINDOW = 1
 NULL_PATH = "/org/a11y/atspi/null"
+# AT-SPI's RelationType for "this element is labelled by those".
+RELATION_LABELLED_BY = 2
 # How far up from an element its toplevel may be before the walk gives up on a tree that loops.
 MAX_ANCESTORS = 200
 CALL_TIMEOUT = 2.0
@@ -402,7 +404,28 @@ def _role(bus: _Bus, destination: str, object_path: str) -> str:
 
 
 def _name(bus: _Bus, destination: str, object_path: str) -> str:
-    return str(_property(bus, destination, object_path, ACCESSIBLE_INTERFACE, "Name") or "")
+    name = str(_property(bus, destination, object_path, ACCESSIBLE_INTERFACE, "Name") or "")
+    if name:
+        return name
+    # An element with no name of its own is named by what it says labels it, as a GTK 4 menu item is by the label
+    # inside it. The label is read as it is now, so a label that went leaves the element unnamed.
+    relations = _reply_value(_call(bus, destination, object_path, ACCESSIBLE_INTERFACE, "GetRelationSet"))
+    labels: list[str] = []
+    for relation in cast(Any, relations) or ():
+        if int(relation[0]) != RELATION_LABELLED_BY:
+            continue
+        for label_bus, label_path in relation[1]:
+            try:
+                labels.append(_label(bus, str(label_bus), str(label_path)))
+            except A11yError as exc:
+                if not _object_gone(exc):
+                    raise
+    return " ".join(label for label in labels if label)
+
+
+def _label(bus: _Bus, destination: str, object_path: str) -> str:
+    name = str(_property(bus, destination, object_path, ACCESSIBLE_INTERFACE, "Name") or "")
+    return name or (_text(bus, destination, object_path, _interfaces(bus, destination, object_path)) or "")
 
 
 def _interfaces(bus: _Bus, destination: str, object_path: str) -> tuple[str, ...]:

@@ -127,6 +127,10 @@ For a longer run, [trip expenses](assets/recipes/trip-expenses.mp4) is 70 second
 a CSV in a terminal, totals it on a calculator's keys, writes the report in a text editor and checks the figures.
 It is four recipes recorded in order and joined.
 
+With [fastbrowse](https://github.com/agent-labs-dev/fastbrowse) the steps come from one sentence instead of a file:
+in [flat bills](assets/recipes/flat-bills.mp4) it is asked who owes whom, works it out, writes the answer into the
+file in a text editor and saves it, all through deskpilot.
+
 [Recipe format, recording and the examples](docs/recipes.md)
 
 ## Work on your own hidden window

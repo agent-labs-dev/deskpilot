@@ -7,6 +7,10 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+- `elements` names an element that has no name of its own from the label it says labels it. A GTK 4 menu item, such as Save in GNOME Text Editor's main menu, was listed with an empty name, so an agent reading the tree could not tell the items apart.
+
+- `docs/recipes.md` shows fastbrowse driving GNOME Text Editor through deskpilot from one plain sentence, with the fixture `recipes/fixtures/flat-bills.txt` and the recording `assets/recipes/flat-bills.mp4`.
+
 - `recipes/expenses-1-terminal.json` to `expenses-4-check.json` are one longer demo in four parts: read a CSV in kitty, total it on GNOME Calculator's keys, write the report in GNOME Text Editor, and check the figures with `awk`. `docs/recipes.md` shows how to record the parts and join them into one MP4, and `assets/recipes/trip-expenses.mp4` is the result.
 
 - MCP `shot` takes `out`, the path to write the PNG to, as `deskpilot shot -o` does. A client that names the file before the call can remove it however the call ends, including when it is cancelled after the capture but before the reply that carries the path.

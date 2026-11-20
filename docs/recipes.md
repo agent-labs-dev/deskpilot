@@ -139,6 +139,24 @@ ffmpeg -f concat -safe 0 -i parts/list.txt -c copy -movflags +faststart trip-exp
 Run it from the repository root, since the terminal parts open in `recipes/fixtures`.
 [The result](../assets/recipes/trip-expenses.mp4) was recorded this way inside `scripts/nested.py`'s compositor.
 
+### A task in one sentence
+
+A recipe replays steps someone chose. [fastbrowse](https://github.com/agent-labs-dev/fastbrowse) takes the task in
+plain words instead and picks each step itself from the app's accessibility tree, acting through deskpilot on a hidden
+workspace. `recipes/fixtures/flat-bills.txt` lists what three flatmates paid in a month and ends at an empty
+`Settle up:`. Copy it, since the run edits the file it is given:
+
+```sh
+cp recipes/fixtures/flat-bills.txt /tmp/flat-bills.txt
+fastbrowse 'flat-bills.txt lists what each flatmate paid this month. Work out who owes whom so that everyone has paid an equal share, write the result as short lines under "Settle up:" at the bottom of the file, and save the file.' \
+  --desktop 'gnome-text-editor -s /tmp/flat-bills.txt' --record flat-bills.mp4
+```
+
+[The result](../assets/recipes/flat-bills.mp4) is 19 seconds: fastbrowse reads the bills, writes `Chidi pays Aoife
+118.80` and `Chidi pays Ben 1.20`, and saves through the editor's menu. The bills total 495.00, so each share is
+165.00; `cat /tmp/flat-bills.txt` shows the two lines on disk. `--record` with `--desktop` needs fastbrowse 0.12 or
+later, and the steps a run picks can differ from the clip's.
+
 ## Limits
 
 - No variables, loops or conditions. A step that changes between runs belongs in the file that is run, not in a

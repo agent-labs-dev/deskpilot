@@ -48,6 +48,8 @@ class FakeBus:
         self.screen: dict[str, tuple[int, int, int, int]] = {}
         self.parents: dict[str, str] = {}
         self.layers: dict[str, int] = {}
+        # GetRelationSet's reply by path: (relation type, [(bus, path), ...]) pairs.
+        self.relations: dict[str, list[tuple[int, list[tuple[str, str]]]]] = {}
 
     def call(self, destination, object_path, interface, method, signature, body):
         self.calls.append((destination, object_path, interface, method, signature, body))
@@ -61,6 +63,8 @@ class FakeBus:
             return (self.roles[object_path][0],)
         if (interface, method) == (a11y.ACCESSIBLE_INTERFACE, "GetRoleName"):
             return (self.roles[object_path][1],)
+        if (interface, method) == (a11y.ACCESSIBLE_INTERFACE, "GetRelationSet"):
+            return (self.relations.get(object_path, []),)
         if (interface, method) == (a11y.ACCESSIBLE_INTERFACE, "GetState"):
             return (self.states[object_path],)
         if (interface, method) == (a11y.ACCESSIBLE_INTERFACE, "GetInterfaces"):
@@ -173,6 +177,28 @@ def test_a_peek_leaves_the_latest_snapshot_and_its_ids_in_place(tmp_path, monkey
 
     assert peeked.snapshot == "" and "snapshot" not in peeked.to_dict()
     assert a11y.locate(window(), f"{taken}:e2", bus=fake) == a11y.Located(10, 20, 80, 20)
+
+
+def test_an_unnamed_element_is_named_by_the_label_it_points_to(tmp_path, monkeypatch):
+    monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path))
+    fake = FakeBus()
+    # A GTK 4 menu item: no name of its own, labelled by a nameless label whose text is the caption.
+    fake.refs["/frame"] = [("app.bus", "/item")]
+    fake.refs["/item"] = []
+    fake.names |= {"/item": "", "/label": ""}
+    fake.roles["/item"] = (35, "menu item")
+    fake.states["/item"] = fake.states["/frame"]
+    fake.bounds["/item"] = (10, 20, 80, 20)
+    fake.interfaces["/item"] = ["org.a11y.atspi.Component"]
+    fake.interfaces["/label"] = ["org.a11y.atspi.Text"]
+    fake.text["/label"] = "Save"
+    fake.relations["/item"] = [(3, [("app.bus", "/frame")]), (2, [("app.bus", "/label")])]
+
+    root = a11y.snapshot(window(), bus=fake)
+
+    assert (root.children[0].role, root.children[0].name) == ("menu item", "Save")
+    # The same naming holds when the element is found again, so its id is not taken for stale.
+    assert a11y.locate(window(), "e2", bus=fake).width == 80
 
 
 def test_an_element_whose_name_changed_is_stale_and_one_not_showing_is_offscreen(tmp_path, monkeypatch):
