@@ -150,7 +150,8 @@ result's structured `code`. An MCP tool refuses an argument it does not take.
 - `offscreen`: the element is not showing, as in a collapsed menu or a scrolled-away row.
 - `no_tree`: the app exposes no accessibility tree. A Chromium or Electron app needs `--force-renderer-accessibility`
   when it starts, and joins the accessibility bus only if accessibility is already on then or `ACCESSIBILITY_ENABLED=1`
-  is in its environment, which `launch` sets. Otherwise use a shot and points instead.
+  is in its environment, which `launch` sets. A Qt app joins it only with `QT_LINUX_ACCESSIBILITY_ALWAYS_ON=1`, which
+  `launch` sets too. Otherwise use a shot and points instead.
 
 For a popup-grab regression in this checkout, run `scripts/popup_calibration.py --output /path/to/results.json`
 with an explicit parent `HYPRLAND_INSTANCE_SIGNATURE`. It uses and cleans up its own private desktop. The optional

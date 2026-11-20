@@ -644,8 +644,9 @@ def _app_for_pid(bus: _Bus, pid: int) -> tuple[str, str]:
         f"Application PID {pid} exposes no accessibility tree. Chromium and Electron join the accessibility bus only "
         "when ACCESSIBILITY_ENABLED=1 is in their environment (launch sets it) or the a11y bus property "
         "org.a11y.Status.IsEnabled is true before they start, and expose their pages only when also started with "
-        "--force-renderer-accessibility. Firefox too needs accessibility on when it starts. Wine and XWayland games "
-        "expose none.",
+        "--force-renderer-accessibility. Firefox too needs accessibility on when it starts. A Qt app joins the bus "
+        "only when QT_LINUX_ACCESSIBILITY_ALWAYS_ON=1 is in its environment (launch sets it) or a screen reader is "
+        "on as it starts, and a Qt Quick app may still expose none. Wine and XWayland games expose none.",
         "no_tree",
     )
 
@@ -659,6 +660,7 @@ def _object_gone(exc: A11yError) -> bool:
 def _choose_toplevel(bus: _Bus, app_bus: str, app_path: str, window: Window) -> tuple[str, str]:
     candidates = []
     names = []
+    refs = []
     skipped = False
     for ref in _children(bus, app_bus, app_path):
         try:
@@ -671,6 +673,7 @@ def _choose_toplevel(bus: _Bus, app_bus: str, app_path: str, window: Window) -> 
             skipped = True
             continue
         names.append(name)
+        refs.append(ref)
         if role.casefold() in {"frame", "window", "dialog"}:
             candidates.append((ref, role, name))
 
@@ -687,6 +690,12 @@ def _choose_toplevel(bus: _Bus, app_bus: str, app_path: str, window: Window) -> 
     exact = [candidate for candidate in candidates if candidate[2] == window.title]
     if len(exact) == 1:
         return exact[0][0]
+    # Every child of the application object is one of its toplevels whatever role it gives: Qt 5 reports a plain
+    # QWidget window, such as qt5ct's, as a "filler". With no toplevel in a window role, the one carrying the window's
+    # exact title is it.
+    titled = [ref for ref, name in zip(refs, names, strict=True) if name == window.title]
+    if not candidates and len(titled) == 1:
+        return titled[0]
     listed = ", ".join(repr(name) for name in names) or "none"
     raise A11yError(
         f"Could not choose an accessibility toplevel for {window.title!r}: candidates are {listed}. "

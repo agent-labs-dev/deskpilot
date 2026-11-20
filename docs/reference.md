@@ -82,7 +82,8 @@ surface, such as a submenu over its menu, takes the point. GTK and Qt apps expos
 Firefox expose one only when started with accessibility on, and Wine games expose none. Chromium and Electron join
 the accessibility bus when it is already enabled as they start (its `org.a11y.Status.IsEnabled` property is true) or
 when `ACCESSIBILITY_ENABLED=1` is in their environment, which `launch` sets; `--force-renderer-accessibility` puts
-their pages in the tree. An app with no tree is an error saying so, never a guessed one.
+their pages in the tree. A Qt app joins it when `QT_LINUX_ACCESSIBILITY_ALWAYS_ON=1` is in its environment, which
+`launch` sets too. An app with no tree is an error saying so, never a guessed one.
 
 A shell started before Hyprland restarted keeps a stale `HYPRLAND_INSTANCE_SIGNATURE`. deskpilot then talks to
 the one instance whose socket answers, and with several live instances it stops and names them.

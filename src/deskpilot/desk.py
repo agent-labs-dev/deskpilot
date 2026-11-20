@@ -269,6 +269,9 @@ class Desk:
         # IsEnabled does, which is the user's to set): with --force-renderer-accessibility alone they stayed off it and
         # `elements` had no tree.
         env["ACCESSIBILITY_ENABLED"] = "1"
+        # Qt's AT-SPI bridge stays off unless a screen reader is enabled on the bus as the app starts, or this is
+        # set: without it cmake-gui and qt5ct had no tree.
+        env["QT_LINUX_ACCESSIBILITY_ALWAYS_ON"] = "1"
         self._launched = [p for p in self._launched if p.poll() is None]
         if shutil.which(command[0], path=env.get("PATH")) is None:
             raise ValueError(f"cannot start {command[0]}: No such file or directory")

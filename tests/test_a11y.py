@@ -133,6 +133,24 @@ def test_snapshot_reports_ambiguous_toplevel_names(tmp_path, monkeypatch):
     assert error.value.code == "ambiguous"
 
 
+def test_snapshot_takes_a_lone_titled_toplevel_that_reports_no_window_role(tmp_path, monkeypatch):
+    # Qt 5 reports a plain QWidget toplevel, such as qt5ct's window, as a "filler".
+    monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path))
+    fake = FakeBus(title="Qt5 Configuration Tool")
+    fake.roles["/frame"] = (22, "filler")
+    tree = a11y.snapshot(window(title="Qt5 Configuration Tool"), bus=fake)
+    assert (tree.role, tree.name) == ("filler", "Qt5 Configuration Tool")
+
+
+def test_snapshot_refuses_untitled_toplevels_that_report_no_window_role(tmp_path, monkeypatch):
+    monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path))
+    fake = FakeBus(title="Same", duplicate_title=True)
+    fake.roles["/frame"] = fake.roles["/dialog"] = (22, "filler")
+    with pytest.raises(a11y.A11yError) as error:
+        a11y.snapshot(window(title="Same"), bus=fake)
+    assert error.value.code == "ambiguous"
+
+
 def test_snapshot_reports_an_app_without_accessibility(tmp_path, monkeypatch):
     monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path))
     fake = FakeBus(pid=99)
@@ -142,6 +160,7 @@ def test_snapshot_reports_an_app_without_accessibility(tmp_path, monkeypatch):
     assert "force-renderer-accessibility" in str(error.value)
     assert "ACCESSIBILITY_ENABLED=1" in str(error.value)
     assert "Wine and XWayland games" in str(error.value)
+    assert "QT_LINUX_ACCESSIBILITY_ALWAYS_ON=1" in str(error.value)
 
 
 def test_locate_reads_live_bounds_and_unknown_ids_are_actionable(tmp_path, monkeypatch):
