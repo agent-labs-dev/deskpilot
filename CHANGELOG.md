@@ -7,6 +7,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+- deskpilot is on the AUR as `deskpilot` (`yay -S deskpilot`). The package brings Hyprland, `grim` and the plugin's build tools with it, and each release updates it.
+
 - MCP `shot` takes `out`, the path to write the PNG to, as `deskpilot shot -o` does. A client that names the file before the call can remove it however the call ends, including when it is cancelled after the capture but before the reply that carries the path.
 
 - `launch` starts its app with `ACCESSIBILITY_ENABLED=1`, so a Chromium or Electron app started with `--force-renderer-accessibility` has a tree. With the flag alone it joined the accessibility bus only when accessibility was already on as it started, and otherwise `elements` failed `no_tree` with a hint that named only the flag.
