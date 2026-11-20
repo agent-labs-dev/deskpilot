@@ -463,6 +463,11 @@ class Desk:
         gx, gy = screen.to_global(win, x, y, scale)
         return win, gx, gy, []
 
+    def _size(self, win: Window) -> tuple[int, int]:
+        """The window's size now, or none it could match if it has gone."""
+        now = next((other for other in self.hypr.windows() if other.address == win.address), None)
+        return (now.width, now.height) if now else (-1, -1)
+
     def _popups(self, win: Window) -> list[a11y.Popup]:
         """The window's mapped popups, as the plugin reports them."""
         return [a11y.Popup(**popup) for popup in self.plugin.popups(win.address)]
@@ -669,7 +674,7 @@ class Desk:
         win = self._target(query, show, hidden)
         if more:
             return a11y.more(win, more, max_nodes, popups=lambda: self._popups(win))
-        return a11y.snapshot(win, max_nodes, peek=peek, popups=lambda: self._popups(win))
+        return a11y.snapshot(win, max_nodes, peek=peek, popups=lambda: self._popups(win), size=lambda: self._size(win))
 
     def key(
         self,

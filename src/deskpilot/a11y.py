@@ -61,6 +61,9 @@ GONE_ERRORS = frozenset(
         "org.freedesktop.DBus.Error.UnknownMethod",
     }
 )
+# What GTK 4 answers Action.GetName with for an index it counted but will not name: G_IO_ERROR_INVALID_ARGUMENT, which
+# GDBus has no D-Bus name for.
+UNNAMED_ACTION_ERROR = "org.gtk.GDBus.UnmappedGError.Quark._g_2dio_2derror_2dquark.Code13"
 # The app's whole bus name is gone, not one of its objects: its tree cannot be read on with some elements left out.
 APP_GONE_ERRORS = frozenset({"org.freedesktop.DBus.Error.ServiceUnknown", "org.freedesktop.DBus.Error.NameHasNoOwner"})
 NO_POSITION = -(2**31)
@@ -309,6 +312,8 @@ class Popup:
 # A popup's position as GTK 3 reports it: the first-level key of an element on that popup.
 Key = tuple[int, int]
 Popups = Callable[[], list[Popup]]
+Size = Callable[[], tuple[int, int]]
+"""The window's width and height as the compositor has them now."""
 
 
 @dataclass(frozen=True)
@@ -553,8 +558,10 @@ def _actions(bus: _Bus, destination: str, object_path: str, interfaces: tuple[st
             )
         except A11yError as exc:
             # GTK 4 counts actions it then answers "No action with index" for, as on an open menu's items: an action
-            # the app will not name is not one a caller can ask for. The object going, or no answer, is still raised.
-            if exc.code != "unavailable" or not isinstance(exc.__cause__, DBusErrorResponse):
+            # the app will not name is not one a caller can ask for. Only that answer, a GError out of the app's own
+            # handler, is passed over: the object going, a refusal or no answer is still raised.
+            cause = exc.__cause__
+            if not isinstance(cause, DBusErrorResponse) or cause.name != UNNAMED_ACTION_ERROR:
                 raise
     return tuple(name for name in names if name)
 
@@ -701,7 +708,9 @@ def _object_gone(exc: A11yError) -> bool:
     return exc.code == "stale" and not (isinstance(cause, DBusErrorResponse) and cause.name in APP_GONE_ERRORS)
 
 
-def _choose_toplevel(bus: _Bus, app_bus: str, app_path: str, window: Window) -> tuple[str, str]:
+def _choose_toplevel(
+    bus: _Bus, app_bus: str, app_path: str, window: Window, size: Size | None = None
+) -> tuple[str, str]:
     candidates = []
     names = []
     refs = []
@@ -741,9 +750,11 @@ def _choose_toplevel(bus: _Bus, app_bus: str, app_path: str, window: Window) -> 
     if len(exact) == 1:
         return exact[0][0]
     # Toplevels the title cannot tell apart, two windows on one document or a GTK 3 window and its open combo's
-    # popup, are told apart by size: a toplevel reports the extents of its window exactly.
+    # popup, are told apart by size: a toplevel reports the extents of its window exactly. The window's size was read
+    # before the toplevels', so one resized in between, as two tiled windows swapping places are, could leave a
+    # sibling alone at the recorded size: the match stands only if the compositor still has the window at that size.
     sized = [ref for ref in titled or [candidate[0] for candidate in candidates] if _sized_as(bus, ref, window)]
-    if len(sized) == 1:
+    if len(sized) == 1 and size is not None and size() == (window.width, window.height):
         return sized[0]
     listed = ", ".join(repr(name) for name in names) or "none"
     raise A11yError(
@@ -1021,17 +1032,19 @@ def snapshot(
     bus: _Bus | None = None,
     peek: bool = False,
     popups: Popups | None = None,
+    size: Size | None = None,
 ) -> Element:
     """Read and persist the accessibility tree for a Hyprland window, up to `max_nodes` elements. A larger tree is
     not cut: the root says `truncated`, the unread part is kept with the snapshot, and `more` reads it on, batch by
     batch. A peek reads the tree without replacing the latest snapshot, so ids taken from that snapshot stay good; its
     own ids name nothing, it has no snapshot id, and one the budget ends cannot be read on. Bounds are in window
     pixels: a GTK 3 popup element's are placed through its popup from `popups`, asked once and only if an element is
-    showing, and are zero when its surface cannot be told exactly."""
+    showing, and are zero when its surface cannot be told exactly. `size` is the window's size now, which a
+    toplevel picked by size alone is confirmed against; without it such a pick is refused."""
     _budget(max_nodes)
     with _bus_context(bus) as connection, _closed_is_gone():
         app_bus, app_path = _app_for_pid(connection, window.pid)
-        root = _choose_toplevel(connection, app_bus, app_path, window)
+        root = _choose_toplevel(connection, app_bus, app_path, window, size)
         gtk3 = _gtk3(connection, app_bus, app_path)
         placer = _Placer(connection, popups, _root_offset(connection, root)) if gtk3 else None
         state = _Walk({}, set(), set(), frontier=[("", *root, ())], shown=_Shown(window, popups))

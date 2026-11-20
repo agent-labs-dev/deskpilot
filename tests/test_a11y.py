@@ -91,11 +91,9 @@ class FakeBus:
         if (interface, method) == (a11y.ACTION_INTERFACE, "GetName"):
             name = self.actions[object_path][body[0]]
             if name is None:
-                unnamed = SimpleNamespace(
-                    header=SimpleNamespace(fields={HeaderFields.error_name: "org.gtk.GDBus.UnmappedGError"}),
-                    body=("No action with index 2",),
-                )
-                raise DBusErrorResponse(unnamed)
+                raise _dbus_error(a11y.UNNAMED_ACTION_ERROR)
+            if isinstance(name, DBusErrorResponse):
+                raise name
             return (name,)
         if (interface, method) == (a11y.COMPONENT_INTERFACE, "GetLayer"):
             return (self.layers.get(object_path, 3),)
@@ -202,9 +200,16 @@ def test_same_titled_toplevels_are_told_apart_by_the_window_size(tmp_path, monke
     fake = FakeBus(title="Same", duplicate_title=True)
     fake.bounds["/dialog"] = (0, 0, 400, 300)
     add(fake, "/dialog", "/dialog/ok", "OK")
-    assert a11y.snapshot(window(title="Same"), bus=fake).children[0].name == "Save"
+    big = window(title="Same")
+    assert a11y.snapshot(big, bus=fake, size=lambda: (big.width, big.height)).children[0].name == "Save"
     small = Window("0xabd", "editor", "Same", 0, 0, 400, 300, 1, "1", False, 42)
-    assert a11y.snapshot(small, bus=fake).children[0].name == "OK"
+    assert a11y.snapshot(small, bus=fake, size=lambda: (400, 300)).children[0].name == "OK"
+    # Resized since it was looked up, as two tiled windows swapping places are: the sibling alone at the recorded
+    # size may not be this window.
+    for size in (lambda: (640, 480), None):
+        with pytest.raises(a11y.A11yError) as error:
+            a11y.snapshot(small, bus=fake, size=size)
+        assert error.value.code == "ambiguous"
 
 
 def test_snapshot_takes_a_lone_titled_toplevel_that_reports_no_window_role(tmp_path, monkeypatch):
@@ -281,6 +286,16 @@ def test_a_peek_leaves_the_latest_snapshot_and_its_ids_in_place(tmp_path, monkey
 
     assert peeked.snapshot == "" and "snapshot" not in peeked.to_dict()
     assert a11y.locate(window(), f"{taken}:e2", bus=fake) == a11y.Located(10, 20, 80, 20)
+
+
+def test_an_action_name_refused_for_any_other_reason_is_raised(tmp_path, monkeypatch):
+    monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path))
+    fake = FakeBus()
+    fake.interfaces["/button"] += [a11y.ACTION_INTERFACE]
+    fake.actions["/button"] = ["toggle", _dbus_error("org.freedesktop.DBus.Error.AccessDenied")]
+    with pytest.raises(a11y.A11yError) as error:
+        a11y.snapshot(window(), bus=fake)
+    assert error.value.code == "unavailable"
 
 
 def test_an_unnamed_element_is_named_by_the_label_it_points_to(tmp_path, monkeypatch):
