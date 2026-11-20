@@ -123,7 +123,11 @@ MP4 it records. The recording is `deskpilot record` of the window, so the video 
 draws. `deskpilot recipe schema` prints the format as JSON Schema. Nothing is launched or clicked until the whole
 file validates, and a failed step stops the run, keeps the recording and exits 2.
 
-[Recipe format and recording](docs/recipes.md)
+For a longer run, [trip expenses](assets/recipes/trip-expenses.mp4) is 70 seconds across three apps: deskpilot reads
+a CSV in a terminal, totals it on a calculator's keys, writes the report in a text editor and checks the figures.
+It is four recipes recorded in order and joined.
+
+[Recipe format, recording and the examples](docs/recipes.md)
 
 ## Work on your own hidden window
 

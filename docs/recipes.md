@@ -114,10 +114,29 @@ python3 scripts/nested.py stop <signature>
 
 ## The examples
 
-`recipes/` holds recipes that run on any Hyprland machine with the app installed, each under 20 seconds and ending on
+`recipes/` holds recipes that run on any Hyprland machine with the app installed, each under 25 seconds and ending on
 the finished state: `export-an-asset` (the GTK demo app), `calculator` (GNOME Calculator), `text-editor` (GNOME Text
 Editor) and `terminal` (kitty). The ones that start a stock app give it a clean profile, so a recording never shows the
 user's own history or drafts.
+
+### A longer demo in parts
+
+A recipe drives one window, so a demo across several apps is one recipe per app, recorded in order and joined.
+`expenses-1-terminal`, `expenses-2-calculator`, `expenses-3-text-editor` and `expenses-4-check` are one 70 second
+story: read `recipes/fixtures/expenses.csv` in kitty, add its four amounts and split the total in GNOME Calculator,
+write the report in GNOME Text Editor, then recompute both figures with `awk` to check the report. Each part pins the
+same `1238x758` window, so the clips join without re-encoding:
+
+```sh
+for part in 1-terminal 2-calculator 3-text-editor 4-check; do
+  deskpilot recipe run recipes/expenses-$part.json --record parts/$part.mp4
+  echo "file '$part.mp4'" >> parts/list.txt
+done
+ffmpeg -f concat -safe 0 -i parts/list.txt -c copy -movflags +faststart trip-expenses.mp4
+```
+
+Run it from the repository root, since the terminal parts open in `recipes/fixtures`, and create `parts/` first.
+[The result](../assets/recipes/trip-expenses.mp4) was recorded this way inside `scripts/nested.py`'s compositor.
 
 ## Limits
 

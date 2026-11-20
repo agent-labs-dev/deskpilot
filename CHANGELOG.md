@@ -7,6 +7,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+- `recipes/expenses-1-terminal.json` to `expenses-4-check.json` are one longer demo in four parts: read a CSV in kitty, total it on GNOME Calculator's keys, write the report in GNOME Text Editor, and check the figures with `awk`. `docs/recipes.md` shows how to record the parts and join them into one MP4, and `assets/recipes/trip-expenses.mp4` is the result.
+
 - MCP `shot` takes `out`, the path to write the PNG to, as `deskpilot shot -o` does. A client that names the file before the call can remove it however the call ends, including when it is cancelled after the capture but before the reply that carries the path.
 
 - `launch` starts its app with `ACCESSIBILITY_ENABLED=1`, so a Chromium or Electron app started with `--force-renderer-accessibility` has a tree. With the flag alone it joined the accessibility bus only when accessibility was already on as it started, and otherwise `elements` failed `no_tree` with a hint that named only the flag.
