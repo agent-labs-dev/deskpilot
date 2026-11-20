@@ -629,6 +629,18 @@ def test_an_element_with_a_negative_size_has_no_bounds(tmp_path, monkeypatch):
     assert error.value.code == "offscreen"
 
 
+def test_a_gtk3_cell_scrolled_out_of_view_has_no_bounds(tmp_path, monkeypatch):
+    # yad --list with 200 rows gave row 173 the extents (-2147483648, -2147483648, 1184, 23), still "showing".
+    monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path))
+    fake = FakeBus()
+    fake.bounds["/button"] = (-(2**31), -(2**31), 1184, 23)
+    button = a11y.snapshot(window(), bus=fake).children[0]
+    assert (button.x, button.y, button.width, button.height) == (0, 0, 0, 0)
+    with pytest.raises(a11y.A11yError, match="scroll it into view") as error:
+        a11y.locate(window(), "e2", bus=fake)
+    assert error.value.code == "offscreen"
+
+
 def _dbus_error(name):
     return DBusErrorResponse(SimpleNamespace(header=SimpleNamespace(fields={HeaderFields.error_name: name}), body=()))
 

@@ -56,6 +56,7 @@ GONE_ERRORS = frozenset(
 )
 # The app's whole bus name is gone, not one of its objects: its tree cannot be read on with some elements left out.
 APP_GONE_ERRORS = frozenset({"org.freedesktop.DBus.Error.ServiceUnknown", "org.freedesktop.DBus.Error.NameHasNoOwner"})
+NO_POSITION = -(2**31)
 TEXT_LIMIT = 4000
 
 _STATE_NAMES = (
@@ -542,7 +543,9 @@ def _bounds(
         raise A11yError(f"Accessibility object {object_path} returned invalid bounds: {reply!r}") from exc
     # A negative size is no size: ATK reports extents it cannot obtain as -1, and GTK 4 returns whatever was on its
     # stack for an accessible with no bounds, such as a stack page whose widget is not realized. Either has no place.
-    if width < 0 or height < 0:
+    # GTK 3 puts a tree view cell that is scrolled out of view at the smallest int for x and y, with its real size
+    # and the showing state still set: that is its way of saying the cell has no place either.
+    if width < 0 or height < 0 or NO_POSITION in (x, y):
         return 0, 0, 0, 0
     return x, y, width, height
 
