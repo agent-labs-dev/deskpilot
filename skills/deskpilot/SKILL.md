@@ -14,7 +14,7 @@ If `deskpilot` is not on `PATH`, ask the user before installing it with
 `uv tool install deskpilot`.
 
 On Windows and macOS there is no plugin, and hidden windows (`launch` stays visible, `--hidden`, `adopt`, `show`,
-`stop`), `paste` and `--session` are `unavailable`. Input posted to a window that is not in front reaches most
+`stop`), `paste`, `record`, `cursor_press`, `recipe run` and `--session` are `unavailable`. Input posted to a window that is not in front reaches most
 standard controls; when an app ignores it, ask the user before retrying with `--take-focus` or `--take-pointer`.
 Prefer `--element` clicks there, which use the app's own press action. macOS needs Accessibility and Screen
 Recording access for the app running deskpilot; an `unavailable` error names the missing one.
