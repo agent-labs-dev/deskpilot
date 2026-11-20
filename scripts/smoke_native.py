@@ -1,7 +1,8 @@
 """End-to-end check of the Windows or macOS backend through the CLI, on a CI runner's desktop.
 
-It opens scripts/smoke_app.py, a Tk window that writes every input it receives to a state file, drives each pointer,
-key, clipboard and wait action at it through `deskpilot`, and checks the app saw exactly that. A second window over the
+It opens scripts/smoke_app.py, a Tk window that writes every input it receives to a state file (on macOS its Cocoa
+twin, scripts/smoke_app_macos.py, which says why), drives each pointer, key, clipboard and wait action at it through
+`deskpilot`, and checks the app saw exactly that. A second window over the
 app checks that a covered point is refused. Then it types into the platform's own editor (Notepad, TextEdit) and
 reads the text back from the accessibility tree.
 """
@@ -18,7 +19,9 @@ import time
 from collections.abc import Callable
 from pathlib import Path
 
-APP = Path(__file__).with_name("smoke_app.py")
+APP = Path(__file__).with_name("smoke_app_macos.py" if sys.platform == "darwin" else "smoke_app.py")
+# Select all: Command-A on macOS, Control-A elsewhere.
+SELECT_ALL = "cmd+a" if sys.platform == "darwin" else "ctrl+a"
 work = Path(tempfile.mkdtemp(prefix="deskpilot-smoke-"))
 
 
@@ -142,8 +145,8 @@ def app_smoke() -> None:  # noqa: PLR0915 - one check per action, in the order t
         deskpilot("click", *act["entry"])
         deskpilot("type", "hello deskpilot", "--window", address)
         until(state, lambda s: s["entry"] == "hello deskpilot", "typed text")
-        deskpilot("key", "ctrl+a", "--window", address)
-        until(state, lambda s: ["a", True] in s["keys"], "ctrl+a")
+        deskpilot("key", SELECT_ALL, "--window", address)
+        until(state, lambda s: ["a", True] in s["keys"], SELECT_ALL)
         deskpilot("key", "BackSpace", "--window", address)
         until(state, lambda s: s["entry"] == "", "a chord then a key")
 
@@ -176,13 +179,39 @@ def app_smoke() -> None:  # noqa: PLR0915 - one check per action, in the order t
     os.kill(win["pid"], signal.SIGTERM)
 
 
+def debug_editor(pid: int, when: str) -> None:  # TEMPORARY CI DEBUG
+    if sys.platform != "darwin":
+        return
+    import AppKit  # ty: ignore[import-not-found]
+    import ApplicationServices as ax  # ty: ignore[import-not-found]
+
+    def attr(element, name):
+        error, value = ax.AXUIElementCopyAttributeValue(element, name, None)
+        return value if error == 0 else f"<error {error}>"
+
+    app = ax.AXUIElementCreateApplication(pid)
+    focused = attr(app, "AXFocusedUIElement")
+    window = attr(app, "AXFocusedWindow")
+    detail = focused if isinstance(focused, str) else f"{attr(focused, 'AXRole')} {attr(focused, 'AXValue')!r}"
+    title = window if isinstance(window, str) else attr(window, "AXTitle")
+    windows = [attr(w, "AXTitle") for w in attr(app, "AXWindows") or []]
+    running = AppKit.NSRunningApplication.runningApplicationWithProcessIdentifier_(pid)
+    print(f"DEBUG {when}: focused {detail} window {title!r} windows {windows} active {running.isActive()}",
+          f"frontmost {attr(ax.AXUIElementCreateSystemWide(), 'AXFocusedApplication')}", flush=True)  # fmt: skip
+
+
 def editor_smoke(command: str, roles: tuple[str, ...]) -> None:
     win = deskpilot("launch", command)
     address = win["address"]
+    debug_editor(win["pid"], "launched")
     tree = deskpilot("elements", address)
     edit = next(e for e in walk(tree) if e["role"] in roles)
     deskpilot("click", address, "--element", f"{tree['snapshot']}:{edit['id']}")
+    debug_editor(win["pid"], "clicked")
     deskpilot("type", "deskpilot smoke", "--window", address)
+    debug_editor(win["pid"], "typed")
+    time.sleep(1)
+    debug_editor(win["pid"], "typed+1s")
     deadline = time.monotonic() + 5
     while True:
         found = [t for t in texts(deskpilot("elements", address)) if t]
