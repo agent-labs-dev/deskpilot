@@ -65,6 +65,13 @@ class SmokeApplication(AppKit.NSApplication):
         if not cover and kind == AppKit.NSEventTypeKeyDown:
             state["keys"].append([str(event.charactersIgnoringModifiers()), bool(event.modifierFlags() & SHORTCUT)])
         objc.super(SmokeApplication, self).sendEvent_(event)
+        if not cover and kind == AppKit.NSEventTypeKeyDown:  # TEMPORARY CI DEBUG
+            responder = window.firstResponder()
+            selected = responder.selectedRange() if hasattr(responder, "selectedRange") else None
+            menu = self.mainMenu()
+            state.setdefault("debug", []).append([str(event.charactersIgnoringModifiers()), bool(self.isActive()),
+                self.keyWindow() is not None, type(responder).__name__, str(selected), int(event.windowNumber()),
+                menu.numberOfItems() if menu else None, int(event.modifierFlags())])  # fmt: skip
         if not cover and kind in (AppKit.NSEventTypeKeyDown, AppKit.NSEventTypeKeyUp):
             save()
 
