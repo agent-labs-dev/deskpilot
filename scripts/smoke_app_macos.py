@@ -79,6 +79,7 @@ class Pad(Flipped):
     def acceptsFirstMouse_(self, _event):
         return True
 
+    @objc.python_method
     def click(self, kind: str) -> None:
         state["clicks"].append({"kind": kind, "num": 1})
         self.layer().setBackgroundColor_(AppKit.NSColor.systemRedColor().CGColor())
@@ -102,6 +103,7 @@ class Track(Flipped):
     def acceptsFirstMouse_(self, _event):
         return True
 
+    @objc.python_method
     def record(self, kind: str, event) -> None:
         point = self.convertPoint_fromView_(event.locationInWindow(), None)
         state["drag"].append([kind, round(point.x), round(point.y)])
@@ -174,7 +176,6 @@ else:
     widgets["pad"] = colored(Pad, (140, 10, 240, 120), AppKit.NSColor.systemBlueColor())
     button = FirstMouseButton.alloc().initWithFrame_(AppKit.NSMakeRect(225, 140, 70, 28))
     button.setTitle_("Press")
-    button.setBezelStyle_(AppKit.NSBezelStyleRounded)
     button.setTarget_(handler)
     button.setAction_("press:")
     widgets["button"] = button

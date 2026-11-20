@@ -89,6 +89,9 @@ jobs:
           defaults write -g NSAutomaticSpellingCorrectionEnabled -bool false
           defaults write com.apple.TextEdit CorrectSpellingAutomatically -bool false
           uv run --no-sync python -c 'import ApplicationServices as a, Quartz as q; print("accessibility", a.AXIsProcessTrusted(), "screen", q.CGPreflightScreenCaptureAccess(), "post", q.CGPreflightPostEventAccess())'
+      - name: TEMPORARY run the macOS smoke app directly
+        if: runner.os == 'macOS'
+        run: perl -e 'alarm 8; exec @ARGV' uv run --no-sync python scripts/smoke_app_macos.py "$RUNNER_TEMP/direct.json" || cat "$RUNNER_TEMP/direct.json"
       - name: Drive a real window through the CLI
         run: uv run --no-sync python scripts/smoke_native.py
 

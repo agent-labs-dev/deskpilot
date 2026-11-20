@@ -26,8 +26,9 @@ are thin layers over the desk `open_desk` picks: `Desk` on Hyprland, `NativeDesk
 - `src/deskpilot/native.py`: the Windows and macOS desk, over the `Driver` protocol, with element snapshots
 - `src/deskpilot/win32.py`: the Windows driver: window messages, PrintWindow, UI Automation
 - `src/deskpilot/macos.py`: the macOS driver: CoreGraphics events, screencapture, AX
-- `scripts/smoke_native.py`: every action through the CLI against `scripts/smoke_app.py`, a Tk window that records the
-  input it gets, and the platform editor, on the Windows and macOS CI runners
+- `scripts/smoke_native.py`: every action through the CLI against a window that records the input it gets
+  (`scripts/smoke_app.py` in Tk; `scripts/smoke_app_macos.py` in Cocoa, since Aqua Tk ignores input posted to it), and
+  the platform editor, on the Windows and macOS CI runners
 - `src/deskpilot/hypr.py`: hyprctl: windows, monitors, focus, the cursor, and picking the live instance
 - `src/deskpilot/plugin.py`: builds, loads and talks to the compositor plugin
 - `src/deskpilot/plugin/deskpilot.cpp`: the Hyprland plugin that runs each pointer path and keystroke inside the
