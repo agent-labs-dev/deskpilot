@@ -62,7 +62,9 @@ class ElementError(RuntimeError):
 
 class Driver(Protocol):
     """One platform's window list, capture, input and accessibility tree. Every input call names its target window;
-    `seat` is set only for take_pointer and take_focus, where the event goes through the system's own input path."""
+    `seat` is set only for take_pointer and take_focus, where the event goes through the system's own input path; macOS
+    keys still go to the target's process, which is in front by then, so a key never lands in an app the user switched
+    to meanwhile."""
 
     instance: str
 

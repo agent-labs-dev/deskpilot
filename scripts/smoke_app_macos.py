@@ -64,8 +64,10 @@ class SmokeApplication(AppKit.NSApplication):
             save()
         if not cover and kind == AppKit.NSEventTypeKeyDown:
             state["keys"].append([str(event.charactersIgnoringModifiers()), bool(event.modifierFlags() & SHORTCUT)])
-            # The field binds Command-A to select all itself, as Tk's entry binds Control-A, so the chord works
-            # whether or not the app is in front, as a key to a background Tk entry does on the other platforms.
+            # Command-A selects all here, before AppKit, as Tk's entry binds Control-A itself on the other
+            # platforms. AppKit's own path is an Edit menu key equivalent, which runs only for the active app; the
+            # smoke sends the chord to the app in the background, as it does on Windows. With the app active, that
+            # menu path also selected nothing on the runner, so it would test this fixture's menu, not deskpilot.
             command = event.modifierFlags() & AppKit.NSEventModifierFlagCommand
             if mine and command and event.charactersIgnoringModifiers() == "a":
                 window.firstResponder().selectAll_(None)

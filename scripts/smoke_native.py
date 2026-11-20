@@ -2,9 +2,9 @@
 
 It opens scripts/smoke_app.py, a Tk window that writes every input it receives to a state file (on macOS its Cocoa
 twin, scripts/smoke_app_macos.py, which says why), drives each pointer, key, clipboard and wait action at it through
-`deskpilot`, and checks the app saw exactly that. A second window over the
-app checks that a covered point is refused. Then it types into the platform's own editor (Notepad, TextEdit) and
-reads the text back from the accessibility tree.
+`deskpilot`, and checks the app saw exactly that. A second window over the app checks that a covered point is refused,
+and, once focused, that a click on the app leaves it in front. One click is aimed in the pixels of a scaled-down shot.
+Then it types into the platform's own editor (Notepad, TextEdit) and reads the text back from the accessibility tree.
 """
 
 from __future__ import annotations
@@ -69,17 +69,8 @@ def texts(node: dict) -> list[str]:
     return [node.get("text") or "", node.get("name") or ""] + [t for c in node.get("children", []) for t in texts(c)]
 
 
-def print_macos_windows() -> None:
-    """Every on-screen window Quartz lists, front to back, to explain a covered point on a runner."""
-    import Quartz  # ty: ignore[import-not-found]  # pyobjc, installed on macOS only
-
-    options = Quartz.kCGWindowListOptionOnScreenOnly
-    for entry in Quartz.CGWindowListCopyWindowInfo(options, Quartz.kCGNullWindowID) or []:
-        bounds = dict(entry.get("kCGWindowBounds") or {})
-        print(
-            hex(int(entry["kCGWindowNumber"])), entry.get("kCGWindowOwnerName"), repr(entry.get("kCGWindowName")),
-            "layer", entry.get("kCGWindowLayer"), "alpha", entry.get("kCGWindowAlpha"), bounds, flush=True,
-        )  # fmt: skip
+def focused() -> str | None:
+    return next((w["address"] for w in deskpilot("windows") if w["focused"]), None)
 
 
 failures: list[str] = []
@@ -100,8 +91,6 @@ def app_smoke() -> None:  # noqa: PLR0915 - one check per action, in the order t
     win = deskpilot("launch", sys.executable, str(APP), str(state))
     address = win["address"]
     current = until(state, lambda s: "widgets" in s, "its layout")
-    if sys.platform == "darwin":
-        print_macos_windows()
     # Widget centres in window pixels, from the app's own screen rectangles and the window's origin.
     left, top = win["x"], win["y"]
     at = {name: (str(x + w // 2 - left), str(y + h // 2 - top)) for name, (x, y, w, h) in current["widgets"].items()}
@@ -113,6 +102,17 @@ def app_smoke() -> None:  # noqa: PLR0915 - one check per action, in the order t
         deskpilot("click", *act["pad"])
         until(state, lambda s: [c["kind"] for c in s["clicks"]] == ["left"], "one left click")
         deskpilot("wait-for", address, "--changed", before["shot"], "--timeout", "10")
+
+    def shot_pixels() -> None:
+        # A shot scaled to half the window's width, so a click in its pixels resolves through a scale other than 1,
+        # as a Retina shot's 2 does.
+        shot = deskpilot("shot", address, "--max-width", str(win["width"] // 2))
+        scale = shot["scale"]
+        assert scale < 1, shot
+        x, y = (int(v) for v in at["pad"])
+        clicks = len(seen()["clicks"])
+        deskpilot("click", address, str(round(x * scale)), str(round(y * scale)), "--shot", shot["shot"])
+        until(state, lambda s: len(s["clicks"]) == clicks + 1, f"a click aimed in a shot at scale {scale}")
 
     def double() -> None:
         deskpilot("click", *act["pad"], "--double")
@@ -163,6 +163,13 @@ def app_smoke() -> None:  # noqa: PLR0915 - one check per action, in the order t
             clicks = len(seen()["clicks"])
             refused("covered", "click", address, str(pad_x + 30 - left), str(pad_y + 30 - top), "--scale", "1")
             assert len(seen()["clicks"]) == clicks, "a refused click still reached the app"
+            # With the cover in front, a click on the pad beside it reaches the app and leaves the cover in front.
+            deskpilot("focus", cover["address"])
+            assert focused() == cover["address"], "focus did not put the cover in front"
+            deskpilot("click", address, str(pad_x + 225 - left), str(pad_y + 60 - top), "--scale", "1")
+            until(state, lambda s: len(s["clicks"]) == clicks + 1, "a click beside the cover")
+            time.sleep(0.5)  # time for an activation the click set off to land, so the check below would see it
+            assert focused() == cover["address"], f"a background click took focus: {focused()} is in front"
         finally:
             os.kill(cover["pid"], signal.SIGTERM)
         deskpilot("wait-for", cover["address"], "--gone", "--timeout", "10")
@@ -172,9 +179,10 @@ def app_smoke() -> None:  # noqa: PLR0915 - one check per action, in the order t
         deskpilot("click", *act["button"], "--take-focus")
         until(state, lambda s: s["pressed"] == pressed + 1, "a click that took focus")
 
-    for name, action in [("click", click), ("double click", double), ("right click", right), ("scroll", scroll),
-                         ("drag", drag), ("hover", hover), ("keys", keys), ("clipboard", clipboard),
-                         ("covered", covered), ("click with take-focus", focused_click)]:  # fmt: skip
+    for name, action in [("click", click), ("click in shot pixels", shot_pixels), ("double click", double),
+                         ("right click", right), ("scroll", scroll), ("drag", drag), ("hover", hover),
+                         ("keys", keys), ("clipboard", clipboard), ("covered", covered),
+                         ("click with take-focus", focused_click)]:  # fmt: skip
         step(name, action)
     os.kill(win["pid"], signal.SIGTERM)
 

@@ -17,7 +17,7 @@ from pathlib import Path
 from typing import Any
 
 from .errors import Unavailable
-from .hypr import AmbiguousWindow, Window, WindowNotFound
+from .hypr import Window, WindowNotFound
 from .native import ElementError, Node, descendants
 
 INSTANCE = "macos"
@@ -46,9 +46,12 @@ CLICK_STATE = 1
 # (windowNumber 0), so no view ever receives it. Warp and Cua post background clicks the same way.
 WINDOW_NUMBER = 51
 WINDOW_NUMBER_VALID = 58
-# How long an activated app may take to get keyboard focus. Activation usually lands within a frame or two; a busy
-# app can take longer, and past this the seat check refuses the input rather than waiting on an app that is hung.
+# How long focus() may take, from its first call to the app until the window has keyboard focus. Activation usually
+# lands within a frame or two; a busy app can take longer, and past this focus() fails rather than wait on a hung app.
 FOCUS_TIMEOUT = 2.0
+# How long one accessibility call may wait on an app. AX's default is 6 seconds per call, so a hung app held focus()
+# and each key's focused-window check far past FOCUS_TIMEOUT.
+AX_TIMEOUT = 1.0
 
 
 class _Point(ctypes.Structure):
@@ -65,6 +68,19 @@ def _window_location_setter() -> Any:
     setter.argtypes = (ctypes.c_void_p, _Point)
     setter.restype = None
     return setter
+
+
+def _window_id_getter() -> Any:
+    """HIServices' private _AXUIElementGetWindow, the window number of an AX window. AX has no public window number,
+    and matching a window by title and frame picked the wrong one of two alike, or a floating panel over the key
+    window."""
+    services = ctypes.CDLL("/System/Library/Frameworks/ApplicationServices.framework/ApplicationServices")
+    getter = getattr(services, "_AXUIElementGetWindow", None)
+    if getter is None:
+        raise Unavailable("this macOS has no _AXUIElementGetWindow, so deskpilot cannot tell which window has focus")
+    getter.argtypes = (ctypes.c_void_p, ctypes.POINTER(ctypes.c_uint32))
+    getter.restype = ctypes.c_int32
+    return getter
 
 
 SETTINGS = "System Settings > Privacy & Security"
@@ -85,14 +101,16 @@ class MacDriver:
             raise Unavailable("the macOS driver runs only on macOS")
         import AppKit
         import ApplicationServices
-        import CoreFoundation
         import Quartz
 
         self.q: Any = Quartz
         self.ax: Any = ApplicationServices
         self.appkit: Any = AppKit
-        self.cf: Any = CoreFoundation
         self._set_window_location: Any = None
+        self._get_window_id: Any = None
+        # Set on the system-wide element, the timeout applies to every AX call this process makes.
+        ApplicationServices.AXUIElementSetMessagingTimeout(ApplicationServices.AXUIElementCreateSystemWide(),
+                                                           AX_TIMEOUT)  # fmt: skip
 
     def _trusted(self) -> None:
         if not self.ax.AXIsProcessTrusted():
@@ -108,9 +126,8 @@ class MacDriver:
         q = self.q
         info = q.CGWindowListCopyWindowInfo(q.kCGWindowListOptionAll | q.kCGWindowListExcludeDesktopElements,
                                             q.kCGNullWindowID) or []  # fmt: skip
-        front_pid = self._front_pid()
+        focused_number = self._focused_window()[1]
         found: list[Window] = []
-        focused_done = False
         for entry in info:
             # App window levels run from normal (0) through floating, modal panel and utility windows (19, where a
             # Tk -topmost window sits); the Dock (20), menu bar and desktop sit outside that range.
@@ -128,8 +145,6 @@ class MacDriver:
                 continue
             pid = int(entry.get(q.kCGWindowOwnerPID, 0))
             number = int(entry[q.kCGWindowNumber])
-            focused = onscreen and pid == front_pid and not focused_done
-            focused_done = focused_done or focused
             found.append(
                 Window(
                     address=hex(number),
@@ -143,7 +158,7 @@ class MacDriver:
                     workspace="",
                     xwayland=False,
                     pid=pid,
-                    focused=focused,
+                    focused=number == focused_number,
                     instance=INSTANCE,
                     stable_id=str(number),
                     visible=onscreen,
@@ -155,30 +170,57 @@ class MacDriver:
         session = self.q.CGSessionCopyCurrentDictionary() or {}
         return bool(session.get("CGSSessionScreenIsLocked", False))
 
-    def _front_pid(self) -> int:
-        """The app that has keyboard focus, read live from the accessibility server. NSWorkspace's
+    def _window_number(self, element: Any) -> int | None:
+        if self._get_window_id is None:
+            self._get_window_id = _window_id_getter()
+        number = ctypes.c_uint32(0)
+        error = self._get_window_id(element.__c_void_p__(), ctypes.byref(number))
+        return number.value if error == 0 and number.value else None
+
+    def _focused_window(self) -> tuple[int, int | None]:
+        """The app with keyboard focus and the number of its focused window, read live from the accessibility
+        server: the window keys go to, not the topmost one, which may be a floating panel over it. NSWorkspace's
         frontmostApplication is updated only on a run loop this process never runs, so it kept naming the app that
-        was in front at the first call and a focused window read as unfocused."""
-        system = self.ax.AXUIElementCreateSystemWide()
-        error, app = self.ax.AXUIElementCopyAttributeValue(system, "AXFocusedApplication", None)
-        if error != 0 or app is None:
-            return -1
+        was in front at the first call."""
+        app = self._attr(self.ax.AXUIElementCreateSystemWide(), "AXFocusedApplication")
+        if app is None:
+            return -1, None
         error, pid = self.ax.AXUIElementGetPid(app, None)
-        return pid if error == 0 else -1
+        focused = self._attr(app, "AXFocusedWindow")
+        return (pid if error == 0 else -1), (None if focused is None else self._window_number(focused))
 
     def focus(self, window: Window) -> None:
+        """Raise the window, activate its app, and return once that window has keyboard focus; fail otherwise, as
+        when it is on another Space, since seat input that follows would go to whatever does have it."""
+        self._trusted()
+        deadline = time.monotonic() + FOCUS_TIMEOUT
         app = self.appkit.NSRunningApplication.runningApplicationWithProcessIdentifier_(window.pid)
         if app is None:
             raise RuntimeError(f"{window.cls} ({window.address}) has quit")
-        app.activateWithOptions_(self.appkit.NSApplicationActivateIgnoringOtherApps)
         ax = self._ax_window(window)
-        if ax is not None:
+        if ax is None:
+            raise Unavailable(
+                f"{window.cls} lists no accessibility window {window.address} on this Space, so deskpilot cannot "
+                "focus it: switch to its Space first"
+            )
+        if self._attr(ax, "AXMinimized"):
             self.ax.AXUIElementSetAttributeValue(ax, "AXMinimized", False)
-            self.ax.AXUIElementPerformAction(ax, "AXRaise")
-        # Activation is asynchronous: wait until the app has keyboard focus, so seat input that follows reaches it.
-        # The seat check refuses the input if it never does.
-        deadline = time.monotonic() + FOCUS_TIMEOUT
-        while self._front_pid() != window.pid and time.monotonic() < deadline:
+        # Main before activation, so the app makes this window key rather than the one it last had.
+        self.ax.AXUIElementSetAttributeValue(ax, "AXMain", True)
+        raised = self.ax.AXUIElementPerformAction(ax, "AXRaise")
+        if raised != 0:
+            raise Unavailable(f"macOS would not raise {window.cls} ({window.address}): AX error {raised}")
+        if not app.activateWithOptions_(self.appkit.NSApplicationActivateIgnoringOtherApps):
+            raise Unavailable(f"macOS would not activate {window.cls} ({window.address})")
+        # Activation is asynchronous: wait until this window has keyboard focus, so seat input that follows reaches
+        # it.
+        target = int(window.address, 16)
+        while self._focused_window() != (window.pid, target):
+            if time.monotonic() > deadline:
+                raise Unavailable(
+                    f"{window.cls} ({window.address}) did not take keyboard focus within {FOCUS_TIMEOUT:g} s; another "
+                    "of its windows or another app kept it"
+                )
             time.sleep(0.02)
 
     def cursor(self) -> tuple[int, int]:
@@ -196,15 +238,8 @@ class MacDriver:
             return None
         _, pid = self.ax.AXUIElementGetPid(element, None)
         found = element if self._attr(element, "AXRole") == "AXWindow" else self._attr(element, "AXWindow")
-        if found is None:
-            return f"pid {pid}"
-        frame = self.describe(found)
-        for window in self.windows():
-            if window.pid == pid and (window.x, window.y, window.width, window.height) == (
-                frame.x, frame.y, frame.width, frame.height,
-            ):  # fmt: skip
-                return window.address
-        return f"pid {pid}"
+        number = None if found is None else self._window_number(found)
+        return f"pid {pid}" if number is None else hex(number)
 
     # Capture
 
@@ -299,13 +334,16 @@ class MacDriver:
     def _keys_reach(self, window: Window) -> None:
         """Keys posted to a process go to its focused window, whichever that is: refuse unless it is this one, so
         typing never edits another document of the same app."""
-        app = self.ax.AXUIElementCreateApplication(window.pid)
-        focused, target = self._attr(app, "AXFocusedWindow"), self._ax_window(window)
-        if focused is None or target is None or not self.cf.CFEqual(focused, target):
+        focused = self._attr(self.ax.AXUIElementCreateApplication(window.pid), "AXFocusedWindow")
+        if focused is None or self._window_number(focused) != int(window.address, 16):
             raise RuntimeError(  # refused
                 f"{window.cls}'s focused window is not {window.address}, so keys would go to another of its windows: "
                 "click in this one first, or pass take_focus"
             )
+
+    # Keys go to the target's process even as seat input (take_focus). Posted to the HID stream, a key reaches
+    # whichever app is in front when it lands, and the user can switch apps between the check that the target is in
+    # front and the post. With take_focus the app is active, so its key window gets the key as typed there.
 
     def key(self, window: Window, key: str, down: bool, *, held: frozenset[str], seat: bool = False) -> None:
         self._trusted()
@@ -319,7 +357,7 @@ class MacDriver:
         else:
             made = q.CGEventCreateKeyboardEvent(None, code, down)
         q.CGEventSetFlags(made, modifier_flags(held | ({key} if down and key in FLAGS else set())))
-        self._post(window, made, seat)
+        self._post(window, made, seat=False)
 
     def text(self, window: Window, char: str, *, seat: bool = False) -> None:
         self._trusted()
@@ -327,14 +365,14 @@ class MacDriver:
         q = self.q
         if char in ("\n", "\r"):
             for down in (True, False):
-                self._post(window, q.CGEventCreateKeyboardEvent(None, KEYCODES["return"], down), seat)
+                self._post(window, q.CGEventCreateKeyboardEvent(None, KEYCODES["return"], down), seat=False)
             return
         units = len(char.encode("utf-16-le")) // 2
         for down in (True, False):
             made = q.CGEventCreateKeyboardEvent(None, 0, down)
             q.CGEventKeyboardSetUnicodeString(made, units, char)
             q.CGEventSetFlags(made, 0)
-            self._post(window, made, seat)
+            self._post(window, made, seat=False)
 
     # Accessibility
 
@@ -343,20 +381,10 @@ class MacDriver:
         return value if error == 0 else None
 
     def _ax_window(self, window: Window) -> Any:
-        """The app's AX window for this window. AX has no window number, so it is the one window with this title and
-        frame; two alike are ambiguous, never a guess."""
+        """The app's AX window with this window's number. AX lists only the windows on the current Space."""
         app = self.ax.AXUIElementCreateApplication(window.pid)
-        found = []
-        for candidate in self._attr(app, "AXWindows") or []:
-            node = self.describe(candidate)
-            title = self._attr(candidate, "AXTitle") or ""
-            if (node.x, node.y, node.width, node.height) == (window.x, window.y, window.width, window.height) and (
-                not window.title or title == window.title
-            ):
-                found.append(candidate)
-        if len(found) > 1:
-            raise AmbiguousWindow(f"{window.cls} has {len(found)} windows with the title and frame of {window.address}")
-        return found[0] if found else None
+        target = int(window.address, 16)
+        return next((w for w in self._attr(app, "AXWindows") or [] if self._window_number(w) == target), None)
 
     def root(self, window: Window) -> object:
         self._trusted()

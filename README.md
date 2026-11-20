@@ -52,7 +52,8 @@ A local demo app on Hyprland, operated by deskpilot with its agent cursor and cl
 
 On Hyprland every action is exact. On Windows and macOS, input posted to an app that is not in front reaches most
 standard controls. Some apps read the real keyboard or pointer and ignore it, such as games, many Electron and
-Chromium apps, and drag and drop. For those, pass `--take-focus` or `--take-pointer`, which use your own input.
+Chromium apps, and drag and drop. For those, pass `--take-focus`, which brings the window in front first, or
+`--take-pointer`, which uses your own pointer.
 macOS needs Accessibility and Screen Recording access for the app that runs deskpilot (your terminal, or the
 agent's app), granted in System Settings > Privacy & Security.
 
