@@ -146,6 +146,26 @@ def main():  # noqa: PLR0915 - sequential live acceptance and owned-resource tea
             refused("stopped_adoption_refused", adopting.result, "refused")
         verify("stopped_adoption_left_window", desk.window(target.address).workspace == target.workspace)
         verify("stopped_adoption_unowned", not queued.plugin.owned_windows([target.address]))
+        # The reaper's stop, when an agent's owner exits, must refuse a queued adoption the same way. Five held keys
+        # keep it queued past the reaper's thirty second check and the stop's five second grace.
+        reaped = Desk(plugin=Plugin(run=desk.plugin.run, agent="adoption-reaped"))
+        reaped._isolated = lambda: False
+        owner = subprocess.Popen(["sleep", "600"])
+        reaped.owner = owner.pid
+        with ThreadPoolExecutor(6) as pool:
+            holds = []
+            for _ in range(5):
+                holds.append(pool.submit(holder.key, "a", held.address, hold=10, hidden=True))
+                time.sleep(0.2)
+            adopting = pool.submit(reaped.adopt, target.address)
+            time.sleep(1)
+            owner.kill()
+            owner.wait()
+            for hold in holds:
+                hold.result()
+            refused("reaped_adoption_refused", adopting.result, "refused")
+        verify("reaped_adoption_left_window", desk.window(target.address).workspace == target.workspace)
+        verify("reaped_adoption_unowned", not reaped.plugin.owned_windows([target.address]))
         # Use a separate agent to avoid the stopped agent's five-second process-cleanup grace period.
         keeper = Desk(plugin=Plugin(run=desk.plugin.run, agent="adoption-unload"))
         keeper._isolated = lambda: False

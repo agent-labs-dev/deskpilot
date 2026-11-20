@@ -3873,9 +3873,10 @@ namespace {
         };
 
         std::map<std::string, SAgent> g_agents;
-        // How many times each agent name has been stopped. An adoption queued behind other actions carries the count it
-        // was asked under: one that runs after a stop, possibly once the stop's grace has ended and forgotten the agent,
-        // would otherwise bring the agent back and move the user's window for an agent that is gone.
+        // How many times each agent name has been stopped, by a command or by the reaper. An adoption queued behind other
+        // actions carries the count it was asked under: one that runs after a stop, possibly once the stop's grace has
+        // ended and forgotten the agent, would otherwise bring the agent back and move the user's window for an agent
+        // that is gone.
         std::map<std::string, uint64_t> g_stops;
         SP<CEventLoopTimer>           g_reaper;
         CHyprSignalListener           g_reloaded;
@@ -4102,6 +4103,7 @@ namespace {
         // carries the agent's token. A window of the user's on the agent's workspace is left alone. The rules stay until
         // then, so a window opened meanwhile still lands out of view.
         void stop(const std::string& name) {
+            ++g_stops[name];
             auto& agent = g_agents.at(name);
             if (agent.stopping)
                 return;
@@ -4325,7 +4327,6 @@ namespace {
             const auto IT = g_agents.find(NAME);
             if (args.size() == 4 && args[3] == "stop") {
                 // An agent the plugin no longer knows, as after it was reloaded, is stopped all the same.
-                ++g_stops[NAME];
                 g_agents[NAME];
                 stop(NAME);
                 return IPC::Socket1::SResponse(okReply());
