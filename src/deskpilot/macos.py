@@ -46,6 +46,9 @@ CLICK_STATE = 1
 # (windowNumber 0), so no view ever receives it. Warp and Cua post background clicks the same way.
 WINDOW_NUMBER = 51
 WINDOW_NUMBER_VALID = 58
+# How long an activated app may take to get keyboard focus. Activation usually lands within a frame or two; a busy
+# app can take longer, and past this the seat check refuses the input rather than waiting on an app that is hung.
+FOCUS_TIMEOUT = 2.0
 
 
 class _Point(ctypes.Structure):
@@ -105,8 +108,7 @@ class MacDriver:
         q = self.q
         info = q.CGWindowListCopyWindowInfo(q.kCGWindowListOptionAll | q.kCGWindowListExcludeDesktopElements,
                                             q.kCGNullWindowID) or []  # fmt: skip
-        front = self.appkit.NSWorkspace.sharedWorkspace().frontmostApplication()
-        front_pid = front.processIdentifier() if front else -1
+        front_pid = self._front_pid()
         found: list[Window] = []
         focused_done = False
         for entry in info:
@@ -153,6 +155,17 @@ class MacDriver:
         session = self.q.CGSessionCopyCurrentDictionary() or {}
         return bool(session.get("CGSSessionScreenIsLocked", False))
 
+    def _front_pid(self) -> int:
+        """The app that has keyboard focus, read live from the accessibility server. NSWorkspace's
+        frontmostApplication is updated only on a run loop this process never runs, so it kept naming the app that
+        was in front at the first call and a focused window read as unfocused."""
+        system = self.ax.AXUIElementCreateSystemWide()
+        error, app = self.ax.AXUIElementCopyAttributeValue(system, "AXFocusedApplication", None)
+        if error != 0 or app is None:
+            return -1
+        error, pid = self.ax.AXUIElementGetPid(app, None)
+        return pid if error == 0 else -1
+
     def focus(self, window: Window) -> None:
         app = self.appkit.NSRunningApplication.runningApplicationWithProcessIdentifier_(window.pid)
         if app is None:
@@ -162,6 +175,11 @@ class MacDriver:
         if ax is not None:
             self.ax.AXUIElementSetAttributeValue(ax, "AXMinimized", False)
             self.ax.AXUIElementPerformAction(ax, "AXRaise")
+        # Activation is asynchronous: wait until the app has keyboard focus, so seat input that follows reaches it.
+        # The seat check refuses the input if it never does.
+        deadline = time.monotonic() + FOCUS_TIMEOUT
+        while self._front_pid() != window.pid and time.monotonic() < deadline:
+            time.sleep(0.02)
 
     def cursor(self) -> tuple[int, int]:
         point = self.q.CGEventGetLocation(self.q.CGEventCreate(None))
