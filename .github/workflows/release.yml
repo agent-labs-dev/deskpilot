@@ -1,7 +1,9 @@
 name: Release
 
 # Pushing a vX.Y.Z tag publishes a GitHub release whose notes are that version's CHANGELOG.md entry, then uploads
-# the package to PyPI through trusted publishing. The tag must be on main, where CI has already checked the commit.
+# the package to PyPI through trusted publishing and pushes the AUR package. The tag must be on main, where CI has
+# already checked the commit. The AUR job needs AUR_SSH_PRIVATE_KEY in the `aur` environment: the private half of a
+# key on the maintainer's AUR account. Limit that environment to `v*.*.*` tags so no other ref can read it.
 on:
   push:
     tags: ["v*.*.*"]
@@ -73,3 +75,60 @@ jobs:
 
       - name: Publish
         run: uv publish --trusted-publishing always
+
+  aur:
+    name: AUR
+    needs: release
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    # One push at a time: a second tag's push would be refused as behind the first.
+    concurrency:
+      group: aur-push
+      cancel-in-progress: false
+    environment:
+      name: aur
+      url: https://aur.archlinux.org/packages/deskpilot
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Render the package
+        run: |
+          set -euo pipefail
+          curl -fsSL --retry 5 --retry-all-errors --max-time 120 -o "$RUNNER_TEMP/source.tar.gz" "https://github.com/${GITHUB_REPOSITORY}/archive/refs/tags/${GITHUB_REF_NAME}.tar.gz"
+          python3 scripts/render_aur.py --version "${GITHUB_REF_NAME#v}" --sha256 "$(sha256sum "$RUNNER_TEMP/source.tar.gz" | cut -d' ' -f1)" --out "$RUNNER_TEMP/aur"
+
+      - name: Push to AUR
+        env:
+          AUR_SSH_PRIVATE_KEY: ${{ secrets.AUR_SSH_PRIVATE_KEY }}
+        run: |
+          set -euo pipefail
+          if [ -z "${AUR_SSH_PRIVATE_KEY:-}" ]; then
+            echo "::error::AUR_SSH_PRIVATE_KEY is not set"
+            exit 1
+          fi
+          install -m 700 -d ~/.ssh
+          printf '%s\n' "$AUR_SSH_PRIVATE_KEY" > ~/.ssh/aur
+          chmod 600 ~/.ssh/aur
+          echo "aur.archlinux.org ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIEuBKrPzbawxA/k2g6NcyV5jmqwJ2s+zpgZGZ7tpLIcN" > ~/.ssh/known_hosts
+          export GIT_SSH_COMMAND="ssh -i ~/.ssh/aur -o IdentitiesOnly=yes -o UserKnownHostsFile=~/.ssh/known_hosts"
+          git clone ssh://aur@aur.archlinux.org/deskpilot.git "$RUNNER_TEMP/aur-repo"
+          cd "$RUNNER_TEMP/aur-repo"
+          # A rerun of an older tag must not put its version back over a newer one.
+          version="${GITHUB_REF_NAME#v}"
+          published=$(sed -n 's/^pkgver=//p' PKGBUILD 2>/dev/null || true)
+          if [ -n "$published" ] && [ "$published" != "$version" ] && [ "$(printf '%s\n' "$published" "$version" | sort -V | tail -n 1)" = "$published" ]; then
+            echo "The AUR already has $published, newer than $version; leaving it."
+            exit 0
+          fi
+          cp "$RUNNER_TEMP/aur/PKGBUILD" "$RUNNER_TEMP/aur/.SRCINFO" .
+          git config user.name "cjber"
+          git config user.email "cjber@users.noreply.github.com"
+          git add PKGBUILD .SRCINFO
+          # A rerun finds the version already pushed and leaves it.
+          if git diff --cached --quiet; then exit 0; fi
+          git commit -m "deskpilot $version"
+          git push origin HEAD:master

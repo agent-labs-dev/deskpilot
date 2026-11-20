@@ -35,6 +35,10 @@ A local demo app, operated by Deskpilot with its real cursor and click feedback.
 uv tool install deskpilot
 ```
 
+On Arch Linux, the [`deskpilot`](https://aur.archlinux.org/packages/deskpilot) AUR package installs it with
+Hyprland, `grim` and the plugin's build tools: `yay -S deskpilot`. `wl-clipboard` and `ffmpeg` are optional
+dependencies.
+
 The first input action builds and loads the plugin for your running Hyprland. Run `deskpilot plugin load` to
 prepare it ahead of time. The build needs the tools listed under [Requirements](#requirements).
 
