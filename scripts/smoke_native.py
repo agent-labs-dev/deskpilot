@@ -179,10 +179,15 @@ def app_smoke() -> None:  # noqa: PLR0915 - one check per action, in the order t
         deskpilot("click", *act["button"], "--take-focus")
         until(state, lambda s: s["pressed"] == pressed + 1, "a click that took focus")
 
+    def focused_type() -> None:
+        deskpilot("click", *act["entry"])
+        deskpilot("type", " in front", "--window", address, "--take-focus")
+        until(state, lambda s: s["entry"].endswith(" in front"), "text typed with take-focus")
+
     for name, action in [("click", click), ("click in shot pixels", shot_pixels), ("double click", double),
                          ("right click", right), ("scroll", scroll), ("drag", drag), ("hover", hover),
                          ("keys", keys), ("clipboard", clipboard), ("covered", covered),
-                         ("click with take-focus", focused_click)]:  # fmt: skip
+                         ("click with take-focus", focused_click), ("type with take-focus", focused_type)]:  # fmt: skip
         step(name, action)
     os.kill(win["pid"], signal.SIGTERM)
 
