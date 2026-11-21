@@ -290,6 +290,7 @@ class Win32Driver:
         )  # fmt: skip
         self.user32.OpenClipboard.argtypes = (wintypes.HWND,)
         self.kernel32.GlobalFree.argtypes = (ctypes.c_void_p,)
+        self._keys: dict[tuple[str, int], Any] = {}  # (window address, key): the control a held key went to
         self._pressed: dict[str, Any] = {}  # window address: the control a held button was pressed on
         self._uia: Any = None
         self._thread = threading.local()
@@ -596,7 +597,12 @@ class Win32Driver:
         alt = VK["alt"] in pressed | {vk} and VK["ctrl"] not in mods
         scan = self.user32.MapVirtualKeyW(vk, MAPVK_VK_TO_VSC)
         message = (WM_SYSKEYDOWN if down else WM_SYSKEYUP) if alt else (WM_KEYDOWN if down else WM_KEYUP)
-        target = self._focused_control(window)
+        # A release goes to the control its press went to, not wherever focus has moved since.
+        target = None if down else self._keys.pop((window.address, vk), None)
+        if target is None:
+            target = self._focused_control(window)
+        if down:
+            self._keys[(window.address, vk)] = target  # before the post: a press that times out is still released
         self._post_message(window, target, message, vk, key_lparam(scan, down, vk in EXTENDED, alt), pressed)
 
     def text(self, window: Window, char: str, *, seat: bool = False) -> None:

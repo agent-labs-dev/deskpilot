@@ -13,6 +13,7 @@ window at one size, and an element is found again in the app's tree when the act
 from __future__ import annotations
 
 import json
+import sys
 import time
 from collections.abc import Callable, Generator
 from contextlib import contextmanager
@@ -421,8 +422,8 @@ class NativeDesk(BaseDesk):
         with self._buttons(win, False) as held:
             self._mouse(win, "move", x1, y1)
             self._sleep(DRAG_PAUSE)
+            held.add(button)  # before the post: a press that times out is still released
             self._mouse(win, "down", x1, y1, button=button)
-            held.add(button)
             self._sleep(DRAG_PAUSE)
             for i in range(1, moves + 1):
                 x, y = round(x1 + (x2 - x1) * i / moves), round(y1 + (y2 - y1) * i / moves)
@@ -513,9 +514,15 @@ class NativeDesk(BaseDesk):
                 self.driver.key(win, part, True, held=before, seat=seat)
             self._sleep(hold)
         finally:
-            for part in reversed(held):
+            failures: list[Exception] = []
+            for part in reversed(held):  # every release is tried, whatever an earlier one did
                 held.remove(part)
-                self.driver.key(win, part, False, held=frozenset(held), seat=seat)
+                try:
+                    self.driver.key(win, part, False, held=frozenset(held), seat=seat)
+                except Exception as error:
+                    failures.append(error)
+            if failures and sys.exc_info()[0] is None:
+                raise failures[0]
 
     def type(
         self,

@@ -332,3 +332,27 @@ def test_an_element_click_by_the_apps_own_action_refuses_a_covered_element():
     with pytest.raises(Covered):
         d.click("notes", None, None, element="e2")
     assert ("press", "Save") not in driver.events
+
+
+def test_a_drag_press_that_times_out_is_released():
+    d, driver = desk()
+    driver.timeout_on = "down"
+    with pytest.raises(TimeoutError):
+        d.drag("notes", (10, 10), (50, 50), scale=1)
+    assert [e[1] for e in driver.events if e[0] == "mouse"][-1] == "up"
+
+
+def test_every_chord_key_is_released_when_one_release_fails():
+    d, driver = desk()
+    real = driver.key
+
+    def key(window, key, down, *, held, seat=False):
+        real(window, key, down, held=held, seat=seat)
+        if not down and key == "a":
+            raise TimeoutError("late")
+
+    driver.key = key
+    with pytest.raises(TimeoutError):
+        d.key("ctrl+shift+a", "notes")
+    assert ("key", "ctrl", False, False) in driver.events
+    assert ("key", "shift", False, False) in driver.events
