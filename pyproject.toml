@@ -4,7 +4,7 @@ version = "0.8.0"
 description = "Desktop control for agents on Hyprland: window-relative clicks that leave the user's pointer alone, and typing"
 readme = "README.md"
 license = "MIT"
-license-files = ["LICENSE"]
+license-files = ["LICENSE", "THIRD_PARTY_NOTICES.md"]
 authors = [{ name = "Cillian Berragan", email = "cjberragan@gmail.com" }]
 requires-python = ">=3.12"
 dependencies = ["evdev>=1.7", "jeepney>=0.8", "pillow>=10", "mcp>=2.3", "pydantic>=2.8"]
