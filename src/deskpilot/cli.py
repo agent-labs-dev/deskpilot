@@ -565,7 +565,7 @@ def run(args: argparse.Namespace, desk: Desk | NativeDesk) -> object:
             )
             if isinstance(result, tuple):
                 return desk.landed(*result)
-            return result.to_dict()
+            return desk.routed(result.to_dict())
         case "drag":
             gx, gy = desk.drag(
                 args.window,

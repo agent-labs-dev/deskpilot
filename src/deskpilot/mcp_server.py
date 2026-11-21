@@ -237,8 +237,8 @@ def hover(
         hidden=hidden,
     )
     if isinstance(result, tuple):
-        return [{"x": result[0], "y": result[1]}]
-    return [Image(path=result.path), result.to_dict()]
+        return [desk.landed(*result)]
+    return [Image(path=result.path), desk.routed(result.to_dict())]
 
 
 @_tool()

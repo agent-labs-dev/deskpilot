@@ -371,7 +371,7 @@ def _do(desk: Desk, step: Any, window: Window, hidden: bool) -> dict:
             return {}
         case _:  # pragma: no cover - every member of Step is above, and parse refuses anything else
             raise AssertionError(step.action)
-    return {"x": point[0], "y": point[1]}
+    return desk.landed(*point)
 
 
 def _pause(desk: Desk, window: Window, seconds: float) -> None:

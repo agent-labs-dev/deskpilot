@@ -24,9 +24,13 @@ class BaseDesk:
     # backend has no such route, as on Windows and macOS.
     route: str | None = None
 
+    def routed(self, result: dict) -> dict:
+        """`result` of the latest pointer action, with the route its input took."""
+        return result | ({"route": self.route} if self.route else {})
+
     def landed(self, x: int, y: int) -> dict:
         """The result of a pointer action that ended at global (x, y)."""
-        return {"x": x, "y": y} | ({"route": self.route} if self.route else {})
+        return self.routed({"x": x, "y": y})
 
     def window(self, query: str) -> Window:
         raise NotImplementedError

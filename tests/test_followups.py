@@ -160,3 +160,31 @@ def test_launch_adds_chromium_page_accessibility_once():
         "--force-renderer-accessibility",
     ]
     assert add(["gnome-calculator"]) == ["gnome-calculator"]
+
+
+def test_a_press_whose_write_failed_is_released_on_close(monkeypatch):
+    device = virtual(monkeypatch)
+    real = device._emit
+    fail = {"on": True}
+
+    def emit(etype, code, value):
+        real(etype, code, value)
+        if fail["on"]:
+            raise OSError("write failed after the press was delivered")
+
+    monkeypatch.setattr(device, "_emit", emit)
+    with pytest.raises(OSError):
+        device.click("left", 1)
+    assert device._down == {"left"}, "the failed release is kept to try again"
+    fail["on"] = False
+    device.close()
+    assert not device._down and device._ui.written[-1][1] == 0
+
+
+def test_batch_click_results_carry_the_route(tmp_path, monkeypatch):
+    from test_batch import CLICK, request
+
+    desk, _, _, plugin_ = make_desk(tmp_path, monkeypatch)
+    plugin_.path = lambda *args: {"ok": True, "ticket": 9, "route": "client"}
+    result = desk.batch(request([CLICK]))
+    assert result.results[0]["route"] == "client"
