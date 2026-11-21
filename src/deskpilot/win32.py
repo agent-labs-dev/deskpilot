@@ -243,6 +243,36 @@ class Win32Driver:
             (self.gdi32, "SelectObject", ctypes.c_void_p, (ctypes.c_void_p, ctypes.c_void_p)),
             (self.gdi32, "DeleteObject", wintypes.BOOL, (ctypes.c_void_p,)),
             (self.gdi32, "DeleteDC", wintypes.BOOL, (ctypes.c_void_p,)),
+            (
+                self.gdi32,
+                "GetDIBits",
+                ctypes.c_int,
+                (
+                    ctypes.c_void_p,
+                    ctypes.c_void_p,
+                    wintypes.UINT,
+                    wintypes.UINT,
+                    ctypes.c_void_p,
+                    ctypes.c_void_p,
+                    wintypes.UINT,
+                ),
+            ),
+            (self.user32, "PrintWindow", wintypes.BOOL, (wintypes.HWND, ctypes.c_void_p, wintypes.UINT)),
+            (
+                self.kernel32,
+                "QueryFullProcessImageNameW",
+                wintypes.BOOL,
+                (ctypes.c_void_p, wintypes.DWORD, ctypes.c_void_p, ctypes.c_void_p),
+            ),
+            (self.kernel32, "GetProcessTimes", wintypes.BOOL, (ctypes.c_void_p,) + (ctypes.c_void_p,) * 4),
+            (self.kernel32, "Process32FirstW", wintypes.BOOL, (ctypes.c_void_p, ctypes.c_void_p)),
+            (self.kernel32, "Process32NextW", wintypes.BOOL, (ctypes.c_void_p, ctypes.c_void_p)),
+            (
+                self.user32,
+                "GetUserObjectInformationW",
+                wintypes.BOOL,
+                (ctypes.c_void_p, ctypes.c_int, ctypes.c_void_p, wintypes.DWORD, ctypes.c_void_p),
+            ),
         ):
             function = getattr(lib, name)
             function.restype, function.argtypes = restype, argtypes

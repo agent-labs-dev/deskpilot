@@ -12,7 +12,7 @@ def test_recipe_and_mcp_import_without_fcntl():
         "import deskpilot.recipe, deskpilot.native, deskpilot.batch, deskpilot.keys\n"
         "assert 'deskpilot.plugin' not in sys.modules and 'deskpilot.desk' not in sys.modules\n"
     )
-    done = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True)
+    done = subprocess.run([sys.executable, "-c", code], check=False, capture_output=True, text=True)
     assert done.returncode == 0, done.stderr
 
 
