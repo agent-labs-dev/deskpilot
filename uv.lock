@@ -214,7 +214,7 @@ wheels = [
 
 [[package]]
 name = "deskpilot"
-version = "0.8.0"
+version = "0.9.0"
 source = { editable = "." }
 dependencies = [
     { name = "comtypes", marker = "sys_platform == 'win32'" },

@@ -7,6 +7,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [0.9.0] - 2026-11-21
+
 - A click, hover, scroll or drag result names its `route` (`agent`, `client`, `seat`, or `pointer` for `--take-pointer`), so an input that held the user's seat is no surprise.
 - A button a click or drag pressed is let go however the action ends, and when the device closes, so an interrupted click never leaves one held.
 - `--take-pointer` gives the user's focus and pointer back after the click or scroll.
