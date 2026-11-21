@@ -15,7 +15,7 @@ from pydantic import Field
 
 from . import a11y
 from . import batch as batching
-from .backend import open_desk, owner_from_env
+from .backend import hyprland_only, open_desk, owner_from_env
 from .batch import MAX_ACTIONS, Action
 from .errors import EXPECTED, error_code
 
@@ -96,6 +96,7 @@ def record_start(window: str, path: str, fps: int = 25, hidden: bool = False) ->
     """Start filming a window into the mp4 at `path`, with the agent cursor the plugin draws: brackets closing in as it
     lands, the marker squeezing on a press. One recording per path; end it with record_stop. Screenshots from `shot`
     never show the cursor. hidden films a window the agent launched or adopted, out of view."""
+    hyprland_only("record")
     if path in _recordings:
         raise ValueError(f"already recording to {path}")
     stop, outcome = threading.Event(), []

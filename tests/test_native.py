@@ -258,3 +258,46 @@ def test_only_the_key_state_deskpilot_set_is_put_back():
     now = bytes([0, 0x80, 0])  # the user released key 2 while the message was handled
     assert win32.restore_state(saved, wanted, now) == bytes([0x80, 0, 0])
     assert win32.restore_state(saved, wanted, bytes([0x80, 0x80, 0x80])) == bytes([0x80, 0, 0])
+
+
+def test_chords_with_a_plus_key_and_cmd_are_read_as_written():
+    assert chord("ctrl++") == ["ctrl", "+"]
+    assert chord("cmd+a") == ["cmd", "a"]
+    with pytest.raises(ValueError):
+        chord("ctrl+")
+
+
+def test_a_held_single_key_is_pressed_and_released_not_typed():
+    d, driver = desk()
+    d.key("a", "notes", hold=0.5)
+    assert [(e[1], e[2]) for e in driver.events] == [("a", True), ("a", False)]
+
+
+def test_an_element_click_refuses_an_element_that_is_not_showing():
+    d, driver = desk()
+    driver.tree["children"] = [{"node": Node("button", "Save", ("offscreen",), None, 120, 60, 40, 20),
+                                "children": [], "press": True}]  # fmt: skip
+    d.elements("notes")
+    with pytest.raises(RuntimeError) as error:
+        d.click("notes", None, None, element="e2")
+    assert error_code(error.value) == "offscreen" and ("press", "Save") not in driver.events
+
+
+def test_a_click_names_a_point_or_an_element():
+    d, _ = desk()
+    with pytest.raises(ValueError):
+        d.click("notes", None, None)
+
+
+def test_a_native_tree_reads_in_one_call_and_offers_no_more_to_read():
+    d, driver = desk()
+    driver.tree["children"] = [{"node": Node("button", f"b{i}", (), None, 120, 60, 40, 20), "children": []}
+                               for i in range(5)]  # fmt: skip
+    tree = d.elements("notes", max_nodes=3)
+    assert tree.truncated and "more" not in tree.to_dict()
+    with pytest.raises(ValueError):
+        d.elements("notes", max_nodes=0)
+    with pytest.raises(Unavailable):
+        d.elements("notes", more="x")
+    shown = d.elements("notes").children[0]
+    assert "showing" in shown.states

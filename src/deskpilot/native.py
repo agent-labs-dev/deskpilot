@@ -20,7 +20,7 @@ from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any, NoReturn, Protocol
 
-from . import screen
+from . import keys, screen
 from .a11y import Element
 from .base import BaseDesk
 from .errors import Covered, NotVisible, SessionLocked, Unavailable
@@ -126,9 +126,7 @@ MODIFIERS = frozenset({"ctrl", "control", "shift", "alt", "super", "meta", "win"
 
 def chord(combo: str) -> list[str]:
     """'ctrl+shift+t' -> its keys in order. A lone character, '+' included, is a chord of that character."""
-    parts = [part for part in combo.split("+") if part] if combo != "+" else ["+"]
-    if not parts:
-        raise ValueError("name a key")
+    parts = keys.chord_parts(combo)
     for part in parts:
         if len(part) != 1 and part.lower() not in NAMED and part.lower() not in MODIFIERS:
             raise ValueError(f"unknown key '{part}'; use a character or one of: {', '.join(sorted(NAMED))}")
@@ -350,10 +348,13 @@ class NativeDesk(BaseDesk):
             )
         if button not in BUTTONS:
             raise ValueError(f"button is one of {', '.join(BUTTONS)}")
+        if (element is None) == (x is None or y is None):
+            raise ValueError("give a point (x and y) or an element, not both or neither")
         if take_focus:
             self.focus(query)
         if element is not None and button == "left" and count == 1 and not take_pointer:
             win = self._target(query, show, hidden)
+            self.locate(win, element)  # refuses an element that is not showing, as any other action on it does
             ref, info = self._find(win, element)
             if self.driver.press(win, ref):
                 return info.x + info.width // 2, info.y + info.height // 2
@@ -495,7 +496,7 @@ class NativeDesk(BaseDesk):
         parts = chord(combo)
         win = self._key_target(query, take_focus, show, hidden)
         seat = take_focus
-        if len(parts) == 1 and len(parts[0]) == 1:
+        if len(parts) == 1 and len(parts[0]) == 1 and not hold:
             self._seat_check(win, seat)
             self.driver.text(win, parts[0], seat=seat)
             return
@@ -567,6 +568,8 @@ class NativeDesk(BaseDesk):
     ) -> Element:
         """The window's accessibility tree, bounds in window pixels, at most `max_nodes` elements. Each id records its
         path from the window's root and what it was, so an action finds it again in the tree as it is then."""
+        if max_nodes < 1:
+            raise ValueError("read at least 1 element")
         if more:
             raise Unavailable(
                 f"{self.driver.instance} reads a tree in one call and keeps no later batch: raise --max-nodes instead"
@@ -594,17 +597,20 @@ class NativeDesk(BaseDesk):
                         break
                     children.append(walk(ref, [*path, index], trail, depth + 1))
             x, y = (info.x - win.x, info.y - win.y) if info.width and info.height else (0, 0)
-            return Element(element_id, info.role, info.name, info.states, info.text, x, y, info.width, info.height,
+            states = info.states
+            if info.width > 0 and info.height > 0 and "offscreen" not in states and "showing" not in states:
+                states = (*states, "showing")  # a11y.narrow's `showing` keeps the elements an app has a place for
+            return Element(element_id, info.role, info.name, states, info.text, x, y, info.width, info.height,
                            tuple(children))  # fmt: skip
 
         root = walk(self.driver.root(win), [], [], 0)
         if peek:
-            return replace(root, truncated=truncated)
+            return replace(root, truncated=truncated, batched=False)
         snapshot_id = f"{win.address.removeprefix('0x')}-{time.time_ns()}"
         path = _elements_path(win)
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(json.dumps({"window": _identity(win), "snapshot": snapshot_id, "elements": records}))
-        return replace(root, truncated=truncated, snapshot=snapshot_id)
+        return replace(root, truncated=truncated, snapshot=snapshot_id, batched=False)
 
     def _find(self, win: Window, element: str) -> tuple[object, Node]:
         """An element of the latest snapshot as the app reports it now. Every node on its path from the window must

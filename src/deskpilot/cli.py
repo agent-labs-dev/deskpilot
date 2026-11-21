@@ -139,8 +139,8 @@ def _elements_text(tree: dict, args: argparse.Namespace) -> list[str]:
         lines.append(f"more: the tree is larger than this batch; read on with: {shlex.join(command)}")
     elif tree.get("truncated"):
         lines.append(
-            "truncated: the tree is larger than was read, and a peek keeps nothing to read on from; "
-            "peek again with a larger --max-nodes"
+            "truncated: the tree is larger than was read, and nothing is kept to read on from; "
+            "read again with a larger --max-nodes"
         )
     return lines
 

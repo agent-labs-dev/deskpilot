@@ -12,6 +12,7 @@ import ctypes
 import os
 import subprocess
 import sys
+import threading
 from ctypes import wintypes
 from pathlib import Path
 from typing import Any
@@ -228,6 +229,23 @@ class Win32Driver:
         self.user32.ChildWindowFromPointEx.argtypes = (wintypes.HWND, wintypes.POINT, wintypes.UINT)
         self.user32.PostMessageW.argtypes = (wintypes.HWND, wintypes.UINT, wintypes.WPARAM, wintypes.LPARAM)
         self.user32.GetWindowLongPtrW.restype = ctypes.c_ssize_t
+        # A handle is pointer-sized: without a prototype ctypes passes and returns a 32-bit int and truncates it.
+        for lib, name, restype, argtypes in (
+            (self.kernel32, "OpenProcess", ctypes.c_void_p, (wintypes.DWORD, wintypes.BOOL, wintypes.DWORD)),
+            (self.kernel32, "CloseHandle", wintypes.BOOL, (ctypes.c_void_p,)),
+            (self.kernel32, "CreateToolhelp32Snapshot", ctypes.c_void_p, (wintypes.DWORD, wintypes.DWORD)),
+            (self.user32, "OpenInputDesktop", ctypes.c_void_p, (wintypes.DWORD, wintypes.BOOL, wintypes.DWORD)),
+            (self.user32, "CloseDesktop", wintypes.BOOL, (ctypes.c_void_p,)),
+            (self.user32, "GetDC", ctypes.c_void_p, (wintypes.HWND,)),
+            (self.user32, "ReleaseDC", ctypes.c_int, (wintypes.HWND, ctypes.c_void_p)),
+            (self.gdi32, "CreateCompatibleDC", ctypes.c_void_p, (ctypes.c_void_p,)),
+            (self.gdi32, "CreateCompatibleBitmap", ctypes.c_void_p, (ctypes.c_void_p, ctypes.c_int, ctypes.c_int)),
+            (self.gdi32, "SelectObject", ctypes.c_void_p, (ctypes.c_void_p, ctypes.c_void_p)),
+            (self.gdi32, "DeleteObject", wintypes.BOOL, (ctypes.c_void_p,)),
+            (self.gdi32, "DeleteDC", wintypes.BOOL, (ctypes.c_void_p,)),
+        ):
+            function = getattr(lib, name)
+            function.restype, function.argtypes = restype, argtypes
         self.kernel32.GlobalLock.restype = ctypes.c_void_p
         self.kernel32.GlobalAlloc.restype = ctypes.c_void_p
         self.kernel32.GlobalLock.argtypes = (ctypes.c_void_p,)
@@ -243,6 +261,7 @@ class Win32Driver:
         self.kernel32.GlobalFree.argtypes = (ctypes.c_void_p,)
         self._pressed: dict[str, Any] = {}  # window address: the control a held button was pressed on
         self._uia: Any = None
+        self._thread = threading.local()
 
     # Windows
 
@@ -432,7 +451,8 @@ class Win32Driver:
                 # A sent message is handled the next time the thread reads its queue. The first returns once the
                 # app takes the posted message from its queue, the second once it has handled it and reads again.
                 for _ in range(2):
-                    self.user32.SendMessageTimeoutW(target, WM_NULL, 0, 0, SMTO_ABORTIFHUNG, 2000, None)
+                    if not self.user32.SendMessageTimeoutW(target, WM_NULL, 0, 0, SMTO_ABORTIFHUNG, 2000, None):
+                        raise TimeoutError("the app did not take the input in 2 s: it may be busy or not responding")
             finally:
                 now = (ctypes.c_ubyte * 256)()
                 self.user32.GetKeyboardState(now)
@@ -573,11 +593,15 @@ class Win32Driver:
     # Accessibility (UI Automation)
 
     def _automation(self) -> Any:
-        if self._uia is None:
-            import comtypes
-            import comtypes.client
+        import comtypes
+        import comtypes.client
 
-            comtypes.CoInitialize()
+        if not getattr(self._thread, "com", False):
+            # The MCP server runs each tool on a worker thread, and the snapshot's elements outlive a call: a
+            # multithreaded apartment on every thread lets any of them use an element another read.
+            comtypes.CoInitializeEx(comtypes.COINIT_MULTITHREADED)
+            self._thread.com = True
+        if self._uia is None:
             comtypes.client.GetModule("UIAutomationCore.dll")
             from comtypes.gen import UIAutomationClient as uia
 
@@ -655,7 +679,7 @@ class Win32Driver:
         try:
             handle = self.user32.GetClipboardData(CF_UNICODETEXT)
             if not handle:
-                return ""
+                raise RuntimeError("the clipboard holds no plain text")
             pointer = self.kernel32.GlobalLock(handle)
             try:
                 return ctypes.wstring_at(pointer)

@@ -90,7 +90,21 @@ jobs:
           defaults write com.apple.TextEdit CorrectSpellingAutomatically -bool false
           uv run --no-sync python -c 'import ApplicationServices as a, Quartz as q; print("accessibility", a.AXIsProcessTrusted(), "screen", q.CGPreflightScreenCaptureAccess(), "post", q.CGPreflightPostEventAccess())'
       - name: Drive a real window through the CLI
+        env:
+          SMOKE_SHOTS: ${{ runner.temp }}/shots
         run: uv run --no-sync python scripts/smoke_native.py
+      - name: Drive a real window through the MCP server
+        env:
+          SMOKE_SHOTS: ${{ runner.temp }}/shots
+        run: uv run --no-sync python scripts/smoke_native_mcp.py
+      - name: Keep the screenshots
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: native-shots-${{ matrix.os }}
+          path: ${{ runner.temp }}/shots
+          if-no-files-found: warn
+          retention-days: 30
 
   workflows:
     name: Workflow checks

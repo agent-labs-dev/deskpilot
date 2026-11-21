@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import subprocess
+
 from .hypr import AmbiguousWindow, HyprctlError, WindowNotFound
 
 
@@ -29,6 +31,7 @@ EXPECTED = (
     AmbiguousWindow,
     NotVisible,
     HyprctlError,
+    subprocess.SubprocessError,
     ValueError,
     TimeoutError,
     RuntimeError,

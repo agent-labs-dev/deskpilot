@@ -5,6 +5,7 @@ twin, scripts/smoke_app_macos.py, which says why), drives each pointer, key, cli
 `deskpilot`, and checks the app saw exactly that. A second window over the app checks that a covered point is refused,
 and, once focused, that a click on the app leaves it in front. One click is aimed in the pixels of a scaled-down shot.
 Then it types into the platform's own editor (Notepad, TextEdit) and reads the text back from the accessibility tree.
+scripts/smoke_native_mcp.py does the same editor check through the MCP server. Screenshots go to $SMOKE_SHOTS.
 """
 
 from __future__ import annotations
@@ -23,6 +24,8 @@ APP = Path(__file__).with_name("smoke_app_macos.py" if sys.platform == "darwin" 
 # Select all: Command-A on macOS, Control-A elsewhere.
 SELECT_ALL = "cmd+a" if sys.platform == "darwin" else "ctrl+a"
 work = Path(tempfile.mkdtemp(prefix="deskpilot-smoke-"))
+SHOTS = Path(os.environ.get("SMOKE_SHOTS") or work)  # CI uploads this folder with the run
+SHOTS.mkdir(parents=True, exist_ok=True)
 
 
 def run(*args: str) -> subprocess.CompletedProcess:
@@ -189,6 +192,7 @@ def app_smoke() -> None:  # noqa: PLR0915 - one check per action, in the order t
                          ("keys", keys), ("clipboard", clipboard), ("covered", covered),
                          ("click with take-focus", focused_click), ("type with take-focus", focused_type)]:  # fmt: skip
         step(name, action)
+    deskpilot("shot", address, "-o", str(SHOTS / "cli-app.png"))
     os.kill(win["pid"], signal.SIGTERM)
 
 
@@ -206,6 +210,7 @@ def editor_smoke(command: str, roles: tuple[str, ...]) -> None:
             break
         assert time.monotonic() < deadline, f"the typed text is not in {command}'s tree: {found}"
         time.sleep(0.5)
+    deskpilot("shot", address, "-o", str(SHOTS / "cli-editor.png"))
 
 
 if __name__ == "__main__":
