@@ -1,6 +1,6 @@
 [project]
 name = "deskpilot"
-version = "0.8.0"
+version = "0.9.0"
 description = "Give your agent a desktop: screenshots, accessibility trees, clicks and keys in a window, on Linux (Hyprland), Windows and macOS, without taking your pointer"
 readme = "README.md"
 license = "MIT"
