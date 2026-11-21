@@ -66,6 +66,12 @@ async def main() -> None:
         win = await call("launch", command=EDITOR)
         address = win["address"]
         assert any(w["address"] == address for w in await call("windows")), "the launched window is not listed"
+        # A window opens with an animation: act once its geometry has stopped changing.
+        for _ in range(20):
+            before = next(w for w in await call("windows") if w["address"] == address)
+            await asyncio.sleep(0.5)
+            if before == next(w for w in await call("windows") if w["address"] == address):
+                break
         tree = await call("elements", window=address)
         area = next(e for e in walk(tree) if e["role"] in ROLES)
         await call("click", window=address, element=f"{tree['snapshot']}:{area['id']}")

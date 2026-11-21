@@ -211,6 +211,7 @@ def editor_smoke(command: str, roles: tuple[str, ...]) -> None:
         assert time.monotonic() < deadline, f"the typed text is not in {command}'s tree: {found}"
         time.sleep(0.5)
     deskpilot("shot", address, "-o", str(SHOTS / "cli-editor.png"))
+    os.kill(win["pid"], signal.SIGKILL if hasattr(signal, "SIGKILL") else signal.SIGTERM)  # no save prompt left over
 
 
 if __name__ == "__main__":
