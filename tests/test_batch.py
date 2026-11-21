@@ -12,7 +12,7 @@ CLICK = {"action": "click", "x": 100, "y": 50}
 
 
 def request(actions, **options):
-    return batch.parse({"window": "battle", "actions": actions, **options})
+    return batch.parse({"window": "notepad", "actions": actions, **options})
 
 
 def run(desk, actions, **options):
@@ -75,11 +75,11 @@ def test_the_pin_ignores_a_window_that_would_match_the_name_later(tmp_path, monk
     path = plugin.path
 
     def second_window(*args):
-        fake.clients.append({**CLIENT, "address": "0xbeef", "title": "Battle.net 2"})
+        fake.clients.append({**CLIENT, "address": "0xbeef", "title": "Notepad 2"})
         return path(*args)
 
     plugin.path = second_window
-    result = run(desk, [CLICK, CLICK])  # "battle" is ambiguous now, but the pin is the first window's address
+    result = run(desk, [CLICK, CLICK])  # "notepad" is ambiguous now, but the pin is the first window's address
     assert result["ok"]
     assert {call[1] for call in plugin.calls} == {"0xabc"}
 
@@ -176,21 +176,21 @@ def run_cli(monkeypatch, desk, argv, stdin=None):
 
 def test_the_cli_reads_the_steps_from_stdin_or_a_file(tmp_path, monkeypatch, capsys):
     desk, _, _, _ = make_desk(tmp_path, monkeypatch)
-    assert run_cli(monkeypatch, desk, ["battle"], json.dumps([CLICK])) == 0
+    assert run_cli(monkeypatch, desk, ["notepad"], json.dumps([CLICK])) == 0
     assert json.loads(capsys.readouterr().out)["completed"] == 1
     steps = tmp_path / "steps.json"
     steps.write_text(json.dumps([CLICK, {"action": "key", "combo": "Return"}]))
-    assert run_cli(monkeypatch, desk, ["battle", str(steps), "--hidden"], None) == 2  # not a launched window
+    assert run_cli(monkeypatch, desk, ["notepad", str(steps), "--hidden"], None) == 2  # not a launched window
     out = json.loads(capsys.readouterr().out)
     assert out["failed"]["code"] == "not_found" and out["completed"] == 0
-    assert run_cli(monkeypatch, desk, ["battle", str(steps)]) == 0
+    assert run_cli(monkeypatch, desk, ["notepad", str(steps)]) == 0
     assert json.loads(capsys.readouterr().out)["completed"] == 2
 
 
 def test_the_cli_exits_2_on_a_failed_step_with_the_partial_output(tmp_path, monkeypatch, capsys):
     desk, _, _, _ = make_desk(tmp_path, monkeypatch)
     steps = [CLICK, {**CLICK, "shot": "missing"}]
-    assert run_cli(monkeypatch, desk, ["battle"], json.dumps(steps)) == 2
+    assert run_cli(monkeypatch, desk, ["notepad"], json.dumps(steps)) == 2
     captured = capsys.readouterr()
     out = json.loads(captured.out)
     assert out["completed"] == 1 and out["failed"]["index"] == 1 and out["failed"]["code"] == "stale"
@@ -200,7 +200,7 @@ def test_the_cli_exits_2_on_a_failed_step_with_the_partial_output(tmp_path, monk
 @pytest.mark.parametrize("stdin", ["not json", "{}", "[1]", '[{"action": "click"}]', ""])
 def test_the_cli_maps_bad_input_to_invalid_without_a_traceback(tmp_path, monkeypatch, capsys, stdin):
     desk, _, _, plugin = make_desk(tmp_path, monkeypatch)
-    assert run_cli(monkeypatch, desk, ["battle"], stdin) == 2
+    assert run_cli(monkeypatch, desk, ["notepad"], stdin) == 2
     captured = capsys.readouterr()
     assert json.loads(captured.err)["code"] == "invalid" and "Traceback" not in captured.err
     assert plugin.calls == []
@@ -208,7 +208,7 @@ def test_the_cli_maps_bad_input_to_invalid_without_a_traceback(tmp_path, monkeyp
 
 def test_the_cli_reports_a_missing_file_as_invalid(tmp_path, monkeypatch, capsys):
     desk, _, _, _ = make_desk(tmp_path, monkeypatch)
-    assert run_cli(monkeypatch, desk, ["battle", str(tmp_path / "nope.json")]) == 2
+    assert run_cli(monkeypatch, desk, ["notepad", str(tmp_path / "nope.json")]) == 2
     error = json.loads(capsys.readouterr().err)
     assert error["code"] == "invalid" and error["message"].startswith("cannot read")
 
@@ -216,7 +216,7 @@ def test_the_cli_reports_a_missing_file_as_invalid(tmp_path, monkeypatch, capsys
 def test_a_cli_error_without_json_is_one_plain_line(tmp_path, monkeypatch, capsys):
     desk, _, _, _ = make_desk(tmp_path, monkeypatch)
     monkeypatch.setattr(cli, "open_desk", lambda: desk)
-    assert cli.main(["batch", "battle", str(tmp_path / "nope.json")]) == 2
+    assert cli.main(["batch", "notepad", str(tmp_path / "nope.json")]) == 2
     assert capsys.readouterr().err.startswith("deskpilot: invalid: cannot read")
 
 
@@ -245,7 +245,7 @@ def test_the_mcp_batch_tool_returns_the_image_and_metadata_or_an_error_with_part
     desk, _, _, _ = make_desk(tmp_path, monkeypatch)
     monkeypatch.setattr(mcp_server, "desk", desk)
     fake_grim(monkeypatch, (400, 200))
-    call = lambda args: asyncio.run(mcp_server.mcp.call_tool("batch", {"window": "battle", **args}))  # noqa: E731
+    call = lambda args: asyncio.run(mcp_server.mcp.call_tool("batch", {"window": "notepad", **args}))  # noqa: E731
 
     ok = call({"actions": [CLICK], "final_shot": True})
     assert isinstance(ok, CallToolResult) and not ok.is_error

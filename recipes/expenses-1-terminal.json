@@ -1,0 +1,70 @@
+{
+  "version": 1,
+  "name": "trip expenses, part 1: terminal",
+  "description": "Part 1 of the trip expenses demo: read recipes/fixtures/expenses.csv in a kitty terminal and count its rows, with a clean config so it looks the same on every machine.",
+  "window": "kitty",
+  "size": "1238x758",
+  "launch": [
+    "kitty",
+    "--config",
+    "NONE",
+    "-o",
+    "font_size=22",
+    "-o",
+    "background=#1e1f22",
+    "-o",
+    "confirm_os_window_close=0",
+    "--directory",
+    "recipes/fixtures",
+    "sh",
+    "-c",
+    "PS1='$ ' exec sh"
+  ],
+  "timeout": 30,
+  "steps": [
+    {
+      "action": "click",
+      "x": 600,
+      "y": 400
+    },
+    {
+      "action": "pause",
+      "seconds": 1
+    },
+    {
+      "action": "type",
+      "text": "ls\n",
+      "delay": 0.06
+    },
+    {
+      "action": "pause",
+      "seconds": 1
+    },
+    {
+      "action": "type",
+      "text": "column -s, -t expenses.csv\n",
+      "delay": 0.05
+    },
+    {
+      "action": "pause",
+      "seconds": 3
+    },
+    {
+      "action": "type",
+      "text": "tail -n +2 expenses.csv | wc -l\n",
+      "delay": 0.05
+    },
+    {
+      "action": "pause",
+      "seconds": 2.5
+    },
+    {
+      "action": "shot",
+      "out": "expenses-1-terminal.png"
+    }
+  ],
+  "record": {
+    "output": "assets/recipes/expenses-1-terminal.mp4",
+    "fps": 30
+  }
+}

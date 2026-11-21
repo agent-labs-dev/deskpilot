@@ -1,0 +1,52 @@
+{
+  "version": 1,
+  "name": "trip expenses, part 4: check",
+  "description": "Part 4 of the trip expenses demo: back in a kitty terminal, recompute the total and the split from recipes/fixtures/expenses.csv with awk, to check the figures in the report.",
+  "window": "kitty",
+  "size": "1238x758",
+  "launch": [
+    "kitty",
+    "--config",
+    "NONE",
+    "-o",
+    "font_size=22",
+    "-o",
+    "background=#1e1f22",
+    "-o",
+    "confirm_os_window_close=0",
+    "--directory",
+    "recipes/fixtures",
+    "sh",
+    "-c",
+    "PS1='$ ' exec sh"
+  ],
+  "timeout": 30,
+  "steps": [
+    {
+      "action": "click",
+      "x": 600,
+      "y": 400
+    },
+    {
+      "action": "pause",
+      "seconds": 1
+    },
+    {
+      "action": "type",
+      "text": "awk -F, 'NR>1 {s+=$2} END {print s, s/4}' expenses.csv\n",
+      "delay": 0.05
+    },
+    {
+      "action": "pause",
+      "seconds": 3.5
+    },
+    {
+      "action": "shot",
+      "out": "expenses-4-check.png"
+    }
+  ],
+  "record": {
+    "output": "assets/recipes/expenses-4-check.mp4",
+    "fps": 30
+  }
+}

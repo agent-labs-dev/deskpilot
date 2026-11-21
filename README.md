@@ -88,6 +88,9 @@ deskpilot windows
 deskpilot elements WINDOW
 ```
 
+A tree larger than one read ends with the command that reads the next batch, and
+`deskpilot elements WINDOW --query TEXT` prints only the elements whose role, name or text contains `TEXT`.
+
 In an app with an accessibility tree, choose a control from the output and replace `ELEMENT` with its ID:
 
 ```sh
@@ -106,7 +109,8 @@ deskpilot shot WINDOW
 Read the image at the printed path, then click a point in that image with
 `deskpilot click WINDOW X Y --shot SHOT_ID`, replacing `X`, `Y` and `SHOT_ID` with the point and printed shot ID.
 A resized window or a point outside the recorded window is refused. Take a fresh shot to verify the result;
-use `wait-for WINDOW --changed SHOT_ID` when the app needs time to draw it.
+use `wait-for WINDOW --changed SHOT_ID` when the app needs time to draw it. `-o FILE` (`out` over MCP) writes the
+image to a path you choose instead of deskpilot's cache, so you can remove it however the call ends.
 
 [More actions and targeting rules](docs/reference.md) | [Accessibility and popup handling](docs/reference.md#use)
 
@@ -151,7 +155,15 @@ MP4 it records. The recording is `deskpilot record` of the window, so the video 
 draws. `deskpilot recipe schema` prints the format as JSON Schema. Nothing is launched or clicked until the whole
 file validates, and a failed step stops the run, keeps the recording and exits 2.
 
-[Recipe format and recording](docs/recipes.md)
+For a longer run, [trip expenses](assets/recipes/trip-expenses.mp4) is 70 seconds across three apps: deskpilot reads
+a CSV in a terminal, totals it on a calculator's keys, writes the report in a text editor and checks the figures.
+It is four recipes recorded in order and joined.
+
+With [fastbrowse](https://github.com/agent-labs-dev/fastbrowse) the steps come from one sentence instead of a file:
+in [flat bills](assets/recipes/flat-bills.mp4) it is asked who owes whom, works it out, writes the answer into the
+file in a text editor and saves it, all through deskpilot.
+
+[Recipe format, recording and the examples](docs/recipes.md)
 
 ## Work on your own hidden window (Hyprland)
 
@@ -220,6 +232,14 @@ Python 3.12 or later and `uv` everywhere. On Windows and macOS that is all; macO
 - `wl-clipboard` for `clipboard`.
 - For `--take-pointer`: write access to `/dev/uinput`, usually through the `input` group or a udev ACL. Check with
   `test -w /dev/uinput`.
+
+## Credits
+
+deskpilot builds on [Cua](https://github.com/trycua/cua) (MIT, (c) 2025 Cua AI, Inc.) and owes it a great deal. Its
+`cua-driver` and Hyprland plugin showed how to act on a window without taking the user's input, and deskpilot first
+drew its agent cursor through `cua-driver`. The cursor's glide speed and default colour still come from Cua, and the
+accessibility reads follow its explicit cut and `query` narrowing. The notice is in
+[THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
 
 ## Documentation and contributing
 

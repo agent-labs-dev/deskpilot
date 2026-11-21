@@ -4,7 +4,7 @@ version = "0.8.0"
 description = "Give your agent a desktop: screenshots, accessibility trees, clicks and keys in a window, on Linux (Hyprland), Windows and macOS, without taking your pointer"
 readme = "README.md"
 license = "MIT"
-license-files = ["LICENSE"]
+license-files = ["LICENSE", "THIRD_PARTY_NOTICES.md"]
 authors = [{ name = "Cillian Berragan", email = "cjberragan@gmail.com" }]
 requires-python = ">=3.12"
 dependencies = [

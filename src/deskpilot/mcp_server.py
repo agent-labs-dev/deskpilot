@@ -13,6 +13,7 @@ from mcp.server.mcpserver import Image, MCPServer
 from mcp.types import CallToolResult, TextContent
 from pydantic import Field
 
+from . import a11y
 from . import batch as batching
 from .backend import open_desk, owner_from_env
 from .batch import MAX_ACTIONS, Action
@@ -77,11 +78,13 @@ def focus(window: str) -> dict:
 
 
 @_tool(structured_output=False)
-def shot(window: str, max_width: int = 1400, show: bool = False, hidden: bool = False) -> list:
+def shot(window: str, max_width: int = 1400, show: bool = False, hidden: bool = False, out: str | None = None) -> list:
     """Screenshot a window, returning the image and its shot id. Later move/click/scroll points are pixels in this
     image; pass its id as `shot` to refuse the action if the window has changed size since. A window that is not on
-    screen is an error unless show is set, which focuses it; hidden captures a window the agent launched or adopted."""
-    taken = desk.shot(window, max_width=max_width, show=show, hidden=hidden)
+    screen is an error unless show is set, which focuses it; hidden captures a window the agent launched or adopted.
+    out is the PNG's path (default: deskpilot's cache); a caller that names it can remove the file however the call
+    ends, even when it is cancelled before the reply."""
+    taken = desk.shot(window, Path(out) if out else None, max_width=max_width, show=show, hidden=hidden)
     return [Image(path=taken.path), taken.to_dict()]
 
 
@@ -258,14 +261,30 @@ def drag(
 
 
 @_tool()
-def elements(window: str, show: bool = False, hidden: bool = False, peek: bool = False) -> dict:
+def elements(
+    window: str,
+    show: bool = False,
+    hidden: bool = False,
+    peek: bool = False,
+    max_nodes: int = a11y.MAX_NODES,
+    more: str = "",
+    query: str = "",
+    showing: bool = False,
+) -> dict:
     """The window's accessibility tree: each element's id, role, name, states, text and bounds in window pixels,
     and on the root the snapshot id. click, hover, move and scroll take an id as `element` and act on where the app
     says it is now. Each snapshot numbers its elements afresh: `<snapshot>:<id>` is refused (stale) once a newer
     snapshot replaces that one, and an element whose role or name changed since is stale too. An app that exposes no
-    tree is an error (no_tree). peek reads the tree without replacing the latest snapshot, so its ids stay good, to
-    check what changed before acting; a peek's own ids name nothing and it has no snapshot id."""
-    return desk.elements(window, show, hidden, peek).to_dict()
+    tree is an error (no_tree). One call reads at most max_nodes elements, nested at most 50 levels. A larger or
+    deeper tree is never cut quietly: the
+    result has `truncated` and `more`, the snapshot id; pass that as `more` to read the next batch, {snapshot,
+    elements}, whose ids number on and whose subtrees each name the `parent` id they hang under, until a result has
+    no `more`. Earlier ids stay good. A `more` whose snapshot was replaced, or whose tree changed, is stale. query
+    keeps only elements whose role, name or text contains it, and showing only those on screen, each with the
+    elements above it; `read` and `matched` then count what was looked through and what fit. peek reads the tree
+    without replacing the latest snapshot, so its ids stay good, to check what changed before acting; a peek's own
+    ids name nothing, it has no snapshot id and cannot be read on."""
+    return a11y.narrow(desk.elements(window, show, hidden, peek, max_nodes, more).to_dict(), query, showing)
 
 
 @_tool()
@@ -280,11 +299,12 @@ def key(
 ) -> str:
     """Press a key or chord such as Return, ctrl+a or alt+F4 in a window without focusing it. take_focus focuses
     the window first instead; with no window the keys go to the focused one. hold keeps each key down that many
-    seconds, up to 10, for auto-repeat or a game's movement. A window not on screen is refused unless show brings it
-    into view. hidden sends the keys to a window the agent launched or adopted, out of view; it needs a window and
-    refuses XWayland windows and the app with the user's keyboard focus. agent_keyboard opts into the independent
-    keyboard for native apps that support multiple seats, including GTK; it needs a window. Qt can silently discard
-    that seat's keys, so verify the result. The default route remains appropriate for Qt and Chromium."""
+    seconds, up to 10, for auto-repeat or a slider that moves while a key is held. A window not on screen is
+    refused unless show brings it into view. hidden sends the keys to a window the agent launched or adopted,
+    out of view; it needs a window and refuses XWayland windows and the app with the user's keyboard focus.
+    agent_keyboard opts into the independent keyboard for native apps that support multiple seats, including
+    GTK; it needs a window. Qt can silently discard that seat's keys, so verify the result.
+    The default route remains appropriate for Qt and Chromium."""
     desk.key(combo, window, take_focus, hold, show=show, hidden=hidden, agent_keyboard=agent_keyboard)
     return "ok"
 
@@ -300,7 +320,7 @@ def type_text(
     agent_keyboard: bool = False,
 ) -> str:
     """Type text as written, on the user's keymap, into a window without focusing it. Keys go as fast as the
-    app reads them by default. Games read keys once per frame: for them, each key is held `delay` seconds, 0.1 or
+    app reads them by default. Apps that read keys once per frame: for them, each key is held `delay` seconds, 0.1 or
     more, and the next follows after the same gap. For long text, paste_text is faster still. show and hidden work
     as for key, including the explicit agent_keyboard option for native apps that support multiple seats."""
     desk.type(text, window, delay, take_focus, show=show, hidden=hidden, agent_keyboard=agent_keyboard)

@@ -25,6 +25,7 @@ import threading
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from . import a11y
 from .backend import hyprland_only, open_desk
 from .errors import EXPECTED, error_code
 
@@ -97,15 +98,61 @@ def _shot_args(s: argparse.ArgumentParser) -> None:
 
 
 def _tree(element: dict, depth: int = 0) -> list[str]:
-    """An accessibility tree as indented lines: id, role, name, bounds in window pixels, states and text."""
-    name = f" {element['name']!r}" if element.get("name") else ""
-    text = f" text={element['text']!r}" if element.get("text") else ""
-    states = f" [{', '.join(element['states'])}]" if element.get("states") else ""
-    line = (
-        f"{'  ' * depth}{element['id']} {element['role']}{name} "
-        f"{element['x']},{element['y']} {element['width']}x{element['height']}{states}{text}"
-    )
-    return [line] + [row for child in element.get("children", []) for row in _tree(child, depth + 1)]
+    """An accessibility tree as indented lines: id, role, name, bounds in window pixels, states and text. A loop, not
+    recursion: a tree may be deeper than Python's call stack."""
+    lines = []
+    pending = [(element, depth)]
+    while pending:
+        element, depth = pending.pop()
+        name = f" {element['name']!r}" if element.get("name") else ""
+        text = f" text={element['text']!r}" if element.get("text") else ""
+        states = f" [{', '.join(element['states'])}]" if element.get("states") else ""
+        lines.append(
+            f"{'  ' * depth}{element['id']} {element['role']}{name} "
+            f"{element['x']},{element['y']} {element['width']}x{element['height']}{states}{text}"
+        )
+        pending.extend((child, depth + 1) for child in reversed(element.get("children", [])))
+    return lines
+
+
+def _elements_text(tree: dict, args: argparse.Namespace) -> list[str]:
+    """`elements` as text: the snapshot id, the tree or a later batch's subtrees under the ids they hang from, and,
+    when the tree is larger than what was read, the command that reads on."""
+    lines = [f"snapshot {tree['snapshot']}"] if "snapshot" in tree else []
+    if "elements" in tree:
+        parent = None
+        for element in tree["elements"]:
+            if element.get("parent") != parent:
+                parent = element.get("parent")
+                lines.append(f"under {parent}:")
+            lines += _tree(element, 1)
+    else:
+        lines += _tree(tree)
+    if "read" in tree:
+        lines.append(f"matched {tree['matched']} of the {tree['read']} elements read")
+    if "more" in tree:
+        # Nothing is left out quietly: the rest of the tree is one command away, and that command is spelled out.
+        command = ["deskpilot", "elements", args.window, "--more", tree["more"], "--max-nodes", str(args.max_nodes)]
+        command += ["--hidden"] if args.hidden else ["--show"] if args.show else []
+        command += ["--query", args.query] if args.query else []
+        command += ["--showing"] if args.showing else []
+        lines.append(f"more: the tree is larger than this batch; read on with: {shlex.join(command)}")
+    elif tree.get("truncated"):
+        lines.append(
+            "truncated: the tree is larger than was read, and a peek keeps nothing to read on from; "
+            "peek again with a larger --max-nodes"
+        )
+    return lines
+
+
+def _count(arg: str) -> int:
+    try:
+        value = int(arg)
+    except ValueError:
+        value = 0
+    if value < 1:
+        raise argparse.ArgumentTypeError(f"{arg!r} is not a whole number of 1 or more")
+    return value
 
 
 def _text(arg: str) -> str:
@@ -173,6 +220,22 @@ def _path_commands(sub) -> None:
         action="store_true",
         help="read the tree without replacing the latest snapshot, whose ids stay good; a peek's ids name nothing",
     )
+    s.add_argument(
+        "--max-nodes",
+        type=_count,
+        default=a11y.MAX_NODES,
+        metavar="N",
+        help=f"read at most N elements in this call (default {a11y.MAX_NODES}); a larger tree is read on with --more",
+    )
+    s.add_argument(
+        "--more",
+        metavar="SNAPSHOT",
+        help="read the next batch of a snapshot whose tree was larger than one read; its ids number on",
+    )
+    s.add_argument(
+        "--query", metavar="TEXT", help="print only elements whose role, name or text contains TEXT, and their parents"
+    )
+    s.add_argument("--showing", action="store_true", help="print only elements on screen now, and their parents")
     _view_args(s)
     _batch_command(sub)
 
@@ -377,7 +440,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--delay",
         type=float,
         default=0.0,
-        help="seconds each key is held and between keys, none by default; games want 0.1 or more",
+        help="seconds each key is held and between keys, none by default; apps that read once per frame want 0.1+",
     )
     _view_args(s)
 
@@ -517,10 +580,9 @@ def run(args: argparse.Namespace, desk: Desk | NativeDesk) -> object:
             )
             return {"x": gx, "y": gy}
         case "elements":
-            tree = desk.elements(args.window, args.show, args.hidden, args.peek).to_dict()
-            if args.json:
-                return tree
-            return [f"snapshot {tree['snapshot']}", *_tree(tree)] if "snapshot" in tree else _tree(tree)
+            read = desk.elements(args.window, args.show, args.hidden, args.peek, args.max_nodes, args.more or "")
+            tree = a11y.narrow(read.to_dict(), args.query or "", args.showing)
+            return tree if args.json else _elements_text(tree, args)
         case "key":
             desk.key(
                 args.combo,

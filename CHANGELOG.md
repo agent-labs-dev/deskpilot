@@ -10,6 +10,32 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 - Windows and macOS support: `windows`, `shot`, `elements`, `click`, `move`, `scroll`, `drag`, `hover`, `key`, `type`, `clipboard`, `launch` and the waits work there too, over UI Automation and window messages on Windows and AX and CoreGraphics events on macOS. An element click uses the app's own press action when it has one. Hidden windows, adoption, `paste`, `record`, `cursor_press`, `recipe run` and `--session` stay Hyprland only and report `unavailable` elsewhere.
 - deskpilot now lives at [agent-labs-dev/deskpilot](https://github.com/agent-labs-dev/deskpilot). Install the Claude Code plugin with `/plugin install deskpilot --marketplace agent-labs-dev/deskpilot`.
 
+- The README and THIRD_PARTY_NOTICES.md credit Cua, whose driver, Hyprland plugin and agent cursor deskpilot builds on.
+
+- An element's text leaves out the U+FFFC marks an app puts where a child element sits. A Chromium page's document read as 121 of those marks and no words, and 4,569 of the 10,719 elements of a large page had text made only of them, so a model reading the tree saw a page of blanks. The children are listed as elements of their own.
+
+- A click, hover or scroll on a GTK 3 list row that is scrolled out of view fails with `offscreen` and says to scroll it into view. Such a row reports its position as the smallest integer, so `elements` listed it at x and y -2147483648 and the action failed with `invalid: (-2147483056.0, -2147483636.5) at scale 1.0 is outside yad`. It is now listed with no bounds, like any element that has no place.
+
+- `elements` never leaves part of a tree out quietly. It reads a tree however deep it is: the items of an open menu in GNOME Files sit 31 levels below the window, past the 30 levels it stopped at, so an agent could open the menu but not pick New Folder. One call reads at most `--max-nodes` elements (2000 unless told otherwise) nested at most 50 levels, a depth the CLI's JSON and an MCP result can both carry, and when the tree is larger or deeper the output ends with the exact command that reads the next batch, `deskpilot elements WINDOW --more SNAPSHOT`, and the JSON form carries `truncated` and `more`. Each batch numbers its ids on from the last, says which element each of its subtrees hangs under, and leaves earlier ids good, so a caller can read a large tree 100 elements at a time. Reading on from a snapshot that was replaced, or whose tree changed, is refused `stale`. `--query TEXT` and `--showing` print only the elements that match or are on screen, with the elements above them. The MCP `elements` tool takes the same as `max_nodes`, `more`, `query` and `showing`.
+
+- `elements` names an element that has no name of its own from the label it says labels it. A GTK 4 menu item, such as Save in GNOME Text Editor's main menu, was listed with an empty name, so an agent reading the tree could not tell the items apart.
+
+- `docs/recipes.md` shows fastbrowse driving GNOME Text Editor through deskpilot from one plain sentence, with the fixture `recipes/fixtures/flat-bills.txt` and the recording `assets/recipes/flat-bills.mp4`.
+
+- `recipes/expenses-1-terminal.json` to `expenses-4-check.json` are one longer demo in four parts: read a CSV in kitty, total it on GNOME Calculator's keys, write the report in GNOME Text Editor, and check the figures with `awk`. `docs/recipes.md` shows how to record the parts and join them into one MP4, and `assets/recipes/trip-expenses.mp4` is the result.
+
+- MCP `shot` takes `out`, the path to write the PNG to, as `deskpilot shot -o` does. A client that names the file before the call can remove it however the call ends, including when it is cancelled after the capture but before the reply that carries the path.
+
+- `launch` starts its app with `ACCESSIBILITY_ENABLED=1`, so a Chromium or Electron app started with `--force-renderer-accessibility` has a tree. With the flag alone it joined the accessibility bus only when accessibility was already on as it started, and otherwise `elements` failed `no_tree` with a hint that named only the flag.
+
+- `elements` on a Qt message box, such as cmake-gui's "Are you sure you want to delete the cache?", reads the box and its Yes and No buttons. Qt reports the box as an "alert message" toplevel, which was not taken as a window, so the read returned the main window's tree under the dialog's address.
+
+- `launch` starts its app with `QT_LINUX_ACCESSIBILITY_ALWAYS_ON=1`, so a Qt app such as cmake-gui has a tree. Without it Qt joined the accessibility bus only when a screen reader was on as the app started, and `elements` failed `no_tree` with a hint that named only Chromium and Firefox; the hint now names the Qt variable too. `elements` also reads a window whose toplevel reports no window role, as Qt 5 does for a plain widget window such as qt5ct's, when it alone carries the window's exact title. Before it was refused `ambiguous`, listing that one title as the only candidate.
+
+- `adopt` and `release` wait their turn behind the actions already running or queued, as other actions do, instead of being refused `busy` whenever any action ran. Before, an agent could be refused for as long as another agent kept acting. An adoption still waiting when its agent is stopped is refused rather than run after the stop, so it never moves a window for an agent that is gone.
+
+- An element that closed, such as a dialog's Save button read just after a click on it closed the dialog, is `stale`, and `elements` leaves out an element that went while the tree was read. GTK answers a call on a closed accessible with a D-Bus `UnknownMethod` error, which deskpilot reported as `unavailable`, as if the accessibility bus had failed. `elements` of a window whose toplevel or app closed while it was read fails with `gone`, as it does when another toplevel of the app closed while the window's was looked for, since the one left with its title may be a sibling sharing it.
+
 ## [0.8.0] - 2026-11-19
 
 - `deskpilot record WINDOW` (MCP `record_start` and `record_stop`) films a window, hidden ones included, with the real agent cursor the plugin draws: brackets closing in as it lands and the marker squeezing on a press. It writes an mp4, or with `-o -` PPM frames at a constant rate on stdout for another encoder. Only a capture that asks for a cursor carries it, so `shot` stays cursor-free, and the user's own pointer is never in the frames. While a window is being filmed, a hidden action on it shows its cursor in the recording alone, never on screen.
@@ -170,7 +196,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
   each keystroke, so an app that draws its own title bar, such as Chrome, redrew it focused and unfocused for every
   character. The window is now entered once for the whole sequence.
 - **Typing is much faster.** `type` (MCP `type_text`) no longer holds each key 30 ms and waits 30 ms between keys
-  by default: 9.4 KB reaches Chrome in about 12 seconds rather than 9 minutes. Pass `--delay 0.1` for games, as before.
+  by default: 9.4 KB reaches Chrome in about 12 seconds rather than 9 minutes. Pass `--delay 0.1` for apps that read input once per frame, as before.
 - **Paste works in Chrome.** Chrome reads a pasted text as soon as it is offered, and the window's clipboard was
   taken back after that first read, so Chrome pasted nothing. The text now stays the window's clipboard for 10
   seconds, or until the next paste.
@@ -227,7 +253,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
   window is not the focused one, so a click that left the user's focus in place closed the list it opened.
   `click --take-focus` (MCP `take_focus`) focuses the window first and leaves it focused.
 - **Your mouse moves as usual during an agent's click.** Motion made while a click or scroll ran was added up and
-  applied as one jump, skipping pointer acceleration and the relative motion a pointer-locked game reads, and a
+  applied as one jump, skipping pointer acceleration and the relative motion a pointer-locked app reads, and a
   tablet or other absolute device could move the pointer mid-click. All of it is now held and replayed in order
   through Hyprland's own handling.
 
@@ -278,7 +304,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
   refused.
 - **No guessed windows.** A window is named by address, class, or part of its class or title, and a name that
   matches several windows is an error listing them.
-- **Typing.** `deskpilot type` and `deskpilot key` type US-layout text and chords. `--delay` spaces keys for games,
+- **Typing.** `deskpilot type` and `deskpilot key` type US-layout text and chords. `--delay` spaces keys for apps that read input once per frame,
   which read input once per frame.
 - **Taking over when an app needs it.** `--take-pointer` and `--take-focus` move your own pointer or focus and press
   through a virtual input device, for a hover the app must see or an app that ignores keys while unfocused.

@@ -54,7 +54,7 @@ def calibrate_wine(desk, output, verify):
         os.environ["WINEPREFIX"].startswith(os.environ["XDG_DATA_HOME"].rsplit("/data", 1)[0]),
     )
     desk.focus(target.address)
-    expected = "/run print(type(ForeverCore))"
+    expected = "/run print(type(os))"
     desk.type(expected, target.address, delay=0.02, hidden=True)
     deadline = time.monotonic() + 3
     while time.monotonic() < deadline:
@@ -703,7 +703,7 @@ def main() -> int:  # noqa: PLR0915 - a bounded, sequential live calibration wit
         desk = Desk()
         desk.plugin.load()
         target = desk.launch(["/usr/bin/python3", str(ROOT / "scripts/input_client.py")])
-        punctuation = "/run print(type(ForeverCore)) []{}!@#$%^&*"
+        punctuation = "/run print(type(os)) []{}!@#$%^&*"
         # This probe intentionally creates two windows in one process.
         with contextlib.suppress(AmbiguousWindow):
             desk.launch(["/usr/bin/python3", str(ROOT / "scripts/gtk4_keyboard_client.py")])

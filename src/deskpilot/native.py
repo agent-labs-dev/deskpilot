@@ -556,9 +556,21 @@ class NativeDesk(BaseDesk):
 
     # Elements
 
-    def elements(self, query: str, show: bool = False, hidden: bool = False, peek: bool = False) -> Element:
-        """The window's accessibility tree, bounds in window pixels. Each id records its path from the window's root
-        and what it was, so an action finds it again in the tree as it is then."""
+    def elements(
+        self,
+        query: str,
+        show: bool = False,
+        hidden: bool = False,
+        peek: bool = False,
+        max_nodes: int = MAX_NODES,
+        more: str = "",
+    ) -> Element:
+        """The window's accessibility tree, bounds in window pixels, at most `max_nodes` elements. Each id records its
+        path from the window's root and what it was, so an action finds it again in the tree as it is then."""
+        if more:
+            raise Unavailable(
+                f"{self.driver.instance} reads a tree in one call and keeps no later batch: raise --max-nodes instead"
+            )
         win = self._target(query, show, hidden)
         records: dict[str, dict] = {}
         count = 0
@@ -577,7 +589,7 @@ class NativeDesk(BaseDesk):
                 truncated = True
             elif refs:
                 for index, ref in enumerate(refs):
-                    if count >= MAX_NODES:
+                    if count >= max_nodes:
                         truncated = True
                         break
                     children.append(walk(ref, [*path, index], trail, depth + 1))
