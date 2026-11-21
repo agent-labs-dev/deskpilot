@@ -109,7 +109,8 @@ def advertise(statuses, desktop=""):
                 return (("b", statuses[body[1]]),)
             sets.append(body[1])
 
-    a11y.advertise_accessibility(Session(), desktop)
+    changed = a11y.advertise_accessibility(Session(), desktop)
+    assert changed == bool(sets)
     return sets
 
 

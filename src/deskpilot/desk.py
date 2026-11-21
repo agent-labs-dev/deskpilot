@@ -12,6 +12,7 @@ from __future__ import annotations
 import contextlib
 import json
 import os
+import re
 import shlex
 import shutil
 import subprocess
@@ -66,6 +67,19 @@ def process_birth(pid: int) -> int | None:
     # The command name, in parentheses, may hold spaces: the fields follow the last ')', starting with the state (3).
     fields = stat[stat.rfind(")") + 1 :].split()
     return int(fields[19]) if len(fields) > 19 and fields[19].isdigit() else None
+
+
+# Chromium builds a page's accessibility tree only when started with this (or when a screen reader is on), and only
+# the program's name says it is Chromium before it runs, so the name is what is matched.
+CHROMIUM_PROGRAM = re.compile(r"(chrom(e|ium)|brave|vivaldi|msedge|microsoft-edge|opera|electron)", re.IGNORECASE)
+RENDERER_ACCESSIBILITY = "--force-renderer-accessibility"
+
+
+def _with_page_accessibility(command: list[str]) -> list[str]:
+    """`command` with Chromium's page accessibility switch added after the program, unless it is there already."""
+    if CHROMIUM_PROGRAM.search(os.path.basename(command[0])) and RENDERER_ACCESSIBILITY not in command:
+        return [command[0], RENDERER_ACCESSIBILITY, *command[1:]]
+    return command
 
 
 class Desk(BaseDesk):
@@ -210,6 +224,7 @@ class Desk(BaseDesk):
         hands its window to a copy already running for the user (a single-instance app) opens nothing here."""
         if not command:
             raise ValueError("name the app to launch")
+        command = _with_page_accessibility(command)
         if self._isolated():
             return self._launch_isolated(command, timeout)
         agent = self._register()
