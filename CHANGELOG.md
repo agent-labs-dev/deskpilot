@@ -7,6 +7,10 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+- Windows and macOS support: `windows`, `shot`, `elements`, `click`, `move`, `scroll`, `drag`, `hover`, `key`, `type`, `clipboard`, `launch` and the waits work there too, over UI Automation and window messages on Windows and AX and CoreGraphics events on macOS. An element click uses the app's own press action when it has one. Hidden windows, adoption, `paste`, `record`, `cursor_press`, `recipe run` and `--session` stay Hyprland only and report `unavailable` elsewhere.
+- On Windows and macOS `elements` reads a tree in one call and says so when it is cut at `--max-nodes`: it does not offer `--more`, which those platforms cannot continue, and refuses a `--max-nodes` below 1. `--showing` works there, `cmd` and `command` name the Command key on every platform, and `ctrl++` presses the plus key. A shortcut on macOS presses the key an app binds it to, and the pointer and Return events no longer carry the modifiers the user is holding. `clipboard` with no text, a Windows input the app does not take, and a failed helper process are reported as errors. `recipe check` and `recipe schema` run on Windows, and MCP `record_start` reports `unavailable` outside Hyprland.
+- deskpilot now lives at [agent-labs-dev/deskpilot](https://github.com/agent-labs-dev/deskpilot). Install the Claude Code plugin with `/plugin install deskpilot --marketplace agent-labs-dev/deskpilot`.
+
 - The README and THIRD_PARTY_NOTICES.md credit Cua, whose driver, Hyprland plugin and agent cursor deskpilot builds on.
 
 - An element's text leaves out the U+FFFC marks an app puts where a child element sits. A Chromium page's document read as 121 of those marks and no words, and 4,569 of the 10,719 elements of a large page had text made only of them, so a model reading the tree saw a page of blanks. The children are listed as elements of their own.

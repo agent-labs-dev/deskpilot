@@ -15,12 +15,20 @@ from pydantic import Field
 
 from . import a11y
 from . import batch as batching
+from .backend import hyprland_only, open_desk, owner_from_env
 from .batch import MAX_ACTIONS, Action
-from .desk import EXPECTED, Desk, error_code, owner_from_env
+from .errors import EXPECTED, error_code
 
-mcp = MCPServer("deskpilot", version=version("deskpilot"))
+mcp = MCPServer(
+    "deskpilot",
+    version=version("deskpilot"),
+    instructions=(
+        "Desktop control on Linux (Hyprland), Windows and macOS. Hidden windows (hidden, launch out of view, adopt), "
+        "paste_text and sessions are Hyprland only and return the code unavailable elsewhere."
+    ),
+)
 # The server is the agent's owner process: its apps close when it exits, unless DESKPILOT_OWNER_PID names another.
-desk = Desk(owner=owner_from_env() or os.getpid())
+desk = open_desk(owner=owner_from_env() or os.getpid())
 
 
 def _tool(**options):
@@ -88,6 +96,7 @@ def record_start(window: str, path: str, fps: int = 25, hidden: bool = False) ->
     """Start filming a window into the mp4 at `path`, with the agent cursor the plugin draws: brackets closing in as it
     lands, the marker squeezing on a press. One recording per path; end it with record_stop. Screenshots from `shot`
     never show the cursor. hidden films a window the agent launched or adopted, out of view."""
+    hyprland_only("record")
     if path in _recordings:
         raise ValueError(f"already recording to {path}")
     stop, outcome = threading.Event(), []

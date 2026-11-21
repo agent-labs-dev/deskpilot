@@ -175,6 +175,7 @@ class Element:
     children: tuple[Element, ...]
     truncated: bool = False  # on the root: the node budget ended the read before the whole tree was read
     snapshot: str = ""  # on the root: the id of the snapshot whose element ids these are
+    batched: bool = True  # on the root: a truncated read can be read on with `more` (a native desk reads in one call)
     parent: str = ""  # at the top of a later batch: the id of the element, read in an earlier batch, this hangs under
 
     def _own(self) -> dict:
@@ -196,7 +197,7 @@ class Element:
             result["truncated"] = True
         if self.snapshot:
             result["snapshot"] = self.snapshot
-        if self.truncated and self.snapshot:
+        if self.truncated and self.snapshot and self.batched:
             # The rest of the tree is kept with the snapshot: `more` reads its next batch.
             result["more"] = self.snapshot
         return result
