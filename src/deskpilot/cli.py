@@ -517,7 +517,7 @@ def run(args: argparse.Namespace, desk: Desk | NativeDesk) -> object:
                 show=args.show,
                 element=args.element,
             )
-            return {"x": gx, "y": gy}
+            return desk.landed(gx, gy)
         case "click":
             gx, gy = desk.click(
                 args.window,
@@ -533,7 +533,7 @@ def run(args: argparse.Namespace, desk: Desk | NativeDesk) -> object:
                 element=args.element,
                 hidden=args.hidden,
             )
-            return {"x": gx, "y": gy}
+            return desk.landed(gx, gy)
         case "scroll":
             gx, gy = desk.scroll(
                 args.window,
@@ -547,7 +547,7 @@ def run(args: argparse.Namespace, desk: Desk | NativeDesk) -> object:
                 element=args.element,
                 hidden=args.hidden,
             )
-            return {"x": gx, "y": gy}
+            return desk.landed(gx, gy)
         case "hover":
             result = desk.hover(
                 args.window,
@@ -564,7 +564,7 @@ def run(args: argparse.Namespace, desk: Desk | NativeDesk) -> object:
                 hidden=args.hidden,
             )
             if isinstance(result, tuple):
-                return {"x": result[0], "y": result[1]}
+                return desk.landed(*result)
             return result.to_dict()
         case "drag":
             gx, gy = desk.drag(
@@ -578,7 +578,7 @@ def run(args: argparse.Namespace, desk: Desk | NativeDesk) -> object:
                 show=args.show,
                 hidden=args.hidden,
             )
-            return {"x": gx, "y": gy}
+            return desk.landed(gx, gy)
         case "elements":
             read = desk.elements(args.window, args.show, args.hidden, args.peek, args.max_nodes, args.more or "")
             tree = a11y.narrow(read.to_dict(), args.query or "", args.showing)

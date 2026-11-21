@@ -18,6 +18,16 @@ if TYPE_CHECKING:
 
 
 class BaseDesk:
+    # How the latest pointer action's input reached the window: `agent` (the agent seat), `client` (the window's own
+    # pointer) or `seat` (the user's seat, held while it ran), as the plugin says; `pointer` when --take-pointer
+    # drove the user's own. Callers put it in their results, so a held input is not a surprise. None when the
+    # backend has no such route, as on Windows and macOS.
+    route: str | None = None
+
+    def landed(self, x: int, y: int) -> dict:
+        """The result of a pointer action that ended at global (x, y)."""
+        return {"x": x, "y": y} | ({"route": self.route} if self.route else {})
+
     def window(self, query: str) -> Window:
         raise NotImplementedError
 
