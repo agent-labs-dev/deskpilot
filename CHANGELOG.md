@@ -7,6 +7,9 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+- Windows and macOS support: `windows`, `shot`, `elements`, `click`, `move`, `scroll`, `drag`, `hover`, `key`, `type`, `clipboard`, `launch` and the waits work there too, over UI Automation and window messages on Windows and AX and CoreGraphics events on macOS. An element click uses the app's own press action when it has one. Hidden windows, adoption, `paste`, `record`, `cursor_press`, `recipe run` and `--session` stay Hyprland only and report `unavailable` elsewhere.
+- deskpilot now lives at [agent-labs-dev/deskpilot](https://github.com/agent-labs-dev/deskpilot). Install the Claude Code plugin with `/plugin install deskpilot --marketplace agent-labs-dev/deskpilot`.
+
 - The README and THIRD_PARTY_NOTICES.md credit Cua, whose driver, Hyprland plugin and agent cursor deskpilot builds on.
 
 - An element's text leaves out the U+FFFC marks an app puts where a child element sits. A Chromium page's document read as 121 of those marks and no words, and 4,569 of the 10,719 elements of a large page had text made only of them, so a model reading the tree saw a page of blanks. The children are listed as elements of their own.

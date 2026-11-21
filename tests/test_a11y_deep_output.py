@@ -26,7 +26,7 @@ def test_a_deep_tree_reaches_the_caller_whole_over_batches(tmp_path, monkeypatch
         yield fake
 
     monkeypatch.setattr(a11y, "_bus_context", connection)
-    monkeypatch.setattr(cli, "Desk", lambda: desk)
+    monkeypatch.setattr(cli, "open_desk", lambda: desk)
     monkeypatch.setattr(mcp_server, "desk", desk)
 
     def read(more):
