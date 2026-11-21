@@ -40,7 +40,9 @@ async def main() -> None:
 
         async def call(tool: str, **arguments):
             result = await session.call_tool(tool, arguments)
-            body = next((json.loads(c.text) for c in result.content if c.type == "text" and c.text[:1] in "{["), None)
+            body = result.structured_content
+            if isinstance(body, dict) and set(body) == {"result"}:  # a tool that returns a list wraps it
+                body = body["result"]
             print(
                 f"mcp {tool} -> {'error' if result.is_error else 'ok'}: {str(body or result.content)[:300]}", flush=True
             )
