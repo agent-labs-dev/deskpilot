@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import threading
 import time
 from typing import TYPE_CHECKING, cast
 
@@ -22,7 +23,15 @@ class BaseDesk:
     # pointer) or `seat` (the user's seat, held while it ran), as the plugin says; `pointer` when --take-pointer
     # drove the user's own. Callers put it in their results, so a held input is not a surprise. None when the
     # backend has no such route, as on Windows and macOS.
-    route: str | None = None
+    _routes = threading.local()  # per thread: a server runs tool calls on several at once, each reports its own
+
+    @property
+    def route(self) -> str | None:
+        return getattr(self._routes, "value", None)
+
+    @route.setter
+    def route(self, value: str | None) -> None:
+        self._routes.value = value
 
     def routed(self, result: dict) -> dict:
         """`result` of the latest pointer action, with the route its input took."""

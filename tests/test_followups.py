@@ -188,3 +188,22 @@ def test_batch_click_results_carry_the_route(tmp_path, monkeypatch):
     plugin_.path = lambda *args: {"ok": True, "ticket": 9, "route": "client"}
     result = desk.batch(request([CLICK]))
     assert result.results[0]["route"] == "client"
+
+
+def test_an_unknown_button_is_never_recorded_as_held(monkeypatch):
+    device = virtual(monkeypatch)
+    with pytest.raises(KeyError):
+        device.button("back", True)
+    assert not device._down
+
+
+def test_each_thread_reports_its_own_route(tmp_path, monkeypatch):
+    import threading
+
+    desk, _, _, _ = make_desk(tmp_path, monkeypatch)
+    desk.route = "agent"
+    seen = []
+    thread = threading.Thread(target=lambda: seen.append(desk.route))
+    thread.start()
+    thread.join()
+    assert seen == [None] and desk.route == "agent"

@@ -55,9 +55,10 @@ class VirtualInput:
         time.sleep(0.05)
 
     def button(self, name: str, down: bool) -> None:
+        code = getattr(self._e, BUTTONS[name])  # an unknown button fails here, before it is recorded as held
         if down:
             self._down.add(name)  # before the write: a press that was delivered and then failed is still released
-        self._emit(self._e.EV_KEY, getattr(self._e, BUTTONS[name]), 1 if down else 0)
+        self._emit(self._e.EV_KEY, code, 1 if down else 0)
         if not down:
             self._down.discard(name)  # only once the release went out, so a failed one is tried again on close
 
