@@ -7,6 +7,11 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+- A click, hover, scroll or drag result names its `route` (`agent`, `client`, `seat`, or `pointer` for `--take-pointer`), so an input that held the user's seat is no surprise.
+- A button a click or drag pressed is let go however the action ends, and when the device closes, so an interrupted click never leaves one held.
+- `--take-pointer` gives the user's focus and pointer back after the click or scroll.
+- Loading the plugin deletes the builds in the build directory that are not the one loaded or its seat build, so they stop piling up.
+- `elements` finds trees for Qt and Chromium or Electron apps that are already running: it tells the session an assistive technology is listening (`IsEnabled` and, outside GNOME, COSMIC and Cinnamon, `ScreenReaderEnabled`, each only while false), and `launch` also sets `NO_AT_BRIDGE=0`.
 - Windows and macOS support: `windows`, `shot`, `elements`, `click`, `move`, `scroll`, `drag`, `hover`, `key`, `type`, `clipboard`, `launch` and the waits work there too, over UI Automation and window messages on Windows and AX and CoreGraphics events on macOS. An element click uses the app's own press action when it has one. Hidden windows, adoption, `paste`, `record`, `cursor_press`, `recipe run` and `--session` stay Hyprland only and report `unavailable` elsewhere.
 - On Windows and macOS `elements` reads a tree in one call and says so when it is cut at `--max-nodes`: it does not offer `--more`, which those platforms cannot continue, and refuses a `--max-nodes` below 1. `--showing` works there, `cmd` and `command` name the Command key on every platform, and `ctrl++` presses the plus key. A shortcut on macOS presses the key an app binds it to, and the pointer and Return events no longer carry the modifiers the user is holding. `clipboard` with no text, a Windows input the app does not take, and a failed helper process are reported as errors. `recipe check` and `recipe schema` run on Windows, and MCP `record_start` reports `unavailable` outside Hyprland.
 - deskpilot now lives at [agent-labs-dev/deskpilot](https://github.com/agent-labs-dev/deskpilot). Install the Claude Code plugin with `/plugin install deskpilot --marketplace agent-labs-dev/deskpilot`.

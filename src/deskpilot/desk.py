@@ -9,13 +9,16 @@ uinput device, and `take_focus` focuses the window before its keys.
 
 from __future__ import annotations
 
+import contextlib
 import json
 import os
+import re
 import shlex
 import shutil
 import subprocess
 import threading
 import time
+from collections.abc import Generator
 from pathlib import Path
 from typing import BinaryIO
 
@@ -64,6 +67,19 @@ def process_birth(pid: int) -> int | None:
     # The command name, in parentheses, may hold spaces: the fields follow the last ')', starting with the state (3).
     fields = stat[stat.rfind(")") + 1 :].split()
     return int(fields[19]) if len(fields) > 19 and fields[19].isdigit() else None
+
+
+# Chromium builds a page's accessibility tree only when started with this (or when a screen reader is on), and only
+# the program's name says it is Chromium before it runs, so the name is what is matched.
+CHROMIUM_PROGRAM = re.compile(r"(chrom(e|ium)|brave|vivaldi|msedge|microsoft-edge|opera|electron)", re.IGNORECASE)
+RENDERER_ACCESSIBILITY = "--force-renderer-accessibility"
+
+
+def _with_page_accessibility(command: list[str]) -> list[str]:
+    """`command` with Chromium's page accessibility switch added after the program, unless it is there already."""
+    if CHROMIUM_PROGRAM.search(os.path.basename(command[0])) and RENDERER_ACCESSIBILITY not in command:
+        return [command[0], RENDERER_ACCESSIBILITY, *command[1:]]
+    return command
 
 
 class Desk(BaseDesk):
@@ -208,6 +224,7 @@ class Desk(BaseDesk):
         hands its window to a copy already running for the user (a single-instance app) opens nothing here."""
         if not command:
             raise ValueError("name the app to launch")
+        command = _with_page_accessibility(command)
         if self._isolated():
             return self._launch_isolated(command, timeout)
         agent = self._register()
@@ -228,6 +245,7 @@ class Desk(BaseDesk):
         # IsEnabled does, which is the user's to set): with --force-renderer-accessibility alone they stayed off it and
         # `elements` had no tree.
         env["ACCESSIBILITY_ENABLED"] = "1"
+        env["NO_AT_BRIDGE"] = "0"  # GTK: a user's NO_AT_BRIDGE=1 would keep the app off the accessibility bus
         # Qt's AT-SPI bridge stays off unless a screen reader is enabled on the bus as the app starts, or this is
         # set: without it cmake-gui and qt5ct had no tree.
         env["QT_LINUX_ACCESSIBILITY_ALWAYS_ON"] = "1"
@@ -451,13 +469,39 @@ class Desk(BaseDesk):
         return "plain" if not cursor or os.environ.get("DESKPILOT_CURSOR") == "off" else "shown"
 
     def _path(self, win: Window, steps: list[str], hidden: bool) -> dict:
-        return self.plugin.path(win.address, self._mode(hidden), steps)
+        reply = self.plugin.path(win.address, self._mode(hidden), steps)
+        self.route = reply.get("route")
+        return reply
 
     def _take_pointer(self, win: Window, gx: int, gy: int) -> None:
         self.hypr.focus(win)
         self.hypr.move_cursor(gx, gy)
         time.sleep(0.15)
         self.input.nudge()
+
+    @contextlib.contextmanager
+    def _borrowed_pointer(self, win: Window, gx: int, gy: int) -> Generator[None]:
+        """Take the user's pointer to a point for one action, and give back their focus and pointer after it, however
+        it ends: `--take-pointer` borrows them, it does not move the user's place."""
+        before = next((w for w in self.hypr.windows() if w.focused), None)
+        cursor = self.hypr.cursor()
+        try:
+            self._take_pointer(win, gx, gy)  # inside the try: a failure after it moved focus is given back too
+            yield
+        finally:
+            # Focus first: Hyprland's focus dispatch warps the cursor to the window's centre, so the pointer goes back
+            # last. Moving the cursor by dispatch does not change focus (checked on 0.57, follow_mouse on).
+            self._refocus(before)
+            self.hypr.move_cursor(*cursor)
+
+    def _refocus(self, before: Window | None) -> None:
+        """Focus `before` again if that window is still the one: an address a closed window freed can name another."""
+        if before is None:
+            return
+        with contextlib.suppress(*EXPECTED):  # the window may have closed during the action
+            now = next((w for w in self.hypr.windows() if w.address == before.address), None)
+            if now is not None and now.stable_id == before.stable_id:
+                self.hypr.focus(now)
 
     def move(
         self,
@@ -472,6 +516,7 @@ class Desk(BaseDesk):
         element: str | None = None,
     ) -> tuple[int, int]:
         """Show the agent cursor at a point. take_pointer also moves the user's pointer there."""
+        self.route = None
         win, gx, gy = self.point(query, x, y, scale, shot, show, element)
         if self._mode(False) == "shown":
             self.plugin.cursor(gx, gy)
@@ -503,6 +548,7 @@ class Desk(BaseDesk):
     ) -> tuple[int, int]:
         """Click a point. take_focus focuses the window first and leaves it focused, for a menu or dropdown that
         closes when its window is not the focused one."""
+        self.route = None
         if hidden and (take_pointer or take_focus):
             raise ValueError(
                 "a hidden click leaves the user's pointer and focus alone: drop take_pointer and take_focus"
@@ -511,8 +557,9 @@ class Desk(BaseDesk):
             self.focus(query)
         win, gx, gy, surface = self._aim(query, x, y, scale, shot, show, element, hidden)
         if take_pointer:
-            self._take_pointer(win, gx, gy)
-            self.input.click(button, count)
+            with self._borrowed_pointer(win, gx, gy):
+                self.input.click(button, count)
+            self.route = "pointer"
         else:
             code = BUTTON_CODES[button]
             self._path(win, [*surface, f"m{gx},{gy}", f"d{HOLD_MS}", *[f"p{code}", f"r{code}"] * count], hidden)
@@ -533,14 +580,16 @@ class Desk(BaseDesk):
         hidden: bool = False,
     ) -> tuple[int, int]:
         """Turn the wheel `dy` notches at a point, up to 50; positive is up."""
+        self.route = None
         if hidden and take_pointer:
             raise ValueError("a hidden scroll leaves the user's pointer alone: drop take_pointer")
         if dy == 0 or abs(dy) > 50:
             raise ValueError("scroll 1 to 50 notches, positive up")
         win, gx, gy, surface = self._aim(query, x, y, scale, shot, show, element, hidden)
         if take_pointer:
-            self._take_pointer(win, gx, gy)
-            self.input.scroll(dy=dy)
+            with self._borrowed_pointer(win, gx, gy):
+                self.input.scroll(dy=dy)
+            self.route = "pointer"
         else:
             self._path(win, [*surface, f"m{gx},{gy}", f"d{HOLD_MS}", f"w{dy}"], hidden)
         return gx, gy
@@ -560,6 +609,7 @@ class Desk(BaseDesk):
     ) -> tuple[int, int]:
         """Press at `start`, move to `end` over `duration` seconds and release there, for a slider, a selection or a
         drag and drop within the window. Both points are in the same shot's pixels. The user's pointer stays put."""
+        self.route = None
         win, x1, y1 = self.point(query, *start, scale, shot, show, hidden=hidden)
         _, x2, y2 = self.point(query, *end, scale, shot, show, hidden=hidden)
         if not 0 < duration <= 5:
@@ -593,6 +643,7 @@ class Desk(BaseDesk):
         """Rest the pointer on a point for `wait` seconds without moving the user's, for a tooltip or a menu that
         opens on hover. Returns a screenshot taken while it rests there. With `then_click`, a point in the same
         pixels, it clicks there next instead, before the pointer leaves, and returns that point."""
+        self.route = None
         if not 0 <= wait <= 5:
             raise ValueError("a hover waits 0 to 5 seconds")
         win, gx, gy, surface = self._aim(query, x, y, scale, shot, show, element, hidden)

@@ -159,7 +159,7 @@ def click(
         element=element,
         hidden=hidden,
     )
-    return {"x": gx, "y": gy}
+    return desk.landed(gx, gy)
 
 
 @_tool()
@@ -175,7 +175,7 @@ def move(
     """Show the agent cursor at a point of the window's last screenshot, or at an element. take_pointer also moves
     the user's pointer there. For a hover the app must see, use hover, which leaves the user's pointer alone."""
     gx, gy = desk.move(window, x, y, take_pointer=take_pointer, shot=shot, show=show, element=element)
-    return {"x": gx, "y": gy}
+    return desk.landed(gx, gy)
 
 
 @_tool()
@@ -204,7 +204,7 @@ def scroll(
     gx, gy = desk.scroll(
         window, x, y, dy, take_pointer=take_pointer, shot=shot, show=show, element=element, hidden=hidden
     )
-    return {"x": gx, "y": gy}
+    return desk.landed(gx, gy)
 
 
 @_tool(structured_output=False)
@@ -237,8 +237,8 @@ def hover(
         hidden=hidden,
     )
     if isinstance(result, tuple):
-        return [{"x": result[0], "y": result[1]}]
-    return [Image(path=result.path), result.to_dict()]
+        return [desk.landed(*result)]
+    return [Image(path=result.path), desk.routed(result.to_dict())]
 
 
 @_tool()
@@ -258,7 +258,7 @@ def drag(
     window's latest screenshot: sliders, text selection, drawing and drag and drop within the window. The user's
     pointer stays put. hidden drags in a window the agent launched or adopted, out of view; no drag and drop there."""
     gx, gy = desk.drag(window, (x1, y1), (x2, y2), button, duration, shot=shot, show=show, hidden=hidden)
-    return {"x": gx, "y": gy}
+    return desk.landed(gx, gy)
 
 
 @_tool()

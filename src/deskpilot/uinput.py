@@ -7,6 +7,7 @@ device only presses buttons, scrolls and nudges.
 
 from __future__ import annotations
 
+import contextlib
 import time
 from collections.abc import Sequence
 
@@ -24,9 +25,15 @@ class VirtualInput:
         key_codes = sorted(getattr(e, name) for name in BUTTONS.values())
         caps: dict[int, Sequence[int]] = {e.EV_KEY: key_codes, e.EV_REL: [e.REL_X, e.REL_Y, e.REL_WHEEL, e.REL_HWHEEL]}
         self._ui = UInput(caps, name="deskpilot")
+        self._down: set[str] = set()
         time.sleep(settle)
 
     def close(self) -> None:
+        """Let go of every button this device still holds, so closing it however an action ended never leaves one
+        pressed in the compositor."""
+        for name in sorted(self._down):
+            with contextlib.suppress(OSError):
+                self.button(name, False)
         self._ui.close()
 
     def __enter__(self) -> VirtualInput:
@@ -48,13 +55,20 @@ class VirtualInput:
         time.sleep(0.05)
 
     def button(self, name: str, down: bool) -> None:
-        self._emit(self._e.EV_KEY, getattr(self._e, BUTTONS[name]), 1 if down else 0)
+        code = getattr(self._e, BUTTONS[name])  # an unknown button fails here, before it is recorded as held
+        if down:
+            self._down.add(name)  # before the write: a press that was delivered and then failed is still released
+        self._emit(self._e.EV_KEY, code, 1 if down else 0)
+        if not down:
+            self._down.discard(name)  # only once the release went out, so a failed one is tried again on close
 
     def click(self, name: str = "left", count: int = 1, hold: float = 0.06) -> None:
         for i in range(count):
-            self.button(name, True)
-            time.sleep(hold)
-            self.button(name, False)
+            try:
+                self.button(name, True)
+                time.sleep(hold)
+            finally:  # an interrupt or a failed write between press and release must not leave the button held
+                self.button(name, False)
             if i + 1 < count:
                 time.sleep(0.08)
 

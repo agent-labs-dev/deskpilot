@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 import time
 from collections.abc import Callable
 from contextlib import contextmanager
@@ -20,6 +21,11 @@ from .hypr import Window
 SESSION_BUS_NAME = "org.a11y.Bus"
 SESSION_BUS_PATH = "/org/a11y/bus"
 SESSION_BUS_INTERFACE = "org.a11y.Bus"
+STATUS_INTERFACE = "org.a11y.Status"
+ADVERTISE_SETTLE = 1.5  # seconds for running apps to notice the flag and publish their trees
+# Desktops whose session services treat ScreenReaderEnabled as a request to start a screen reader, or whose settings
+# daemon loops when the two flags disagree: only IsEnabled is ever set there.
+SCREEN_READER_DESKTOPS = {"gnome", "cosmic", "cinnamon", "x-cinnamon"}
 A11Y_BUS_NAME = "org.a11y.atspi.Registry"
 A11Y_ROOT_PATH = "/org/a11y/atspi/accessible/root"
 ACCESSIBLE_INTERFACE = "org.a11y.atspi.Accessible"
@@ -359,6 +365,44 @@ def _elements_path(window: Window) -> Path:
     return screen.state_dir() / "elements" / f"{window.address}.json"
 
 
+def advertise_accessibility(session: _Bus, desktop: str | None = None) -> bool:
+    """Tell the session an assistive technology is listening, as Chromium, Electron, GTK and Qt wait to hear before
+    they publish a tree: `IsEnabled` on the accessibility bus's status object, and `ScreenReaderEnabled` too, which
+    Chromium watches. Each is set only while false, so a screen reader the user runs stays what it is. Best-effort:
+    a session without the status object is left as it is. Whether it changed anything is returned: an app takes a
+    moment to publish its tree after the flag turns on."""
+    desktop = os.environ.get("XDG_CURRENT_DESKTOP", "") if desktop is None else desktop
+    reader_ok = not SCREEN_READER_DESKTOPS & {part.strip().lower() for part in desktop.replace(";", ":").split(":")}
+    changed = False
+    for prop in ("IsEnabled", *(("ScreenReaderEnabled",) if reader_ok else ())):
+        try:
+            current = _variant_value(
+                _reply_value(
+                    session.call(
+                        SESSION_BUS_NAME,
+                        SESSION_BUS_PATH,
+                        PROPERTIES_INTERFACE,
+                        "Get",
+                        "ss",
+                        (STATUS_INTERFACE, prop),
+                    )
+                )
+            )
+            if not current:
+                session.call(
+                    SESSION_BUS_NAME,
+                    SESSION_BUS_PATH,
+                    PROPERTIES_INTERFACE,
+                    "Set",
+                    "ssv",
+                    (STATUS_INTERFACE, prop, ("b", True)),
+                )
+                changed = True
+        except (A11yError, DBusErrorResponse, OSError, TimeoutError):
+            break
+    return changed
+
+
 @contextmanager
 def _bus_context(bus: _Bus | None):
     if bus is not None:
@@ -370,6 +414,8 @@ def _bus_context(bus: _Bus | None):
         session_connection = open_dbus_connection(bus="SESSION", auth_timeout=CALL_TIMEOUT)
         session = _JeepneyBus(session_connection)
         try:
+            if advertise_accessibility(session):
+                time.sleep(ADVERTISE_SETTLE)
             address_reply = session.call(
                 SESSION_BUS_NAME,
                 SESSION_BUS_PATH,

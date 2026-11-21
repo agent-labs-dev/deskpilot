@@ -236,4 +236,4 @@ def _do(
         case Paste():
             desk.paste(step.text, address, combo=step.keys, hidden=hidden)
             return {}
-    return {"x": point[0], "y": point[1]}
+    return desk.landed(*point)

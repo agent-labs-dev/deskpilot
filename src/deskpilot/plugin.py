@@ -55,6 +55,19 @@ def build_dir() -> Path:
     return Path(base) / "deskpilot"
 
 
+def prune_builds(keep: set[Path]) -> list[Path]:
+    """Delete the plugin builds in the build directory that are not in `keep`: every source or Hyprland commit leaves
+    its own file, a few MB each, and nothing else ever removes them. A build another Hyprland has loaded stays mapped
+    in it after its file is gone, and a checkout that needs a deleted build rebuilds it."""
+    removed = []
+    for path in sorted(build_dir().glob("deskpilot-*.so")):
+        if path not in keep:
+            with contextlib.suppress(OSError):
+                path.unlink()
+                removed.append(path)
+    return removed
+
+
 def _digest(*names: str) -> str:
     digest = hashlib.sha256()
     for name in names:
@@ -375,6 +388,8 @@ class Plugin:
             if not path.exists():
                 path = self.build()
             out = self.run(["plugin", "load", str(path)]).strip()
+            if out == "ok":
+                prune_builds({path, seat_path(self.running_commit())})
             if out != "ok":
                 # A loader outside the lock, such as a Hyprland config `plugin =` line, may have loaded this very
                 # build first: the outcome decides, not Hyprland's message.
@@ -389,7 +404,8 @@ class Plugin:
 @contextlib.contextmanager
 def load_lock() -> Generator[None]:
     """Holds off other deskpilot loads sharing the build directory, so only one load builds and loads a build at once
-    (a bare `deskpilot plugin build` does not take it). The kernel releases the lock when its holder exits."""
+    (a bare `deskpilot plugin build` takes it too, so a load never prunes a build being linked). The kernel releases
+    the lock when its holder exits."""
     lock = build_dir() / "load.lock"
     try:
         lock.parent.mkdir(parents=True, exist_ok=True)
