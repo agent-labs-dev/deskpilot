@@ -1,6 +1,6 @@
 ---
 name: deskpilot
-description: Click, scroll and type in desktop app windows on Hyprland with the deskpilot CLI or MCP server, while the user keeps their own pointer and keyboard focus. Works in native Wayland, XWayland and Wine apps such as the Battle.net launcher and games. Use for 'click the button in that app', 'type into the game', 'drive this desktop window', 'take a screenshot of a window', or any GUI task in a Hyprland session.
+description: Click, scroll and type in desktop app windows on Hyprland with the deskpilot CLI or MCP server, while the user keeps their own pointer and keyboard focus. Works in native Wayland, XWayland and Wine apps such as notepad.exe. Use for 'click the button in that app', 'type into that app', 'drive this desktop window', 'take a screenshot of a window', or any GUI task in a Hyprland session.
 ---
 
 # deskpilot
@@ -56,8 +56,8 @@ If `deskpilot` is not on `PATH`, ask the user before installing it with
    Ids from every batch stay good. An item of an open GTK 3 menu
    or combo box is clicked on its popup; an item `elements` lists with zero bounds is on a popup that cannot be told
    apart, so take a new snapshot or use the keyboard.
-5. Type with `deskpilot type "TEXT" --window WINDOW` and press keys with `deskpilot key ctrl+a --window WINDOW` (`ctrl++` is Ctrl and `+`). Games
-   read keys once per frame, so add `--delay 0.1` or more for them (other apps take keys with no delay; use `paste` for long text), and `key --hold SECONDS` to keep a key down: each key is held that long, with the same gap
+5. Type with `deskpilot type "TEXT" --window WINDOW` and press keys with `deskpilot key ctrl+a --window WINDOW` (`ctrl++` is Ctrl and `+`). Apps that
+   read keys once per frame need `--delay 0.1` or more (other apps take keys with no delay; use `paste` for long text), and `key --hold SECONDS` to keep a key down: each key is held that long, with the same gap
    before the next. Text arrives as written on the user's keymap; a character no key on it types is an error, so
    send such text, or a long one, with `deskpilot paste "TEXT" --window WINDOW` (`--keys ctrl+shift+v` in a
    terminal). A paste uses a clipboard only that window sees; XWayland windows refuse it, and so does an app the user last copied in (`owns_clipboard`). `deskpilot clipboard`

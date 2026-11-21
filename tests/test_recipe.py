@@ -13,7 +13,7 @@ from deskpilot.recipe import Pause, Recipe, Shot, Wait
 DOC = {
     "version": 1,
     "name": "export an asset",
-    "window": "battle.net.exe",
+    "window": "notepad.exe",
     "steps": [
         {"action": "shot", "out": "before.png"},
         {"action": "click", "x": 100, "y": 50},
@@ -33,7 +33,7 @@ def test_a_recipe_reads_the_batch_actions_plus_pause_wait_and_shot():
             {"action": "click", "x": 1, "y": 2, "double": True},
             {"action": "key", "combo": "ctrl+a"},
             {"action": "type", "text": "hi"},
-            {"action": "wait", "title": "Battle.net", "size": "1266x684"},
+            {"action": "wait", "title": "Notepad", "size": "1266x684"},
             {"action": "pause", "seconds": 1.5},
             {"action": "shot"},
         ],
@@ -132,7 +132,7 @@ def test_a_window_replaced_under_the_pinned_address_stops_the_run_with_partial_r
 
 def test_a_pause_fails_at_once_when_the_window_has_gone(tmp_path, monkeypatch):
     desk, fake, _, _ = make_desk(tmp_path, monkeypatch)
-    window = desk.window("battle.net.exe")
+    window = desk.window("notepad.exe")
     fake.clients.clear()  # the app died while the beat was running
     monkeypatch.setattr(desk, "wait_for", lambda *args, **kwargs: window)
     steps = [{"action": "pause", "seconds": 5}]

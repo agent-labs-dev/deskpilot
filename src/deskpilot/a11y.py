@@ -657,7 +657,7 @@ def _app_for_pid(bus: _Bus, pid: int) -> tuple[str, str]:
         "org.a11y.Status.IsEnabled is true before they start, and expose their pages only when also started with "
         "--force-renderer-accessibility. Firefox too needs accessibility on when it starts. A Qt app joins the bus "
         "only when QT_LINUX_ACCESSIBILITY_ALWAYS_ON=1 is in its environment (launch sets it) or a screen reader is "
-        "on as it starts, and a Qt Quick app may still expose none. Wine and XWayland games expose none.",
+        "on as it starts, and a Qt Quick app may still expose none. Wine and XWayland apps expose none.",
         "no_tree",
     )
 
