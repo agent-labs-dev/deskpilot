@@ -133,3 +133,30 @@ def test_launch_asks_every_toolkit_for_its_accessibility_tree(tmp_path, monkeypa
         "0",
         "1",
     )
+
+
+def test_a_failed_take_pointer_still_gives_focus_and_pointer_back(tmp_path, monkeypatch):
+    desk, fake, inp, _ = make_desk(tmp_path, monkeypatch)
+    other = {**CLIENT, "address": "0xdef", "class": "editor", "title": "Editor", "at": [0, 0]}
+    fake.clients.append(other)
+    Cursor(fake, other)
+
+    def fail():
+        raise OSError("no uinput")
+
+    inp.nudge = fail
+    with pytest.raises(OSError):
+        desk.click("notepad", 100, 50, take_pointer=True)
+    assert fake.calls[-1] == ["dispatch", "hl.dsp.cursor.move({x=11,y=22})"]
+    assert ["dispatch", 'hl.dsp.focus({window="address:0xdef"})'] in fake.calls[-2:]
+
+
+def test_launch_adds_chromium_page_accessibility_once():
+    from deskpilot.desk import _with_page_accessibility as add
+
+    assert add(["google-chrome-stable", "x"]) == ["google-chrome-stable", "--force-renderer-accessibility", "x"]
+    assert add(["/opt/brave/brave", "--force-renderer-accessibility"]) == [
+        "/opt/brave/brave",
+        "--force-renderer-accessibility",
+    ]
+    assert add(["gnome-calculator"]) == ["gnome-calculator"]

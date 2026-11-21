@@ -485,8 +485,8 @@ class Desk(BaseDesk):
         it ends: `--take-pointer` borrows them, it does not move the user's place."""
         before = next((w for w in self.hypr.windows() if w.focused), None)
         cursor = self.hypr.cursor()
-        self._take_pointer(win, gx, gy)
         try:
+            self._take_pointer(win, gx, gy)  # inside the try: a failure after it moved focus is given back too
             yield
         finally:
             if before is not None and before.address != win.address:
