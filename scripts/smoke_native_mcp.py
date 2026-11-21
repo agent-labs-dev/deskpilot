@@ -43,6 +43,9 @@ async def main() -> None:
             body = result.structured_content
             if isinstance(body, dict) and set(body) == {"result"}:  # a tool that returns a list wraps it
                 body = body["result"]
+            if body is None:  # else the result is JSON text: one block per object, or per item of a list
+                blocks = [json.loads(c.text) for c in result.content if c.type == "text" and c.text[:1] in "{["]
+                body = blocks if tool == "windows" else blocks[0] if blocks else None
             print(
                 f"mcp {tool} -> {'error' if result.is_error else 'ok'}: {str(body or result.content)[:300]}", flush=True
             )
