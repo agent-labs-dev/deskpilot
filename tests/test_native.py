@@ -31,6 +31,7 @@ class FakeDriver:
         self.tree: dict = {"node": Node("window", "notes", (), None, 100, 50, 400, 300), "children": []}
         self.spawned: list[Window] = []
         self.fail_on: str | None = None
+        self.timeout_on: str | None = None
         self.shown_on_focus: Window | None = None
 
     def windows(self):
@@ -62,9 +63,15 @@ class FakeDriver:
         if event == self.fail_on and any(e[1] == "down" for e in self.events):
             raise RuntimeError("boom")
         self.events.append(("mouse", event, x, y, button, clicks, dy, seat))
+        if event == self.timeout_on:  # posted, then the wait for the app timed out
+            self.timeout_on = None
+            raise TimeoutError("the app did not take the input")
 
     def key(self, window, key, down, *, held, seat=False):
         self.events.append(("key", key, down, seat))
+        if down and key == self.timeout_on:
+            self.timeout_on = None
+            raise TimeoutError("the app did not take the input")
 
     def text(self, window, char, *, seat=False):
         self.events.append(("text", char, seat))
@@ -301,3 +308,27 @@ def test_a_native_tree_reads_in_one_call_and_offers_no_more_to_read():
         d.elements("notes", more="x")
     shown = d.elements("notes").children[0]
     assert "showing" in shown.states
+
+
+def test_a_press_that_times_out_after_it_was_posted_is_still_released():
+    d, driver = desk()
+    driver.timeout_on = "down"
+    with pytest.raises(TimeoutError):
+        d.click("notes", 10, 10, scale=1)
+    assert [e[1] for e in driver.events if e[0] == "mouse"][-1] == "up"
+    driver.events.clear()
+    driver.timeout_on = "ctrl"
+    with pytest.raises(TimeoutError):
+        d.key("ctrl+a", "notes")
+    assert ("key", "ctrl", False, False) in driver.events
+
+
+def test_an_element_click_by_the_apps_own_action_refuses_a_covered_element():
+    d, driver = desk()
+    driver.tree["children"] = [{"node": Node("button", "Save", (), None, 120, 60, 40, 20), "children": [],
+                                "press": True}]  # fmt: skip
+    d.elements("notes")
+    driver.top = "0xother"
+    with pytest.raises(Covered):
+        d.click("notes", None, None, element="e2")
+    assert ("press", "Save") not in driver.events

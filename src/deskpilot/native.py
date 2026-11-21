@@ -299,8 +299,11 @@ class NativeDesk(BaseDesk):
                 self._mouse(win, "up", x, y, button=button, seat=seat)
 
     def _press(self, win: Window, held: set[str], x: int, y: int, button: str, clicks: int, seat: bool) -> None:
-        self._mouse(win, "down", x, y, button=button, held=frozenset(held), clicks=clicks, seat=seat)
+        # Held before the press is posted: a press that reached the app and then timed out waiting for it is still
+        # released by the caller's cleanup.
+        before = frozenset(held)
         held.add(button)
+        self._mouse(win, "down", x, y, button=button, held=before, clicks=clicks, seat=seat)
         self._mouse(win, "up", x, y, button=button, held=frozenset(held - {button}), clicks=clicks, seat=seat)
         held.discard(button)
 
@@ -354,7 +357,8 @@ class NativeDesk(BaseDesk):
             self.focus(query)
         if element is not None and button == "left" and count == 1 and not take_pointer:
             win = self._target(query, show, hidden)
-            self.locate(win, element)  # refuses an element that is not showing, as any other action on it does
+            at = self.locate(win, element)  # refuses an element that is not showing, as any other action on it does
+            self._check_point(win, win.x + at.x + at.width // 2, win.y + at.y + at.height // 2)  # or one covered
             ref, info = self._find(win, element)
             if self.driver.press(win, ref):
                 return info.x + info.width // 2, info.y + info.height // 2
@@ -504,8 +508,9 @@ class NativeDesk(BaseDesk):
         try:
             for part in parts:
                 self._seat_check(win, seat)
-                self.driver.key(win, part, True, held=frozenset(held), seat=seat)
-                held.append(part)
+                before = frozenset(held)
+                held.append(part)  # released in the finally even when the press was posted and then timed out
+                self.driver.key(win, part, True, held=before, seat=seat)
             self._sleep(hold)
         finally:
             for part in reversed(held):

@@ -535,8 +535,8 @@ class Win32Driver:
             down, up, double, flag = BUTTON_MESSAGES[button]
             if event == "down":
                 message = double if clicks % 2 == 0 else down
+                self._pressed[window.address] = target  # before the post: a press that times out is still released here
                 self._post_message(window, target, message, flags | flag, lparam_point(cx, cy), buttons)
-                self._pressed[window.address] = target
             else:
                 if not held:
                     self._pressed.pop(window.address, None)
@@ -614,9 +614,10 @@ class Win32Driver:
         target = self._focused_control(window)
         if char in ("\n", "\r"):
             scan = self.user32.MapVirtualKeyW(VK["return"], MAPVK_VK_TO_VSC)
-            for down in (True, False):
-                message = WM_KEYDOWN if down else WM_KEYUP
-                self._post_message(window, target, message, VK["return"], key_lparam(scan, down, False))
+            try:
+                self._post_message(window, target, WM_KEYDOWN, VK["return"], key_lparam(scan, True, False))
+            finally:  # the release follows a press that was posted and then timed out
+                self._post_message(window, target, WM_KEYUP, VK["return"], key_lparam(scan, False, False))
             return
         for code in codes:
             self._post_message(window, target, WM_CHAR, code, 1)
