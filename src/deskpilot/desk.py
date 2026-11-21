@@ -493,6 +493,8 @@ class Desk(BaseDesk):
             # even when the target held it already.
             self.hypr.move_cursor(*cursor)
             self._refocus(before)
+            if self.hypr.cursor() != cursor:  # a focus change can warp the cursor (Hyprland's workspace-change warp)
+                self.hypr.move_cursor(*cursor)
 
     def _refocus(self, before: Window | None) -> None:
         """Focus `before` again if that window is still the one: an address a closed window freed can name another."""
