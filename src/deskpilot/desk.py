@@ -489,10 +489,19 @@ class Desk(BaseDesk):
             self._take_pointer(win, gx, gy)  # inside the try: a failure after it moved focus is given back too
             yield
         finally:
-            if before is not None and before.address != win.address:
-                with contextlib.suppress(*EXPECTED):  # the window may have closed during the action
-                    self.hypr.focus(before)
+            # Pointer first: moving the cursor applies focus-follows-mouse, so the keyboard focus is given back last,
+            # even when the target held it already.
             self.hypr.move_cursor(*cursor)
+            self._refocus(before)
+
+    def _refocus(self, before: Window | None) -> None:
+        """Focus `before` again if that window is still the one: an address a closed window freed can name another."""
+        if before is None:
+            return
+        with contextlib.suppress(*EXPECTED):  # the window may have closed during the action
+            now = next((w for w in self.hypr.windows() if w.address == before.address), None)
+            if now is not None and now.stable_id == before.stable_id:
+                self.hypr.focus(now)
 
     def move(
         self,

@@ -470,11 +470,13 @@ def build_parser() -> argparse.ArgumentParser:
 def _plugin(action: str, desk: Desk | NativeDesk) -> dict:
     hyprland_only("the compositor plugin")
     from .desk import Desk
+    from .plugin import load_lock
     from .session import keyboard_binary  # after the guard: it needs fcntl, which Windows lacks
 
     assert isinstance(desk, Desk)
     if action == "build":
-        return {"path": str(desk.plugin.build()), "keyboard": str(keyboard_binary())}
+        with load_lock():  # a load prunes the other builds, so it must not run while this one is being linked
+            return {"path": str(desk.plugin.build()), "keyboard": str(keyboard_binary())}
     if action == "load":
         return {"path": str(desk.plugin.load()), **desk.plugin.status()}
     return desk.plugin.status()
