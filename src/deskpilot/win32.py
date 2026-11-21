@@ -8,6 +8,7 @@ that read them with GetKeyState rather than from the message.
 
 from __future__ import annotations
 
+import contextlib
 import ctypes
 import os
 import subprocess
@@ -623,13 +624,16 @@ class Win32Driver:
     # Accessibility (UI Automation)
 
     def _automation(self) -> Any:
+        # comtypes joins a single-threaded apartment when it is imported unless told otherwise.
+        sys.coinit_flags = 0  # COINIT_MULTITHREADED
         import comtypes
         import comtypes.client
 
         if not getattr(self._thread, "com", False):
             # The MCP server runs each tool on a worker thread, and the snapshot's elements outlive a call: a
             # multithreaded apartment on every thread lets any of them use an element another read.
-            comtypes.CoInitializeEx(comtypes.COINIT_MULTITHREADED)
+            with contextlib.suppress(OSError):  # a thread that already joined an apartment keeps it
+                comtypes.CoInitializeEx(comtypes.COINIT_MULTITHREADED)
             self._thread.com = True
         if self._uia is None:
             comtypes.client.GetModule("UIAutomationCore.dll")
