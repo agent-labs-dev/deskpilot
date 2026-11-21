@@ -225,13 +225,3 @@ def test_focus_is_given_back_after_the_cursor_even_to_the_target(tmp_path, monke
     desk.click("notepad", 100, 50, take_pointer=True)
     dispatches = [c[1] for c in fake.calls if c[0] == "dispatch"]
     assert dispatches[-1].startswith("hl.dsp.focus(")
-
-
-def test_the_pointer_is_put_back_when_refocusing_warped_it(tmp_path, monkeypatch):
-    desk, _, _, _ = make_desk(tmp_path, monkeypatch)
-    at = {"p": (11, 22)}
-    monkeypatch.setattr(desk.hypr, "cursor", lambda: at["p"])
-    monkeypatch.setattr(desk.hypr, "move_cursor", lambda x, y: at.update(p=(x, y)))
-    monkeypatch.setattr(desk.hypr, "focus", lambda w: at.update(p=(0, 0)))
-    desk.click("notepad", 100, 50, take_pointer=True)
-    assert at["p"] == (11, 22)
