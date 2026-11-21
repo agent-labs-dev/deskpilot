@@ -7,6 +7,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+- The README and THIRD_PARTY_NOTICES.md credit Cua, whose driver, Hyprland plugin and agent cursor deskpilot builds on.
+
 - An element's text leaves out the U+FFFC marks an app puts where a child element sits. A Chromium page's document read as 121 of those marks and no words, and 4,569 of the 10,719 elements of a large page had text made only of them, so a model reading the tree saw a page of blanks. The children are listed as elements of their own.
 
 - A click, hover or scroll on a GTK 3 list row that is scrolled out of view fails with `offscreen` and says to scroll it into view. Such a row reports its position as the smallest integer, so `elements` listed it at x and y -2147483648 and the action failed with `invalid: (-2147483056.0, -2147483636.5) at scale 1.0 is outside yad`. It is now listed with no bounds, like any element that has no place.
