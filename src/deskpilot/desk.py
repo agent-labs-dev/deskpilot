@@ -489,11 +489,10 @@ class Desk(BaseDesk):
             self._take_pointer(win, gx, gy)  # inside the try: a failure after it moved focus is given back too
             yield
         finally:
-            # Pointer first: moving the cursor applies focus-follows-mouse, so the keyboard focus is given back last,
-            # even when the target held it already. A focus dispatch warps the cursor only when it changes
-            # workspace (`cursor:warp_on_change_workspace`), which Hyprland leaves off by default.
-            self.hypr.move_cursor(*cursor)
+            # Focus first: Hyprland's focus dispatch warps the cursor to the window's centre, so the pointer goes back
+            # last. Moving the cursor by dispatch does not change focus (checked on 0.57, follow_mouse on).
             self._refocus(before)
+            self.hypr.move_cursor(*cursor)
 
     def _refocus(self, before: Window | None) -> None:
         """Focus `before` again if that window is still the one: an address a closed window freed can name another."""

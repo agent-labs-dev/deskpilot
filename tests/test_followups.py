@@ -73,8 +73,8 @@ def test_take_pointer_gives_back_the_users_focus_and_pointer(tmp_path, monkeypat
     desk.click("notepad", 100, 50, take_pointer=True)
     assert ["dispatch", "hl.dsp.cursor.move({x=11,y=22})"] in fake.calls
     assert [c for c in fake.calls if c[0] == "dispatch"][-2:] == [
-        ["dispatch", "hl.dsp.cursor.move({x=11,y=22})"],
         ["dispatch", 'hl.dsp.focus({window="address:0xdef"})'],
+        ["dispatch", "hl.dsp.cursor.move({x=11,y=22})"],
     ]
     assert desk.route == "pointer"
 
@@ -148,8 +148,8 @@ def test_a_failed_take_pointer_still_gives_focus_and_pointer_back(tmp_path, monk
     with pytest.raises(OSError):
         desk.click("notepad", 100, 50, take_pointer=True)
     assert [c for c in fake.calls if c[0] == "dispatch"][-2:] == [
-        ["dispatch", "hl.dsp.cursor.move({x=11,y=22})"],
         ["dispatch", 'hl.dsp.focus({window="address:0xdef"})'],
+        ["dispatch", "hl.dsp.cursor.move({x=11,y=22})"],
     ]
 
 
@@ -220,8 +220,8 @@ def test_focus_is_not_given_to_a_window_that_reused_the_address(tmp_path, monkey
     assert not [c for c in fake.calls if c[0] == "dispatch"]
 
 
-def test_focus_is_given_back_after_the_cursor_even_to_the_target(tmp_path, monkeypatch):
+def test_the_pointer_goes_back_after_the_focus_even_to_the_target(tmp_path, monkeypatch):
     desk, fake, _, _ = make_desk(tmp_path, monkeypatch)
     desk.click("notepad", 100, 50, take_pointer=True)
     dispatches = [c[1] for c in fake.calls if c[0] == "dispatch"]
-    assert dispatches[-1].startswith("hl.dsp.focus(")
+    assert dispatches[-2].startswith("hl.dsp.focus(") and dispatches[-1].startswith("hl.dsp.cursor.move(")
