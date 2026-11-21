@@ -683,7 +683,7 @@ class Desk:
     ) -> None:
         """Press a chord in a window without focusing it, or with take_focus after focusing it. With no window the
         keys go to the focused window. Each key is held `hold` seconds, up to 10, for an app that acts while a key is
-        down (auto-repeat, a game's movement)."""
+        down (auto-repeat, a slider that moves while a key is held)."""
         if not 0 <= hold <= 10:
             raise ValueError("a key is held 0 to 10 seconds")
         if agent_keyboard and query is None:

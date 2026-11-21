@@ -24,7 +24,7 @@ def test_record_cli_reports_failure_when_no_frame_was_captured(tmp_path, monkeyp
         # The CLI needs binary stdout for the frame stream.
         monkeypatch.setattr(cli.sys, "stdout", io.TextIOWrapper(io.BytesIO()))
     path = "-" if stdout else str(tmp_path / "clip.mp4")
-    status = cli.main(["record", "battle", "-o", path, "--seconds", "0.01"])
+    status = cli.main(["record", "notepad", "-o", path, "--seconds", "0.01"])
     assert status != 0, "zero captured frames must not be reported as a successful recording"
 
 
@@ -34,7 +34,7 @@ def test_record_stop_reports_capture_failure_as_an_mcp_error(tmp_path, monkeypat
     monkeypatch.setattr(mcp_server, "desk", desk)
     path = str(tmp_path / "clip.mp4")
     try:
-        mcp_server.record_start("battle", path)
+        mcp_server.record_start("notepad", path)
         result = mcp_server.record_stop(path)
     finally:
         if path in mcp_server._recordings:

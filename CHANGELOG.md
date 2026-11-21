@@ -191,7 +191,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
   each keystroke, so an app that draws its own title bar, such as Chrome, redrew it focused and unfocused for every
   character. The window is now entered once for the whole sequence.
 - **Typing is much faster.** `type` (MCP `type_text`) no longer holds each key 30 ms and waits 30 ms between keys
-  by default: 9.4 KB reaches Chrome in about 12 seconds rather than 9 minutes. Pass `--delay 0.1` for games, as before.
+  by default: 9.4 KB reaches Chrome in about 12 seconds rather than 9 minutes. Pass `--delay 0.1` for apps that read input once per frame, as before.
 - **Paste works in Chrome.** Chrome reads a pasted text as soon as it is offered, and the window's clipboard was
   taken back after that first read, so Chrome pasted nothing. The text now stays the window's clipboard for 10
   seconds, or until the next paste.
@@ -248,7 +248,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
   window is not the focused one, so a click that left the user's focus in place closed the list it opened.
   `click --take-focus` (MCP `take_focus`) focuses the window first and leaves it focused.
 - **Your mouse moves as usual during an agent's click.** Motion made while a click or scroll ran was added up and
-  applied as one jump, skipping pointer acceleration and the relative motion a pointer-locked game reads, and a
+  applied as one jump, skipping pointer acceleration and the relative motion a pointer-locked app reads, and a
   tablet or other absolute device could move the pointer mid-click. All of it is now held and replayed in order
   through Hyprland's own handling.
 
@@ -299,7 +299,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
   refused.
 - **No guessed windows.** A window is named by address, class, or part of its class or title, and a name that
   matches several windows is an error listing them.
-- **Typing.** `deskpilot type` and `deskpilot key` type US-layout text and chords. `--delay` spaces keys for games,
+- **Typing.** `deskpilot type` and `deskpilot key` type US-layout text and chords. `--delay` spaces keys for apps that read input once per frame,
   which read input once per frame.
 - **Taking over when an app needs it.** `--take-pointer` and `--take-focus` move your own pointer or focus and press
   through a virtual input device, for a hover the app must see or an app that ignores keys while unfocused.

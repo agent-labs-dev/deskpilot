@@ -291,11 +291,12 @@ def key(
 ) -> str:
     """Press a key or chord such as Return, ctrl+a or alt+F4 in a window without focusing it. take_focus focuses
     the window first instead; with no window the keys go to the focused one. hold keeps each key down that many
-    seconds, up to 10, for auto-repeat or a game's movement. A window not on screen is refused unless show brings it
-    into view. hidden sends the keys to a window the agent launched or adopted, out of view; it needs a window and
-    refuses XWayland windows and the app with the user's keyboard focus. agent_keyboard opts into the independent
-    keyboard for native apps that support multiple seats, including GTK; it needs a window. Qt can silently discard
-    that seat's keys, so verify the result. The default route remains appropriate for Qt and Chromium."""
+    seconds, up to 10, for auto-repeat or a slider that moves while a key is held. A window not on screen is
+    refused unless show brings it into view. hidden sends the keys to a window the agent launched or adopted,
+    out of view; it needs a window and refuses XWayland windows and the app with the user's keyboard focus.
+    agent_keyboard opts into the independent keyboard for native apps that support multiple seats, including
+    GTK; it needs a window. Qt can silently discard that seat's keys, so verify the result.
+    The default route remains appropriate for Qt and Chromium."""
     desk.key(combo, window, take_focus, hold, show=show, hidden=hidden, agent_keyboard=agent_keyboard)
     return "ok"
 
@@ -311,7 +312,7 @@ def type_text(
     agent_keyboard: bool = False,
 ) -> str:
     """Type text as written, on the user's keymap, into a window without focusing it. Keys go as fast as the
-    app reads them by default. Games read keys once per frame: for them, each key is held `delay` seconds, 0.1 or
+    app reads them by default. Apps that read keys once per frame: for them, each key is held `delay` seconds, 0.1 or
     more, and the next follows after the same gap. For long text, paste_text is faster still. show and hidden work
     as for key, including the explicit agent_keyboard option for native apps that support multiple seats."""
     desk.type(text, window, delay, take_focus, show=show, hidden=hidden, agent_keyboard=agent_keyboard)

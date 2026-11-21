@@ -432,7 +432,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--delay",
         type=float,
         default=0.0,
-        help="seconds each key is held and between keys, none by default; games want 0.1 or more",
+        help="seconds each key is held and between keys, none by default; apps that read once per frame want 0.1+",
     )
     _view_args(s)
 

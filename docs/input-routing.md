@@ -93,7 +93,7 @@ error rather than skipped.
 
 `--take-pointer` uses a virtual mouse made with `/dev/uinput` instead, which the compositor treats as real
 hardware. Tools that synthesize input another way, such as `xdotool` (XTest), are ignored by some clients:
-Battle.net drops `xdotool` clicks.
+A Wine launcher drops `xdotool` clicks.
 
 ## Requirements
 

@@ -91,7 +91,7 @@ def test_desk_record_streams_ppm_of_the_window(tmp_path, monkeypatch):
     fake.clients[0] = {**fake.clients[0], "xwayland": False, "stableId": "18000001"}
     fake_ppm_grim(monkeypatch)
     out = io.BytesIO()
-    result = desk.record("battle", out, threading.Event(), fps=50, seconds=0.06)
+    result = desk.record("notepad", out, threading.Event(), fps=50, seconds=0.06)
     assert result.frames >= 2
     assert out.getvalue() == ppm() * result.frames
 
@@ -101,7 +101,7 @@ def test_desk_record_refuses_a_bad_rate(tmp_path, monkeypatch):
 
     desk, *_ = make_desk(tmp_path, monkeypatch)
     with pytest.raises(ValueError, match="fps"):
-        desk.record("battle", io.BytesIO(), threading.Event(), fps=0)
+        desk.record("notepad", io.BytesIO(), threading.Event(), fps=0)
 
 
 def test_cursor_press_is_shown_only_on_screen(tmp_path, monkeypatch):
