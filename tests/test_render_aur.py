@@ -6,6 +6,8 @@ import importlib.util
 import tomllib
 from pathlib import Path
 
+from packaging.requirements import Requirement
+
 ROOT = Path(__file__).resolve().parent.parent
 SPEC = importlib.util.spec_from_file_location("render_aur", ROOT / "scripts" / "render_aur.py")
 assert SPEC and SPEC.loader
@@ -36,7 +38,8 @@ def test_no_value_breaks_the_shell_quoting() -> None:
     assert '"' not in render_aur.DESCRIPTION and "$" not in render_aur.DESCRIPTION
 
 
-def test_every_python_dependency_is_an_arch_package() -> None:
+def test_every_linux_python_dependency_is_an_arch_package() -> None:
     project = tomllib.loads((ROOT / "pyproject.toml").read_text())["project"]
-    names = {requirement.split(">")[0].split("=")[0].strip() for requirement in project["dependencies"]}
-    assert {f"python-{name}" for name in names} <= set(render_aur.DEPENDS)
+    requirements = [Requirement(spec) for spec in project["dependencies"]]
+    linux = [r for r in requirements if r.marker is None or r.marker.evaluate({"sys_platform": "linux"})]
+    assert {f"python-{r.name}" for r in linux} <= set(render_aur.DEPENDS)
