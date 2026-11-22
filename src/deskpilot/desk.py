@@ -28,7 +28,7 @@ from .backend import owner_from_env
 from .base import BaseDesk
 from .errors import EXPECTED, NotVisible, SessionLocked, error_code
 from .hypr import AmbiguousWindow, Hyprland, Window, WindowNotFound, find_window
-from .plugin import BUTTON_CODES, Plugin, PluginError
+from .plugin import BUTTON_CODES, Plugin, PluginError, agent_dir
 
 __all__ = ["EXPECTED", "Desk", "NotVisible", "SessionLocked", "error_code"]
 
@@ -249,6 +249,12 @@ class Desk(BaseDesk):
         # Qt's AT-SPI bridge stays off unless a screen reader is enabled on the bus as the app starts, or this is
         # set: without it cmake-gui and qt5ct had no tree.
         env["QT_LINUX_ACCESSIBILITY_ALWAYS_ON"] = "1"
+        # Chrome and Chromium hand a launch to the copy already running on the same profile, so on the user's profile
+        # the window was the user's process: opened on their workspace with their focus, and left open by stop. The
+        # agent's own profile, the one its private --session uses, makes the browser a process of its own.
+        profile = agent_dir(self.plugin.agent) / "config"
+        profile.mkdir(parents=True, exist_ok=True, mode=0o700)
+        env["CHROME_CONFIG_HOME"] = str(profile)
         self._launched = [p for p in self._launched if p.poll() is None]
         if shutil.which(command[0], path=env.get("PATH")) is None:
             raise ValueError(f"cannot start {command[0]}: No such file or directory")

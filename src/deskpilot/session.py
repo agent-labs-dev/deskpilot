@@ -28,7 +28,7 @@ import time
 from pathlib import Path
 
 from .hypr import HyprctlError, current_instance, run_hyprctl, socket_alive
-from .plugin import Plugin, agent_from_env, build_dir
+from .plugin import Plugin, agent_dir, agent_from_env, build_dir
 
 
 class SessionBusy(RuntimeError):
@@ -134,7 +134,7 @@ def _profile() -> dict[str, str]:
 
     build_dir() reads the worker's own environment, so the keyboard build cache stays where it was.
     """
-    root = build_dir() / "agents" / str(agent_from_env())
+    root = agent_dir(agent_from_env())
     values: dict[str, str] = {}
     for key, suffix in PROFILE_DIRS:
         folder = root / suffix

@@ -7,6 +7,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+- `launch` starts Chrome and Chromium on the agent's own profile, so a browser the user already has open no longer takes the launch: the window opened in the user's browser, on their workspace with their focus, and `stop` left it open.
+
 ## [0.9.0] - 2026-11-21
 
 - A click, hover, scroll or drag result names its `route` (`agent`, `client`, `seat`, or `pointer` for `--take-pointer`), so an input that held the user's seat is no surprise.
