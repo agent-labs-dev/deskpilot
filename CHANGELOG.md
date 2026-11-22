@@ -7,6 +7,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+- `container/Dockerfile` builds while archive.archlinux.org is unreachable: it takes its pinned Arch Linux Archive snapshot from the archive's mirror, umea.archive.pkgbuild.com, and leaves no downloaded packages in the image.
+
 ## [0.9.0] - 2026-11-21
 
 - A click, hover, scroll or drag result names its `route` (`agent`, `client`, `seat`, or `pointer` for `--take-pointer`), so an input that held the user's seat is no surprise.
