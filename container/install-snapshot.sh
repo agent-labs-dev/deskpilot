@@ -7,7 +7,7 @@ set -euo pipefail
 snapshot=$1
 shift
 for host in archive.archlinux.org umea.archive.pkgbuild.com; do
-    curl --fail --silent --show-error --connect-timeout 10 --output /dev/null \
+    curl --fail --silent --show-error --connect-timeout 10 --max-time 120 --output /dev/null \
         "https://$host/repos/$snapshot/core/os/x86_64/core.db" && break
     host=
 done
