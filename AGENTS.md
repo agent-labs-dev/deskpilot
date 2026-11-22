@@ -41,6 +41,7 @@ are thin layers over the desk `open_desk` picks: `Desk` on Hyprland, `NativeDesk
 - `scripts/nested.py`: a throwaway nested Hyprland for live checks of the plugin off the user's screen
 - `scripts/wordmark.py`: the wordmark, its dark variant and the GitHub social preview, from `assets/logo.svg` and
   Liberation Sans (`uv run python scripts/wordmark.py`)
+- `scripts/render_aur.py`: the AUR `PKGBUILD` and `.SRCINFO` for a release, pushed by `release.yml`
 - `src/deskpilot/a11y.py`: the target app's AT-SPI accessibility tree over D-Bus, and element ids for actions
 - `src/deskpilot/recipe.py`: saved recipes (steps, `pause`, `wait`, `shot`), the window pinned once, filmed
   through `Desk.record`; `recipes/` holds the examples
