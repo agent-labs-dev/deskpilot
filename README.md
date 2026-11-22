@@ -94,6 +94,7 @@ deskpilot elements WINDOW
 
 A tree larger than one read ends with the command that reads the next batch, and
 `deskpilot elements WINDOW --query TEXT` prints only the elements whose role, name or text contains `TEXT`.
+With `--json` each element lists its `interfaces` and `actions`, what the app says it can do whatever its role is called.
 
 In an app with an accessibility tree, choose a control from the output and replace `ELEMENT` with its ID:
 

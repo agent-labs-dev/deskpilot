@@ -2321,7 +2321,7 @@ namespace {
         }
         if (PROTO::data->dndActive()) {
             PROTO::data->abortDndIfPresent();
-            op.error = "the press started a drag and drop, which a hidden action cannot carry: it was cancelled";
+            op.error = "the press started a drag and drop, which an action sent to the window's own pointer cannot carry: it was cancelled";
             return false;
         }
         return true;
@@ -2399,7 +2399,7 @@ namespace {
                     return;
                 // A drag and drop the press started takes the seat's pointer focus; finish() cancels it.
                 if (!g_op->down.empty() && PROTO::data->dndActive()) {
-                    g_op->error = "the press started a drag and drop, which a hidden action cannot carry: it was cancelled";
+                    g_op->error = "the press started a drag and drop, which an action sent to the window's own pointer cannot carry: it was cancelled";
                     return;
                 }
                 if (hiddenReady(*g_op))
@@ -2436,20 +2436,46 @@ namespace {
         });
     }
 
+    // The window a popup, or a popup of a popup, belongs to.
+    PHLWINDOW popupWindow(const SP<CXDGPopupResource>& popup) {
+        auto parent = popup ? popup->m_parent.lock() : nullptr;
+        while (parent && parent->m_popup && parent->m_popup->m_parent)
+            parent = parent->m_popup->m_parent.lock();
+        const auto HLSURFACE = parent ? Desktop::View::CWLSurface::fromResource(parent->m_surface.lock()) : nullptr;
+        return HLSURFACE ? Desktop::View::CWindow::fromView(HLSURFACE->view()) : nullptr;
+    }
+
     // Popups that mapped without a grab (hkAddOrStartGrab), by client. A grab closes its popups on a click outside them,
-    // and a client waits for that: GTK takes no click on the window under an open menu. Any press outside them, the
-    // user's or deskpilot's, closes them here instead.
+    // and a client waits for that: GTK takes no click on the window under an open menu. A press on the client's own
+    // surfaces outside them, the user's or deskpilot's, closes them here instead. A press on another client closes
+    // them only as a grab would: when it is the seat's and the popup's window is in view. One agent's click in its own
+    // window, or the user's click anywhere, leaves a menu open in a window out of view.
     std::map<wl_client*, std::vector<WP<CXDGPopupResource>>> g_ungrabbed;
 
-    void closeUngrabbed(const SP<CWLSurfaceResource>& target) {
+    void closeUngrabbed(const SP<CWLSurfaceResource>& target, bool seat) {
         std::erase_if(g_ungrabbed, [&](auto& entry) {
             auto& popups = entry.second;
             std::erase_if(popups, [](const auto& popup) { return !popup; });
-            if (std::ranges::any_of(popups, [&](const auto& popup) { return popup->m_surface && popup->m_surface->m_surface.lock() == target; }))
+            const bool OWN = entry.first == target->client();
+            if (OWN && std::ranges::any_of(popups, [&](const auto& popup) { return popup->m_surface && popup->m_surface->m_surface.lock() == target; }))
                 return false;
-            for (const auto& popup : popups | std::views::reverse)
+            if (!OWN && !seat)
+                return popups.empty();
+            for (const auto& popup : popups | std::views::reverse) {
+                if (!OWN) {
+                    const auto WINDOW = popupWindow(popup.lock());
+                    if (WINDOW && !g_pHyprRenderer->shouldRenderWindow(WINDOW))
+                        continue;
+                }
                 popup->done();
-            return true;
+            }
+            if (OWN)
+                return true;
+            std::erase_if(popups, [](const auto& popup) {
+                const auto WINDOW = popupWindow(popup.lock());
+                return !WINDOW || g_pHyprRenderer->shouldRenderWindow(WINDOW);
+            });
+            return popups.empty();
         });
     }
 
@@ -2458,13 +2484,13 @@ namespace {
 
     void hkSendPointerButton(CSeatManager* self, uint32_t timeMs, uint32_t button, wl_pointer_button_state state) {
         if (const auto SURFACE = self->m_state.pointerFocus.lock(); SURFACE && state == WL_POINTER_BUTTON_STATE_PRESSED)
-            closeUngrabbed(SURFACE);
+            closeUngrabbed(SURFACE, true);
         reinterpret_cast<SeatButtonFn>(g_seatButtonHook->m_original)(self, timeMs, button, state);
     }
 
     void hiddenButton(SOp& op, uint32_t button, wl_pointer_button_state state) {
         if (const auto SURFACE = op.surface.lock(); SURFACE && state == WL_POINTER_BUTTON_STATE_PRESSED)
-            closeUngrabbed(SURFACE);
+            closeUngrabbed(SURFACE, false);
         eachPointer(op, [&](auto& pointer) {
             sendButton(pointer, button, state);
             sendFrame(pointer);
@@ -2575,11 +2601,7 @@ namespace {
             g_ungrabbed[SURFACE->client()].emplace_back(popup);
             return;
         }
-        auto parent = popup ? popup->m_parent.lock() : nullptr;
-        while (parent && parent->m_popup && parent->m_popup->m_parent)
-            parent = parent->m_popup->m_parent.lock();
-        const auto HLSURFACE = parent ? Desktop::View::CWLSurface::fromResource(parent->m_surface.lock()) : nullptr;
-        const auto WINDOW    = HLSURFACE ? Desktop::View::CWindow::fromView(HLSURFACE->view()) : nullptr;
+        const auto WINDOW = popupWindow(popup);
         if (WINDOW && !g_pHyprRenderer->shouldRenderWindow(WINDOW)) {
             if (SURFACE)
                 g_ungrabbed[SURFACE->client()].emplace_back(popup);

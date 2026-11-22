@@ -255,8 +255,9 @@ def drag(
     hidden: bool = False,
 ) -> dict:
     """Press at (x1, y1), move to (x2, y2) over duration seconds (up to 5) and release, in pixels of `shot` or the
-    window's latest screenshot: sliders, text selection, drawing and drag and drop within the window. The user's
-    pointer stays put. hidden drags in a window the agent launched or adopted, out of view; no drag and drop there."""
+    window's latest screenshot: sliders, text selection and drawing. The user's pointer stays put. A press that
+    starts a drag and drop is cancelled and the drag refused, unless the window is XWayland or of the app the user's
+    pointer is on. hidden drags in a window the agent launched or adopted, out of view."""
     gx, gy = desk.drag(window, (x1, y1), (x2, y2), button, duration, shot=shot, show=show, hidden=hidden)
     return desk.landed(gx, gy)
 
@@ -273,7 +274,10 @@ def elements(
     showing: bool = False,
 ) -> dict:
     """The window's accessibility tree: each element's id, role, name, states, text and bounds in window pixels,
-    and on the root the snapshot id. click, hover, move and scroll take an id as `element` and act on where the app
+    its `interfaces` (the AT-SPI ones it implements, such as Action, EditableText, Value, Selection) and `actions`
+    (the names the app gives what it can do, such as click, toggle, Press), and on the root the snapshot id. A
+    `showing` state is kept only for a box with area on the window or one of its popups. click, hover, move and
+    scroll take an id as `element` and act on where the app
     says it is now. Each snapshot numbers its elements afresh: `<snapshot>:<id>` is refused (stale) once a newer
     snapshot replaces that one, and an element whose role or name changed since is stale too. An app that exposes no
     tree is an error (no_tree). One call reads at most max_nodes elements, nested at most 50 levels. A larger or

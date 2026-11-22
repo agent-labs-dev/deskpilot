@@ -51,6 +51,8 @@ class FakeBus:
         self.layers: dict[str, int] = {}
         # GetRelationSet's reply by path: (relation type, [(bus, path), ...]) pairs.
         self.relations: dict[str, list[tuple[int, list[tuple[str, str]]]]] = {}
+        # The names an element with the Action interface gives its actions, by path.
+        self.actions: dict[str, list[str | None]] = {}
 
     def call(self, destination, object_path, interface, method, signature, body):
         self.calls.append((destination, object_path, interface, method, signature, body))
@@ -76,6 +78,8 @@ class FakeBus:
                 return (("s", self.names[object_path]),)
             if name == "CharacterCount":
                 return (("i", len(self.text[object_path])),)
+            if name == "NActions":
+                return (("i", len(self.actions[object_path])),)
             if name == "NSelectedChildren":
                 return (("i", len(self.selected[object_path])),)
             if body[0] == a11y.APPLICATION_INTERFACE and self.toolkit is not None:
@@ -84,6 +88,13 @@ class FakeBus:
                 return (("(so)", ("app.bus", self.parents[object_path])),)
         if (interface, method) == (a11y.SELECTION_INTERFACE, "GetSelectedChild"):
             return (self.selected[object_path][body[0]],)
+        if (interface, method) == (a11y.ACTION_INTERFACE, "GetName"):
+            name = self.actions[object_path][body[0]]
+            if name is None:
+                raise _dbus_error(a11y.UNNAMED_ACTION_ERROR)
+            if isinstance(name, DBusErrorResponse):
+                raise name
+            return (name,)
         if (interface, method) == (a11y.COMPONENT_INTERFACE, "GetLayer"):
             return (self.layers.get(object_path, 3),)
         if (interface, method) == (a11y.COMPONENT_INTERFACE, "GetExtents"):
@@ -125,12 +136,80 @@ def test_a_child_a_selection_reports_as_chosen_is_selected(tmp_path, monkeypatch
     assert "selected" not in tree.states
 
 
+def test_showing_is_dropped_for_a_box_on_no_surface_of_the_window(tmp_path, monkeypatch):
+    # Qt calls the items of a closed combo box showing at x=-10000, and GTK 4 rows it has not laid out, with no size.
+    monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path))
+    fake = FakeBus()
+    boxes = {
+        "/far": (-10000, 0, 80, 20),
+        "/flat": (10, 20, 0, 0),
+        "/over": (790, 590, 80, 20),
+        "/menu": (750, 650, 80, 20),
+    }
+    for path, bounds in boxes.items():
+        add(fake, "/frame", path, path)
+        fake.bounds[path] = bounds
+    asked = []
+
+    def popups():
+        asked.append(1)
+        return [a11y.Popup(1, -1, 700, 600, 700, 600, 200, 100)]
+
+    tree = a11y.snapshot(window(), bus=fake, popups=popups)
+    showing = {child.name: "showing" in child.states for child in tree.children}
+    assert showing == {"Save": True, "/far": False, "/flat": False, "/over": True, "/menu": True}
+    assert len(asked) == 1
+    first = a11y.snapshot(window(), max_nodes=2, bus=fake, popups=popups)
+    later = a11y.more(window(), first.snapshot, bus=fake, popups=popups)
+    assert {top.name: "showing" in top.states for top in later.elements} == {key: showing[key] for key in boxes}
+    # With no compositor to ask for popups, a box that misses the window is left as the app states it.
+    bare = a11y.snapshot(window(), bus=fake)
+    far = next(child for child in bare.children if child.name == "/far")
+    assert "showing" in far.states
+    # An action on such an element is refused the same way, before any input is sent.
+    with pytest.raises(a11y.A11yError) as refused:
+        a11y.locate(window(), far.id, bus=fake, popups=popups)
+    assert refused.value.code == "offscreen"
+    assert a11y.locate(window(), tree.children[0].id, bus=fake, popups=popups).width > 0
+
+
+def test_an_element_says_what_it_can_do(tmp_path, monkeypatch):
+    # A GTK 4 switch and a Qt spin box have roles of their own; what they implement says how to use them.
+    monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path))
+    fake = FakeBus()
+    fake.interfaces["/button"] += [a11y.ACTION_INTERFACE, "org.a11y.atspi.Value"]
+    fake.actions["/button"] = ["toggle", "", None]  # None: GTK 4 counts an action it then will not name
+    tree = a11y.snapshot(window(), bus=fake)
+    button = tree.to_dict()["children"][0]
+    assert button["interfaces"] == ["Component", "Text", "Action", "Value"]
+    assert button["actions"] == ["toggle"]
+    assert (tree.interfaces, tree.actions) == (("Component",), ())
+
+
 def test_snapshot_reports_ambiguous_toplevel_names(tmp_path, monkeypatch):
     monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path))
     fake = FakeBus(title="Same", duplicate_title=True)
-    with pytest.raises(a11y.A11yError, match=r"'Same'.*'Same'") as error:
+    with pytest.raises(a11y.A11yError, match=r"'Same'.*'Same'.*800x600 as the window is: 2 are") as error:
         a11y.snapshot(window(title="Different"), bus=fake)
     assert error.value.code == "ambiguous"
+
+
+def test_same_titled_toplevels_are_told_apart_by_the_window_size(tmp_path, monkeypatch):
+    # Two Text Editor windows on new documents share a title; a GTK 3 window and its open combo's popup share none.
+    monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path))
+    fake = FakeBus(title="Same", duplicate_title=True)
+    fake.bounds["/dialog"] = (0, 0, 400, 300)
+    add(fake, "/dialog", "/dialog/ok", "OK")
+    big = window(title="Same")
+    assert a11y.snapshot(big, bus=fake, size=lambda: (big.width, big.height)).children[0].name == "Save"
+    small = Window("0xabd", "editor", "Same", 0, 0, 400, 300, 1, "1", False, 42)
+    assert a11y.snapshot(small, bus=fake, size=lambda: (400, 300)).children[0].name == "OK"
+    # Resized since it was looked up, as two tiled windows swapping places are: the sibling alone at the recorded
+    # size may not be this window.
+    for size in (lambda: (640, 480), None):
+        with pytest.raises(a11y.A11yError) as error:
+            a11y.snapshot(small, bus=fake, size=size)
+        assert error.value.code == "ambiguous"
 
 
 def test_snapshot_takes_a_lone_titled_toplevel_that_reports_no_window_role(tmp_path, monkeypatch):
@@ -207,6 +286,16 @@ def test_a_peek_leaves_the_latest_snapshot_and_its_ids_in_place(tmp_path, monkey
 
     assert peeked.snapshot == "" and "snapshot" not in peeked.to_dict()
     assert a11y.locate(window(), f"{taken}:e2", bus=fake) == a11y.Located(10, 20, 80, 20)
+
+
+def test_an_action_name_refused_for_any_other_reason_is_raised(tmp_path, monkeypatch):
+    monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path))
+    fake = FakeBus()
+    fake.interfaces["/button"] += [a11y.ACTION_INTERFACE]
+    fake.actions["/button"] = ["toggle", _dbus_error("org.freedesktop.DBus.Error.AccessDenied")]
+    with pytest.raises(a11y.A11yError) as error:
+        a11y.snapshot(window(), bus=fake)
+    assert error.value.code == "unavailable"
 
 
 def test_an_unnamed_element_is_named_by_the_label_it_points_to(tmp_path, monkeypatch):

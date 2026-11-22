@@ -7,6 +7,16 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+- One agent's click no longer closes a menu another agent has open in its own hidden window, and neither does the user's click elsewhere. A press closed every open menu deskpilot had opened, in any app. It now closes those of the app it lands in, and a press from the user's pointer also those in windows in view, as it would without deskpilot.
+
+- `elements --json` and the MCP `elements` tool give each element's `interfaces`, the AT-SPI interfaces it implements (`Action`, `EditableText`, `Value`, `Selection`), and `actions`, the names the app gives what it can do (`click`, `toggle`, `Press`). A caller can offer a control by what it does instead of by a list of role names, which every toolkit words its own way: a GTK 4 switch, a Qt spin box and a Qt list item that toggles all say so here.
+
+- The `showing` state, and so `--showing`, is kept only for an element whose box has area and lies on the window or one of its open popups. Qt calls the items of a closed combo box showing at x=-10000 and GTK 4 the rows it has not laid out, with no size, so `--showing` listed things nobody could see and a click on one was refused.
+
+- Windows of one app that share a title are told apart by size. An open combo box in a GTK 3 dialog made every `elements` call fail with `ambiguous`, since the dialog and the combo's popup both report an empty name; so did two Text Editor windows of different sizes on new documents. Two that share both title and size are still `ambiguous`, and the error now says so.
+
+- A `drag` whose press starts a drag and drop says the window's own pointer cannot carry it. It said a hidden action cannot, also for a drag on screen. The reference no longer says drag and drop works within any window: it is carried only for an XWayland window or one of the app the user's pointer is on.
+
 - deskpilot is on the AUR as `deskpilot` (`yay -S deskpilot`). The package brings Hyprland, `grim` and the plugin's build tools with it, and each release updates it.
 - `container/Dockerfile` builds while archive.archlinux.org is unreachable: it takes its pinned Arch Linux Archive snapshot from the archive's mirror, umea.archive.pkgbuild.com, and leaves no downloaded packages in the image.
 
