@@ -1,6 +1,6 @@
 ---
 name: deskpilot
-description: Click, scroll and type in desktop app windows on Hyprland with the deskpilot CLI or MCP server, while the user keeps their own pointer and keyboard focus. Works in native Wayland, XWayland and Wine apps such as the Battle.net launcher and games. Use for 'click the button in that app', 'type into the game', 'drive this desktop window', 'take a screenshot of a window', or any GUI task in a Hyprland session.
+description: Click, scroll and type in desktop app windows on Linux (Hyprland), Windows and macOS with the deskpilot CLI or MCP server, while the user keeps their own pointer and keyboard focus. On Hyprland it reaches native Wayland, XWayland and Wine apps, games included. Use for 'click the button in that app', 'type into the game', 'drive this desktop window', 'take a screenshot of a window', or any desktop GUI task.
 ---
 
 # deskpilot
@@ -13,7 +13,13 @@ actions are tools: `windows`, `focus`, `shot`, `click`, `move`, `scroll`, `hover
 If `deskpilot` is not on `PATH`, ask the user before installing it with
 `uv tool install deskpilot`.
 
-1. The first click, scroll or key loads the plugin for the running Hyprland, building it if needed, which can take
+On Windows and macOS there is no plugin, and hidden windows (`launch` stays visible, `--hidden`, `adopt`, `show`,
+`stop`), `paste`, `record`, `cursor_press`, `recipe run` and `--session` are `unavailable`. Input posted to a window that is not in front reaches most
+standard controls; when an app ignores it, ask the user before retrying with `--take-focus` or `--take-pointer`.
+Prefer `--element` clicks there, which use the app's own press action. macOS needs Accessibility and Screen
+Recording access for the app running deskpilot; an `unavailable` error names the missing one.
+
+1. On Hyprland, the first click, scroll or key loads the plugin for the running compositor, building it if needed, which can take
    a minute once per Hyprland version. `deskpilot plugin status` reports the loaded build.
 2. Run `deskpilot windows` and pick the target by address, class, or part of its class or title. A name that matches
    several windows is an error that lists them: pick one by address rather than guessing. `visible` is false for a
@@ -49,11 +55,15 @@ If `deskpilot` is not on `PATH`, ask the user before installing it with
    other way; it sends no input.
    For a GTK or Qt app, `deskpilot elements WINDOW` lists its accessibility tree with ids, and
    `--element ID` replaces X Y on `click`, `move`, `scroll` and `hover`. Prefer it where the app has a tree: the
-   app reports where the element is. An app without one says so; use a shot instead. An item of an open GTK 3 menu
+   app reports where the element is. An app without one says so; use a shot instead. `--query TEXT` prints only
+   the elements whose role, name or text contains TEXT and `--showing` only those on screen. A tree larger than one
+   read (`--max-nodes N`, 2000 unless given, 50 levels deep) ends with a `more:` line: run the command it names, `deskpilot elements
+   WINDOW --more SNAPSHOT`, until no `more:` line is left, or the element you want may be in a batch you never read.
+   Ids from every batch stay good. An item of an open GTK 3 menu
    or combo box is clicked on its popup; an item `elements` lists with zero bounds is on a popup that cannot be told
    apart, so take a new snapshot or use the keyboard.
-5. Type with `deskpilot type "TEXT" --window WINDOW` and press keys with `deskpilot key ctrl+a --window WINDOW` (`ctrl++` is Ctrl and `+`). Games
-   read keys once per frame, so add `--delay 0.1` or more for them (other apps take keys with no delay; use `paste` for long text), and `key --hold SECONDS` to keep a key down: each key is held that long, with the same gap
+5. Type with `deskpilot type "TEXT" --window WINDOW` and press keys with `deskpilot key ctrl+a --window WINDOW` (`ctrl++` is Ctrl and `+`). Apps that
+   read keys once per frame need `--delay 0.1` or more (other apps take keys with no delay; use `paste` for long text), and `key --hold SECONDS` to keep a key down: each key is held that long, with the same gap
    before the next. Text arrives as written on the user's keymap; a character no key on it types is an error, so
    send such text, or a long one, with `deskpilot paste "TEXT" --window WINDOW` (`--keys ctrl+shift+v` in a
    terminal). A paste uses a clipboard only that window sees; XWayland windows refuse it, and so does an app the user last copied in (`owns_clipboard`). `deskpilot clipboard`
@@ -138,14 +148,16 @@ result's structured `code`. An MCP tool refuses an argument it does not take.
 - `owns_clipboard`: the paste's target app holds the user's clipboard and would paste that instead. Use `type` if the
   text has no newlines or the box takes Return safely (type sends each newline as Return), or ask the user to copy
   something in another app. Never set the clipboard to get around it.
-- `stale`: the element id is from a replaced snapshot, the element's role or name changed, or the element or the popup
-  it is on closed, as a dialog's button does once a click on it closes the dialog. Run `elements`
+- `stale`: the element id or the `--more` snapshot is from a replaced snapshot, the tree changed before it was
+  read on, the element's role or name changed, or the element or the popup it is on closed, as a dialog's button
+  does once a click on it closes the dialog. Run `elements`
   again and pick the id anew; pass ids as `SNAPSHOT:e5` so an old one cannot match a renumbered tree. To look
   again without invalidating the ids you hold, use `elements --peek`.
 - `offscreen`: the element is not showing, as in a collapsed menu or a scrolled-away row.
 - `no_tree`: the app exposes no accessibility tree. A Chromium or Electron app needs `--force-renderer-accessibility`
   when it starts, and joins the accessibility bus only if accessibility is already on then or `ACCESSIBILITY_ENABLED=1`
-  is in its environment, which `launch` sets. Otherwise use a shot and points instead.
+  is in its environment, which `launch` sets. A Qt app joins it only with `QT_LINUX_ACCESSIBILITY_ALWAYS_ON=1`, which
+  `launch` sets too. Otherwise use a shot and points instead.
 
 For a popup-grab regression in this checkout, run `scripts/popup_calibration.py --output /path/to/results.json`
 with an explicit parent `HYPRLAND_INSTANCE_SIGNATURE`. It uses and cleans up its own private desktop. The optional

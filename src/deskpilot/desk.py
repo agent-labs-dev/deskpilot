@@ -9,61 +9,28 @@ uinput device, and `take_focus` focuses the window before its keys.
 
 from __future__ import annotations
 
+import contextlib
 import json
 import os
+import re
 import shlex
 import shutil
 import subprocess
 import threading
 import time
+from collections.abc import Generator
 from pathlib import Path
-from typing import TYPE_CHECKING, BinaryIO
-
-from PIL import Image, ImageChops
+from typing import BinaryIO
 
 from . import a11y, clipboard, keys, screen
 from . import record as recording
-from .hypr import AmbiguousWindow, HyprctlError, Hyprland, Window, WindowNotFound, find_window
+from .backend import owner_from_env
+from .base import BaseDesk
+from .errors import EXPECTED, NotVisible, SessionLocked, error_code
+from .hypr import AmbiguousWindow, Hyprland, Window, WindowNotFound, find_window
 from .plugin import BUTTON_CODES, Plugin, PluginError
 
-if TYPE_CHECKING:
-    from .batch import BatchRequest, BatchResult
-
-
-class SessionLocked(RuntimeError):
-    code = "refused"
-
-
-class NotVisible(LookupError):
-    code = "not_visible"
-
-
-# Failures an agent should read and act on: a refusal, a missing window, a tool that failed. Anything else is a bug.
-EXPECTED = (
-    WindowNotFound,
-    AmbiguousWindow,
-    NotVisible,
-    HyprctlError,
-    PluginError,
-    ValueError,
-    TimeoutError,
-    RuntimeError,
-)
-
-
-def error_code(error: BaseException) -> str:
-    """The kind of an expected failure, one stable word a program branches on rather than reading the message:
-    not_found, ambiguous, not_visible, offscreen, stale, covered, gone, owns_clipboard, refused, busy, no_tree,
-    unavailable, timeout or invalid."""
-    code = getattr(error, "code", None)
-    if isinstance(code, str):
-        return code
-    if isinstance(error, TimeoutError):
-        return "timeout"
-    if isinstance(error, ValueError):
-        return "invalid"
-    return "refused"
-
+__all__ = ["EXPECTED", "Desk", "NotVisible", "SessionLocked", "error_code"]
 
 # How long `show` waits for a focused window to come on screen: a workspace switch or a scrolling layout's
 # animation has to finish before the window's area is its own.
@@ -102,15 +69,20 @@ def process_birth(pid: int) -> int | None:
     return int(fields[19]) if len(fields) > 19 and fields[19].isdigit() else None
 
 
-def owner_from_env() -> int | None:
-    """The process named by DESKPILOT_OWNER_PID, whose exit closes the agent's launched apps."""
-    value = os.environ.get("DESKPILOT_OWNER_PID") or None
-    if value is not None and not (value.isdigit() and int(value) > 1):
-        raise ValueError(f"DESKPILOT_OWNER_PID={value!r}: give a process id")
-    return int(value) if value else None
+# Chromium builds a page's accessibility tree only when started with this (or when a screen reader is on), and only
+# the program's name says it is Chromium before it runs, so the name is what is matched.
+CHROMIUM_PROGRAM = re.compile(r"(chrom(e|ium)|brave|vivaldi|msedge|microsoft-edge|opera|electron)", re.IGNORECASE)
+RENDERER_ACCESSIBILITY = "--force-renderer-accessibility"
 
 
-class Desk:
+def _with_page_accessibility(command: list[str]) -> list[str]:
+    """`command` with Chromium's page accessibility switch added after the program, unless it is there already."""
+    if CHROMIUM_PROGRAM.search(os.path.basename(command[0])) and RENDERER_ACCESSIBILITY not in command:
+        return [command[0], RENDERER_ACCESSIBILITY, *command[1:]]
+    return command
+
+
+class Desk(BaseDesk):
     def __init__(self, hypr: Hyprland | None = None, input_factory=None, plugin=None, owner: int | None = None):
         self.hypr = hypr or Hyprland()
         self.plugin = plugin or Plugin()
@@ -140,6 +112,9 @@ class Desk:
 
     def window(self, query: str) -> Window:
         return self.hypr.find(query)
+
+    def cursor(self) -> tuple[int, int]:
+        return self.hypr.cursor()
 
     def focus(self, query: str) -> Window:
         win = self.window(query)
@@ -249,6 +224,7 @@ class Desk:
         hands its window to a copy already running for the user (a single-instance app) opens nothing here."""
         if not command:
             raise ValueError("name the app to launch")
+        command = _with_page_accessibility(command)
         if self._isolated():
             return self._launch_isolated(command, timeout)
         agent = self._register()
@@ -269,6 +245,10 @@ class Desk:
         # IsEnabled does, which is the user's to set): with --force-renderer-accessibility alone they stayed off it and
         # `elements` had no tree.
         env["ACCESSIBILITY_ENABLED"] = "1"
+        env["NO_AT_BRIDGE"] = "0"  # GTK: a user's NO_AT_BRIDGE=1 would keep the app off the accessibility bus
+        # Qt's AT-SPI bridge stays off unless a screen reader is enabled on the bus as the app starts, or this is
+        # set: without it cmake-gui and qt5ct had no tree.
+        env["QT_LINUX_ACCESSIBILITY_ALWAYS_ON"] = "1"
         self._launched = [p for p in self._launched if p.poll() is None]
         if shutil.which(command[0], path=env.get("PATH")) is None:
             raise ValueError(f"cannot start {command[0]}: No such file or directory")
@@ -489,13 +469,39 @@ class Desk:
         return "plain" if not cursor or os.environ.get("DESKPILOT_CURSOR") == "off" else "shown"
 
     def _path(self, win: Window, steps: list[str], hidden: bool) -> dict:
-        return self.plugin.path(win.address, self._mode(hidden), steps)
+        reply = self.plugin.path(win.address, self._mode(hidden), steps)
+        self.route = reply.get("route")
+        return reply
 
     def _take_pointer(self, win: Window, gx: int, gy: int) -> None:
         self.hypr.focus(win)
         self.hypr.move_cursor(gx, gy)
         time.sleep(0.15)
         self.input.nudge()
+
+    @contextlib.contextmanager
+    def _borrowed_pointer(self, win: Window, gx: int, gy: int) -> Generator[None]:
+        """Take the user's pointer to a point for one action, and give back their focus and pointer after it, however
+        it ends: `--take-pointer` borrows them, it does not move the user's place."""
+        before = next((w for w in self.hypr.windows() if w.focused), None)
+        cursor = self.hypr.cursor()
+        try:
+            self._take_pointer(win, gx, gy)  # inside the try: a failure after it moved focus is given back too
+            yield
+        finally:
+            # Focus first: Hyprland's focus dispatch warps the cursor to the window's centre, so the pointer goes back
+            # last. Moving the cursor by dispatch does not change focus (checked on 0.57, follow_mouse on).
+            self._refocus(before)
+            self.hypr.move_cursor(*cursor)
+
+    def _refocus(self, before: Window | None) -> None:
+        """Focus `before` again if that window is still the one: an address a closed window freed can name another."""
+        if before is None:
+            return
+        with contextlib.suppress(*EXPECTED):  # the window may have closed during the action
+            now = next((w for w in self.hypr.windows() if w.address == before.address), None)
+            if now is not None and now.stable_id == before.stable_id:
+                self.hypr.focus(now)
 
     def move(
         self,
@@ -510,6 +516,7 @@ class Desk:
         element: str | None = None,
     ) -> tuple[int, int]:
         """Show the agent cursor at a point. take_pointer also moves the user's pointer there."""
+        self.route = None
         win, gx, gy = self.point(query, x, y, scale, shot, show, element)
         if self._mode(False) == "shown":
             self.plugin.cursor(gx, gy)
@@ -541,6 +548,7 @@ class Desk:
     ) -> tuple[int, int]:
         """Click a point. take_focus focuses the window first and leaves it focused, for a menu or dropdown that
         closes when its window is not the focused one."""
+        self.route = None
         if hidden and (take_pointer or take_focus):
             raise ValueError(
                 "a hidden click leaves the user's pointer and focus alone: drop take_pointer and take_focus"
@@ -549,8 +557,9 @@ class Desk:
             self.focus(query)
         win, gx, gy, surface = self._aim(query, x, y, scale, shot, show, element, hidden)
         if take_pointer:
-            self._take_pointer(win, gx, gy)
-            self.input.click(button, count)
+            with self._borrowed_pointer(win, gx, gy):
+                self.input.click(button, count)
+            self.route = "pointer"
         else:
             code = BUTTON_CODES[button]
             self._path(win, [*surface, f"m{gx},{gy}", f"d{HOLD_MS}", *[f"p{code}", f"r{code}"] * count], hidden)
@@ -571,14 +580,16 @@ class Desk:
         hidden: bool = False,
     ) -> tuple[int, int]:
         """Turn the wheel `dy` notches at a point, up to 50; positive is up."""
+        self.route = None
         if hidden and take_pointer:
             raise ValueError("a hidden scroll leaves the user's pointer alone: drop take_pointer")
         if dy == 0 or abs(dy) > 50:
             raise ValueError("scroll 1 to 50 notches, positive up")
         win, gx, gy, surface = self._aim(query, x, y, scale, shot, show, element, hidden)
         if take_pointer:
-            self._take_pointer(win, gx, gy)
-            self.input.scroll(dy=dy)
+            with self._borrowed_pointer(win, gx, gy):
+                self.input.scroll(dy=dy)
+            self.route = "pointer"
         else:
             self._path(win, [*surface, f"m{gx},{gy}", f"d{HOLD_MS}", f"w{dy}"], hidden)
         return gx, gy
@@ -598,6 +609,7 @@ class Desk:
     ) -> tuple[int, int]:
         """Press at `start`, move to `end` over `duration` seconds and release there, for a slider, a selection or a
         drag and drop within the window. Both points are in the same shot's pixels. The user's pointer stays put."""
+        self.route = None
         win, x1, y1 = self.point(query, *start, scale, shot, show, hidden=hidden)
         _, x2, y2 = self.point(query, *end, scale, shot, show, hidden=hidden)
         if not 0 < duration <= 5:
@@ -631,6 +643,7 @@ class Desk:
         """Rest the pointer on a point for `wait` seconds without moving the user's, for a tooltip or a menu that
         opens on hover. Returns a screenshot taken while it rests there. With `then_click`, a point in the same
         pixels, it clicks there next instead, before the pointer leaves, and returns that point."""
+        self.route = None
         if not 0 <= wait <= 5:
             raise ValueError("a hover waits 0 to 5 seconds")
         win, gx, gy, surface = self._aim(query, x, y, scale, shot, show, element, hidden)
@@ -648,11 +661,24 @@ class Desk:
         finally:
             self.plugin.end(reply["ticket"])
 
-    def elements(self, query: str, show: bool = False, hidden: bool = False, peek: bool = False) -> a11y.Element:
-        """The window's accessibility tree, whose element ids click, hover, move and scroll take. A peek leaves the
-        latest snapshot, and the ids taken from it, in place."""
+    def elements(
+        self,
+        query: str,
+        show: bool = False,
+        hidden: bool = False,
+        peek: bool = False,
+        max_nodes: int = a11y.MAX_NODES,
+        more: str = "",
+    ) -> a11y.Element | a11y.Batch:
+        """The window's accessibility tree, whose element ids click, hover, move and scroll take, read up to
+        `max_nodes` elements at a time. A tree larger than that says so, and `more`, the snapshot's id, reads its
+        next batch. A peek leaves the latest snapshot, and the ids taken from it, in place."""
+        if more and peek:
+            raise ValueError("a peek keeps no snapshot to read on: use more without peek")
         win = self._target(query, show, hidden)
-        return a11y.snapshot(win, peek=peek, popups=lambda: self._popups(win))
+        if more:
+            return a11y.more(win, more, max_nodes, popups=lambda: self._popups(win))
+        return a11y.snapshot(win, max_nodes, peek=peek, popups=lambda: self._popups(win))
 
     def key(
         self,
@@ -667,7 +693,7 @@ class Desk:
     ) -> None:
         """Press a chord in a window without focusing it, or with take_focus after focusing it. With no window the
         keys go to the focused window. Each key is held `hold` seconds, up to 10, for an app that acts while a key is
-        down (auto-repeat, a game's movement)."""
+        down (auto-repeat, a slider that moves while a key is held)."""
         if not 0 <= hold <= 10:
             raise ValueError("a key is held 0 to 10 seconds")
         if agent_keyboard and query is None:
@@ -761,87 +787,5 @@ class Desk:
             self._register()
         return win
 
-    def batch(self, request: BatchRequest) -> BatchResult:
-        """Run a validated batch of actions on one window in order, stopping at the first expected failure (see
-        `batch`)."""
-        from . import batch
-
-        return batch.run(self, request)
-
-    def wait_for(
-        self,
-        query: str,
-        timeout: float = 60,
-        gone: bool = False,
-        focused: bool = False,
-        title: str | None = None,
-        size: tuple[int, int] | None = None,
-    ) -> Window | None:
-        """Wait until a window matching `query` exists (or, with gone, no longer does), and also has keyboard focus,
-        a title containing `title` or the size `size` when asked. Returns the window as it was when it matched."""
-        checks = [
-            (what, check)
-            for wanted, what, check in (
-                (focused, "focused", lambda w: w.focused),
-                (title is not None, f"titled with {title!r}", lambda w: title in w.title),
-                (size is not None, "x".join(map(str, size or ())), lambda w: (w.width, w.height) == size),
-            )
-            if wanted
-        ]
-        deadline = time.monotonic() + timeout
-        while True:
-            try:
-                win = self.window(query)
-            except WindowNotFound:
-                win = None
-            if gone and win is None:
-                return None
-            unmet = [what for what, check in checks if win and not check(win)]
-            if not gone and win and not unmet:
-                return win
-            if time.monotonic() >= deadline:
-                if gone:
-                    raise TimeoutError(f"window '{query}' still open within {timeout:g}s")
-                if win is None:
-                    raise TimeoutError(f"window '{query}' did not appear within {timeout:g}s")
-                raise TimeoutError(f"window '{query}' is not {' and '.join(unmet)} after {timeout:g}s")
-            time.sleep(0.5)
-
-    def wait_changed(
-        self,
-        query: str,
-        shot: str,
-        timeout: float = 60,
-        region: tuple[int, int, int, int] | None = None,
-        hidden: bool = False,
-    ) -> tuple[screen.Shot, tuple[int, int, int, int]]:
-        """Wait until the window looks different from `shot`, in all of it or in `region` (x, y, width, height in
-        that shot's pixels). Returns a shot of the change and the box that changed in its pixels. A pixel counts as
-        changed when it differs at all; a window resized since the shot has changed everywhere."""
-        win = self._target(query, False, hidden)
-        base = screen.load(shot)
-        if win.address != base.address:
-            raise screen.StaleShot(f"shot {shot} is of window {base.address}, not {win.address}")
-        base.check_identity(win)
-        x, y, w, h = region or (0, 0, base.width, base.height)
-        if w <= 0 or h <= 0 or x < 0 or y < 0 or x + w > base.width or y + h > base.height:
-            raise ValueError(f"region {x},{y} {w}x{h} is not inside shot {shot} ({base.width}x{base.height})")
-        box = (x, y, x + w, y + h)
-        with Image.open(base.path) as image:
-            before = image.convert("RGB").crop(box)
-        deadline = time.monotonic() + timeout
-        while True:
-            win = self._target(query, False, hidden)
-            now = screen.capture(self._shootable(win), max_width=base.width)
-            # A resize, or a move to a monitor of another scale, changes the whole image.
-            if (now.width, now.height) != (base.width, base.height):
-                return now, (0, 0, now.width, now.height)
-            with Image.open(now.path) as image:
-                diff = ImageChops.difference(before, image.convert("RGB").crop(box)).getbbox()
-            if diff:
-                return now, (x + diff[0], y + diff[1], x + diff[2], y + diff[3])
-            screen.discard(now)
-            remaining = deadline - time.monotonic()
-            if remaining <= 0:
-                raise TimeoutError(f"{win.cls} did not change from shot {shot} within {timeout:g}s")
-            time.sleep(min(0.5, remaining))
+    def _capture(self, win: Window, max_width: int) -> screen.Shot:
+        return screen.capture(win, max_width=max_width)

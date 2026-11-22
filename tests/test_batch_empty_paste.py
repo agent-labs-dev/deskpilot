@@ -10,7 +10,7 @@ def test_an_empty_paste_rejects_the_batch_before_earlier_input(tmp_path, monkeyp
         desk.batch(
             batch.parse(
                 {
-                    "window": "battle",
+                    "window": "notepad",
                     "actions": [
                         {"action": "key", "combo": "Return"},
                         {"action": "paste", "text": ""},

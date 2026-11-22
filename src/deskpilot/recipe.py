@@ -30,9 +30,8 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_valida
 
 from . import batch, screen
 from . import record as recording
-from .desk import EXPECTED, error_code
+from .errors import EXPECTED, error_code
 from .hypr import Window, WindowNotFound, find_window
-from .plugin import PluginError
 
 if TYPE_CHECKING:
     from .desk import Desk
@@ -231,9 +230,9 @@ def _launch(desk: Desk, recipe: Recipe) -> Window:
         try:
             window = desk.launch(command, recipe.timeout)
             break
-        except PluginError as error:
+        except RuntimeError as error:
             # The agent of the recipe before this one is still being stopped; the plugin says so with `busy`.
-            if error.code != "busy" or time.monotonic() >= deadline:
+            if getattr(error, "code", "") != "busy" or time.monotonic() >= deadline:
                 raise
             time.sleep(BUSY_RETRY)
     find_window([window], recipe.window)  # the first window the app opens must be the one the recipe names
@@ -372,7 +371,7 @@ def _do(desk: Desk, step: Any, window: Window, hidden: bool) -> dict:
             return {}
         case _:  # pragma: no cover - every member of Step is above, and parse refuses anything else
             raise AssertionError(step.action)
-    return {"x": point[0], "y": point[1]}
+    return desk.landed(*point)
 
 
 def _pause(desk: Desk, window: Window, seconds: float) -> None:

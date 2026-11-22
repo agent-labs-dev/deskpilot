@@ -1,15 +1,16 @@
-"""deskpilot: drive Hyprland desktop windows from an agent.
+"""deskpilot: drive desktop windows from an agent, on Hyprland, Windows and macOS.
 
 Coordinates for move, click, scroll, hover and drag are pixels in the window's last `deskpilot shot`, so read the
 screenshot, pick a point, click it. Pass --scale 1 to give window pixels instead, or --element with an id from
 `deskpilot elements` to act on that element of the app's accessibility tree.
 
-Clicks, scrolls, drags, hovers, keys and text run inside the compositor through the deskpilot Hyprland plugin
+On Hyprland, clicks, scrolls, drags, hovers, keys and text run inside the compositor through the deskpilot plugin
 (`deskpilot plugin load`), so the user's pointer and keyboard focus stay where they are, and text arrives as written on
 the user's keymap; a marker the plugin draws shows where the agent acts, one per DESKPILOT_AGENT name. A window that
 is not on screen is refused unless --show brings it into view. --hidden acts on a window the agent launched or
 explicitly adopted, on its own hidden workspace, with nothing shown; hidden keys need --window. --take-pointer and
---take-focus move the user's own pointer or focus instead.
+--take-focus move the user's own pointer or focus instead. On Windows and macOS the same actions are posted to the
+target window's own process; hidden actions, adoption and private paste are Hyprland features and are refused there.
 """
 
 from __future__ import annotations
@@ -24,11 +25,14 @@ import threading
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from .desk import EXPECTED, Desk, error_code
-from .session import keyboard_binary
+from . import a11y
+from .backend import hyprland_only, open_desk
+from .errors import EXPECTED, error_code
 
 if TYPE_CHECKING:
     from .batch import BatchRequest
+    from .desk import Desk
+    from .native import NativeDesk
 
 
 def _print(data, as_json: bool) -> None:
@@ -94,15 +98,61 @@ def _shot_args(s: argparse.ArgumentParser) -> None:
 
 
 def _tree(element: dict, depth: int = 0) -> list[str]:
-    """An accessibility tree as indented lines: id, role, name, bounds in window pixels, states and text."""
-    name = f" {element['name']!r}" if element.get("name") else ""
-    text = f" text={element['text']!r}" if element.get("text") else ""
-    states = f" [{', '.join(element['states'])}]" if element.get("states") else ""
-    line = (
-        f"{'  ' * depth}{element['id']} {element['role']}{name} "
-        f"{element['x']},{element['y']} {element['width']}x{element['height']}{states}{text}"
-    )
-    return [line] + [row for child in element.get("children", []) for row in _tree(child, depth + 1)]
+    """An accessibility tree as indented lines: id, role, name, bounds in window pixels, states and text. A loop, not
+    recursion: a tree may be deeper than Python's call stack."""
+    lines = []
+    pending = [(element, depth)]
+    while pending:
+        element, depth = pending.pop()
+        name = f" {element['name']!r}" if element.get("name") else ""
+        text = f" text={element['text']!r}" if element.get("text") else ""
+        states = f" [{', '.join(element['states'])}]" if element.get("states") else ""
+        lines.append(
+            f"{'  ' * depth}{element['id']} {element['role']}{name} "
+            f"{element['x']},{element['y']} {element['width']}x{element['height']}{states}{text}"
+        )
+        pending.extend((child, depth + 1) for child in reversed(element.get("children", [])))
+    return lines
+
+
+def _elements_text(tree: dict, args: argparse.Namespace) -> list[str]:
+    """`elements` as text: the snapshot id, the tree or a later batch's subtrees under the ids they hang from, and,
+    when the tree is larger than what was read, the command that reads on."""
+    lines = [f"snapshot {tree['snapshot']}"] if "snapshot" in tree else []
+    if "elements" in tree:
+        parent = None
+        for element in tree["elements"]:
+            if element.get("parent") != parent:
+                parent = element.get("parent")
+                lines.append(f"under {parent}:")
+            lines += _tree(element, 1)
+    else:
+        lines += _tree(tree)
+    if "read" in tree:
+        lines.append(f"matched {tree['matched']} of the {tree['read']} elements read")
+    if "more" in tree:
+        # Nothing is left out quietly: the rest of the tree is one command away, and that command is spelled out.
+        command = ["deskpilot", "elements", args.window, "--more", tree["more"], "--max-nodes", str(args.max_nodes)]
+        command += ["--hidden"] if args.hidden else ["--show"] if args.show else []
+        command += ["--query", args.query] if args.query else []
+        command += ["--showing"] if args.showing else []
+        lines.append(f"more: the tree is larger than this batch; read on with: {shlex.join(command)}")
+    elif tree.get("truncated"):
+        lines.append(
+            "truncated: the tree is larger than was read, and nothing is kept to read on from; "
+            "read again with a larger --max-nodes"
+        )
+    return lines
+
+
+def _count(arg: str) -> int:
+    try:
+        value = int(arg)
+    except ValueError:
+        value = 0
+    if value < 1:
+        raise argparse.ArgumentTypeError(f"{arg!r} is not a whole number of 1 or more")
+    return value
 
 
 def _text(arg: str) -> str:
@@ -170,6 +220,22 @@ def _path_commands(sub) -> None:
         action="store_true",
         help="read the tree without replacing the latest snapshot, whose ids stay good; a peek's ids name nothing",
     )
+    s.add_argument(
+        "--max-nodes",
+        type=_count,
+        default=a11y.MAX_NODES,
+        metavar="N",
+        help=f"read at most N elements in this call (default {a11y.MAX_NODES}); a larger tree is read on with --more",
+    )
+    s.add_argument(
+        "--more",
+        metavar="SNAPSHOT",
+        help="read the next batch of a snapshot whose tree was larger than one read; its ids number on",
+    )
+    s.add_argument(
+        "--query", metavar="TEXT", help="print only elements whose role, name or text contains TEXT, and their parents"
+    )
+    s.add_argument("--showing", action="store_true", help="print only elements on screen now, and their parents")
     _view_args(s)
     _batch_command(sub)
 
@@ -262,12 +328,17 @@ def _recipe(args: argparse.Namespace):
     return recipe.load(Path(args.file))
 
 
-def _run_recipe(args: argparse.Namespace, desk: Desk) -> object:
+def _run_recipe(args: argparse.Namespace, desk: Desk | NativeDesk) -> object:
     from . import recipe as recipes
 
     loaded = _recipe(args)
     if args.action != "run":
         return loaded if isinstance(loaded, dict) else loaded.model_dump(mode="json")
+    # A recipe launches its app on the agent's hidden workspace and records it with the agent cursor, both plugin work.
+    hyprland_only("recipe run")
+    from .desk import Desk
+
+    assert isinstance(desk, Desk)
     return recipes.run(desk, loaded, args.record).to_dict()
 
 
@@ -369,7 +440,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--delay",
         type=float,
         default=0.0,
-        help="seconds each key is held and between keys, none by default; games want 0.1 or more",
+        help="seconds each key is held and between keys, none by default; apps that read once per frame want 0.1+",
     )
     _view_args(s)
 
@@ -396,7 +467,22 @@ def build_parser() -> argparse.ArgumentParser:
     return p
 
 
-def _record(desk: Desk, args: argparse.Namespace) -> object:
+def _plugin(action: str, desk: Desk | NativeDesk) -> dict:
+    hyprland_only("the compositor plugin")
+    from .desk import Desk
+    from .plugin import load_lock
+    from .session import keyboard_binary  # after the guard: it needs fcntl, which Windows lacks
+
+    assert isinstance(desk, Desk)
+    if action == "build":
+        with load_lock():  # a load prunes the other builds, so it must not run while this one is being linked
+            return {"path": str(desk.plugin.build()), "keyboard": str(keyboard_binary())}
+    if action == "load":
+        return {"path": str(desk.plugin.load()), **desk.plugin.status()}
+    return desk.plugin.status()
+
+
+def _record(desk: Desk | NativeDesk, args: argparse.Namespace) -> object:
     stop = threading.Event()
     for number in (signal.SIGINT, signal.SIGTERM):
         signal.signal(number, lambda *_: stop.set())
@@ -412,7 +498,7 @@ def _record(desk: Desk, args: argparse.Namespace) -> object:
     return result.to_dict() | {"path": args.out}
 
 
-def run(args: argparse.Namespace, desk: Desk) -> object:  # noqa: PLR0915 (one branch per command)
+def run(args: argparse.Namespace, desk: Desk | NativeDesk) -> object:
     match args.cmd:
         case "windows":
             return [w.to_dict() for w in desk.windows()]
@@ -433,7 +519,7 @@ def run(args: argparse.Namespace, desk: Desk) -> object:  # noqa: PLR0915 (one b
                 show=args.show,
                 element=args.element,
             )
-            return {"x": gx, "y": gy}
+            return desk.landed(gx, gy)
         case "click":
             gx, gy = desk.click(
                 args.window,
@@ -449,7 +535,7 @@ def run(args: argparse.Namespace, desk: Desk) -> object:  # noqa: PLR0915 (one b
                 element=args.element,
                 hidden=args.hidden,
             )
-            return {"x": gx, "y": gy}
+            return desk.landed(gx, gy)
         case "scroll":
             gx, gy = desk.scroll(
                 args.window,
@@ -463,7 +549,7 @@ def run(args: argparse.Namespace, desk: Desk) -> object:  # noqa: PLR0915 (one b
                 element=args.element,
                 hidden=args.hidden,
             )
-            return {"x": gx, "y": gy}
+            return desk.landed(gx, gy)
         case "hover":
             result = desk.hover(
                 args.window,
@@ -480,8 +566,8 @@ def run(args: argparse.Namespace, desk: Desk) -> object:  # noqa: PLR0915 (one b
                 hidden=args.hidden,
             )
             if isinstance(result, tuple):
-                return {"x": result[0], "y": result[1]}
-            return result.to_dict()
+                return desk.landed(*result)
+            return desk.routed(result.to_dict())
         case "drag":
             gx, gy = desk.drag(
                 args.window,
@@ -494,12 +580,11 @@ def run(args: argparse.Namespace, desk: Desk) -> object:  # noqa: PLR0915 (one b
                 show=args.show,
                 hidden=args.hidden,
             )
-            return {"x": gx, "y": gy}
+            return desk.landed(gx, gy)
         case "elements":
-            tree = desk.elements(args.window, args.show, args.hidden, args.peek).to_dict()
-            if args.json:
-                return tree
-            return [f"snapshot {tree['snapshot']}", *_tree(tree)] if "snapshot" in tree else _tree(tree)
+            read = desk.elements(args.window, args.show, args.hidden, args.peek, args.max_nodes, args.more or "")
+            tree = a11y.narrow(read.to_dict(), args.query or "", args.showing)
+            return tree if args.json else _elements_text(tree, args)
         case "key":
             desk.key(
                 args.combo,
@@ -543,11 +628,7 @@ def run(args: argparse.Namespace, desk: Desk) -> object:  # noqa: PLR0915 (one b
             win = desk.wait_for(args.window, args.timeout, args.gone, args.focused, args.title, args.size)
             return win.to_dict() if win else "gone"
         case "plugin":
-            if args.action == "build":
-                return {"path": str(desk.plugin.build()), "keyboard": str(keyboard_binary())}
-            if args.action == "load":
-                return {"path": str(desk.plugin.load()), **desk.plugin.status()}
-            return desk.plugin.status()
+            return _plugin(args.action, desk)
         case "launch":
             return desk.launch(args.command, args.timeout).to_dict()
         case "adopt" | "release":
@@ -559,7 +640,7 @@ def run(args: argparse.Namespace, desk: Desk) -> object:  # noqa: PLR0915 (one b
             desk.stop()
             return "ok"
         case "cursor":
-            x, y = desk.hypr.cursor()
+            x, y = desk.cursor()
             return {"x": x, "y": y}
         case "recipe":
             return _run_recipe(args, desk)
@@ -570,7 +651,11 @@ def main(argv: list[str] | None = None) -> int:
     _Parser.json_errors = "--json" in (sys.argv[1:] if argv is None else argv)
     args = build_parser().parse_args(argv)
     if args.session:
-        from . import session
+        try:
+            hyprland_only("a private --session")
+        except EXPECTED as error:
+            return _fail(error_code(error), str(error), args.json)
+        from . import session  # after the guard: it needs fcntl, which Windows lacks
 
         try:
             if args.cmd == "mcp" and not os.environ.get("DESKPILOT_OWNER_PID"):
@@ -594,7 +679,7 @@ def main(argv: list[str] | None = None) -> int:
 
         serve()
         return 0
-    desk = Desk()
+    desk = open_desk()
     try:
         output = _record(desk, args) if args.cmd == "record" else run(args, desk)
         if output is not None:

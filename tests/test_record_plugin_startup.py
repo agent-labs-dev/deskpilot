@@ -35,7 +35,7 @@ def test_record_loads_the_recording_plugin_before_its_first_frame(tmp_path, monk
         return b"P6\n2 2\n255\n" + bytes(12)
 
     monkeypatch.setattr(screen, "frame", frame)
-    desk.record("battle", io.BytesIO(), threading.Event(), seconds=0.01)
+    desk.record("notepad", io.BytesIO(), threading.Event(), seconds=0.01)
     assert calls[:2] == ["load", "frame"]
 
 
@@ -51,5 +51,5 @@ def test_record_reports_a_plugin_load_failure_before_capturing(tmp_path, monkeyp
     frames = []
     monkeypatch.setattr(screen, "frame", lambda window: frames.append(window) or b"frame")
     with pytest.raises(PluginError, match="install Hyprland headers"):
-        desk.record("battle", io.BytesIO(), threading.Event(), seconds=0.01)
+        desk.record("notepad", io.BytesIO(), threading.Event(), seconds=0.01)
     assert frames == []

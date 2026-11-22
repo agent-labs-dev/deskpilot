@@ -1,0 +1,171 @@
+{
+  "version": 1,
+  "name": "trip expenses, part 2: calculator",
+  "description": "Part 2 of the trip expenses demo: add the four amounts from recipes/fixtures/expenses.csv in GNOME Calculator by clicking its keys, then split the total between four people.",
+  "window": "org.gnome.Calculator",
+  "size": "1238x758",
+  "launch": [
+    "gnome-calculator"
+  ],
+  "env": {
+    "GSETTINGS_BACKEND": "memory"
+  },
+  "timeout": 30,
+  "steps": [
+    {
+      "action": "pause",
+      "seconds": 1.2
+    },
+    {
+      "action": "click",
+      "x": 359,
+      "y": 640
+    },
+    {
+      "action": "click",
+      "x": 359,
+      "y": 688
+    },
+    {
+      "action": "click",
+      "x": 495,
+      "y": 688
+    },
+    {
+      "action": "click",
+      "x": 495,
+      "y": 736
+    },
+    {
+      "action": "click",
+      "x": 495,
+      "y": 640
+    },
+    {
+      "action": "pause",
+      "seconds": 0.7
+    },
+    {
+      "action": "click",
+      "x": 767,
+      "y": 688
+    },
+    {
+      "action": "click",
+      "x": 631,
+      "y": 688
+    },
+    {
+      "action": "click",
+      "x": 495,
+      "y": 592
+    },
+    {
+      "action": "click",
+      "x": 631,
+      "y": 592
+    },
+    {
+      "action": "pause",
+      "seconds": 0.7
+    },
+    {
+      "action": "click",
+      "x": 767,
+      "y": 688
+    },
+    {
+      "action": "click",
+      "x": 631,
+      "y": 592
+    },
+    {
+      "action": "click",
+      "x": 631,
+      "y": 640
+    },
+    {
+      "action": "click",
+      "x": 495,
+      "y": 736
+    },
+    {
+      "action": "click",
+      "x": 359,
+      "y": 640
+    },
+    {
+      "action": "pause",
+      "seconds": 0.7
+    },
+    {
+      "action": "click",
+      "x": 767,
+      "y": 688
+    },
+    {
+      "action": "click",
+      "x": 359,
+      "y": 640
+    },
+    {
+      "action": "click",
+      "x": 495,
+      "y": 688
+    },
+    {
+      "action": "click",
+      "x": 495,
+      "y": 736
+    },
+    {
+      "action": "click",
+      "x": 359,
+      "y": 688
+    },
+    {
+      "action": "pause",
+      "seconds": 0.7
+    },
+    {
+      "action": "click",
+      "x": 903,
+      "y": 712
+    },
+    {
+      "action": "pause",
+      "seconds": 2.2
+    },
+    {
+      "action": "click",
+      "x": 767,
+      "y": 544
+    },
+    {
+      "action": "click",
+      "x": 359,
+      "y": 640
+    },
+    {
+      "action": "pause",
+      "seconds": 0.6
+    },
+    {
+      "action": "click",
+      "x": 903,
+      "y": 712
+    },
+    {
+      "action": "pause",
+      "seconds": 2.5
+    },
+    {
+      "action": "shot",
+      "out": "expenses-2-calculator.png"
+    }
+  ],
+  "record": {
+    "output": "assets/recipes/expenses-2-calculator.mp4",
+    "fps": 30
+  }
+}
