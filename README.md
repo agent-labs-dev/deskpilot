@@ -63,6 +63,10 @@ agent's app), granted in System Settings > Privacy & Security.
 uv tool install deskpilot
 ```
 
+On Arch Linux, the [`deskpilot`](https://aur.archlinux.org/packages/deskpilot) AUR package installs it with
+Hyprland, `grim` and the plugin's build tools: `yay -S deskpilot`. `wl-clipboard` and `ffmpeg` are optional
+dependencies.
+
 On Hyprland, the first input action builds and loads the plugin for your running compositor. Run
 `deskpilot plugin load` to prepare it ahead of time. The build needs the tools listed under
 [Requirements](#requirements). Windows and macOS need nothing beyond the package.
