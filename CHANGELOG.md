@@ -17,6 +17,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 - A `drag` whose press starts a drag and drop says the window's own pointer cannot carry it. It said a hidden action cannot, also for a drag on screen. The reference no longer says drag and drop works within any window: it is carried only for an XWayland window or one of the app the user's pointer is on.
 
+- `container/Dockerfile` builds while archive.archlinux.org is unreachable: it takes its pinned Arch Linux Archive snapshot from the archive's mirror, umea.archive.pkgbuild.com, and leaves no downloaded packages in the image.
+
 ## [0.9.0] - 2026-11-21
 
 - A click, hover, scroll or drag result names its `route` (`agent`, `client`, `seat`, or `pointer` for `--take-pointer`), so an input that held the user's seat is no surprise.

@@ -4,12 +4,11 @@ FROM archlinux:base@sha256:d4594bb2300cba11f41c2f27923eb56f63d9988909c402f9c9551
 
 # Every package from one Arch Linux Archive snapshot, so Hyprland and the headers the plugin builds against match.
 ARG ARCH_SNAPSHOT=2026/11/12
-RUN echo "Server = https://archive.archlinux.org/repos/${ARCH_SNAPSHOT}/\$repo/os/\$arch" > /etc/pacman.d/mirrorlist \
-    && pacman -Syyuu --noconfirm --needed \
+COPY container/install-snapshot.sh /usr/local/bin/install-snapshot
+RUN install-snapshot "${ARCH_SNAPSHOT}" \
         hyprland mesa grim wf-recorder wl-clipboard at-spi2-core dbus glib2 \
         gcc make pkgconf wayland libxkbcommon cairo pixman libdrm libxcb \
-        python uv zenity ttf-dejavu \
-    && pacman -Scc --noconfirm
+        python uv zenity ttf-dejavu
 
 COPY . /opt/deskpilot
 RUN uv pip install --system --break-system-packages /opt/deskpilot \
