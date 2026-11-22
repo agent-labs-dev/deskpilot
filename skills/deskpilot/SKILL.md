@@ -1,6 +1,6 @@
 ---
 name: deskpilot
-description: Click, scroll and type in desktop app windows on Hyprland with the deskpilot CLI or MCP server, while the user keeps their own pointer and keyboard focus. Works in native Wayland, XWayland and Wine apps such as the Battle.net launcher and games. Use for 'click the button in that app', 'type into the game', 'drive this desktop window', 'take a screenshot of a window', or any GUI task in a Hyprland session.
+description: Click, scroll and type in desktop app windows on Linux (Hyprland), Windows and macOS with the deskpilot CLI or MCP server, while the user keeps their own pointer and keyboard focus. On Hyprland it reaches native Wayland, XWayland and Wine apps, games included. Use for 'click the button in that app', 'type into the game', 'drive this desktop window', 'take a screenshot of a window', or any desktop GUI task.
 ---
 
 # deskpilot
@@ -13,7 +13,13 @@ actions are tools: `windows`, `focus`, `shot`, `click`, `move`, `scroll`, `hover
 If `deskpilot` is not on `PATH`, ask the user before installing it with
 `uv tool install deskpilot`.
 
-1. The first click, scroll or key loads the plugin for the running Hyprland, building it if needed, which can take
+On Windows and macOS there is no plugin, and hidden windows (`launch` stays visible, `--hidden`, `adopt`, `show`,
+`stop`), `paste`, `record`, `cursor_press`, `recipe run` and `--session` are `unavailable`. Input posted to a window that is not in front reaches most
+standard controls; when an app ignores it, ask the user before retrying with `--take-focus` or `--take-pointer`.
+Prefer `--element` clicks there, which use the app's own press action. macOS needs Accessibility and Screen
+Recording access for the app running deskpilot; an `unavailable` error names the missing one.
+
+1. On Hyprland, the first click, scroll or key loads the plugin for the running compositor, building it if needed, which can take
    a minute once per Hyprland version. `deskpilot plugin status` reports the loaded build.
 2. Run `deskpilot windows` and pick the target by address, class, or part of its class or title. A name that matches
    several windows is an error that lists them: pick one by address rather than guessing. `visible` is false for a
@@ -58,8 +64,8 @@ If `deskpilot` is not on `PATH`, ask the user before installing it with
    Ids from every batch stay good. An item of an open GTK 3 menu
    or combo box is clicked on its popup; an item `elements` lists with zero bounds is on a popup that cannot be told
    apart, so take a new snapshot or use the keyboard.
-5. Type with `deskpilot type "TEXT" --window WINDOW` and press keys with `deskpilot key ctrl+a --window WINDOW` (`ctrl++` is Ctrl and `+`). Games
-   read keys once per frame, so add `--delay 0.1` or more for them (other apps take keys with no delay; use `paste` for long text), and `key --hold SECONDS` to keep a key down: each key is held that long, with the same gap
+5. Type with `deskpilot type "TEXT" --window WINDOW` and press keys with `deskpilot key ctrl+a --window WINDOW` (`ctrl++` is Ctrl and `+`). Apps that
+   read keys once per frame need `--delay 0.1` or more (other apps take keys with no delay; use `paste` for long text), and `key --hold SECONDS` to keep a key down: each key is held that long, with the same gap
    before the next. Text arrives as written on the user's keymap; a character no key on it types is an error, so
    send such text, or a long one, with `deskpilot paste "TEXT" --window WINDOW` (`--keys ctrl+shift+v` in a
    terminal). A paste uses a clipboard only that window sees; XWayland windows refuse it, and so does an app the user last copied in (`owns_clipboard`). `deskpilot clipboard`

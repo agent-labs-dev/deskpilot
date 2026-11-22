@@ -12,6 +12,7 @@ CTRL, SHIFT, ALT, SUPER = 29, 42, 56, 125
 NAMED = {
     "esc": 1, "escape": 1, "backspace": 14, "tab": 15, "return": 28, "enter": 28, "space": 57,
     "ctrl": CTRL, "control": CTRL, "shift": SHIFT, "alt": ALT, "super": SUPER, "meta": SUPER, "win": SUPER,
+    "cmd": SUPER, "command": SUPER,
     "capslock": 58, "delete": 111, "del": 111, "insert": 110, "home": 102, "end": 107,
     "pageup": 104, "pagedown": 109, "up": 103, "down": 108, "left": 105, "right": 106,
     "f1": 59, "f2": 60, "f3": 61, "f4": 62, "f5": 63, "f6": 64, "f7": 65, "f8": 66, "f9": 67, "f10": 68,
@@ -31,10 +32,10 @@ def press_release(part: str) -> tuple[str, str]:
     raise ValueError(f"unknown key '{part}'; use a character or one of: {', '.join(sorted(NAMED))}")
 
 
-def chord_words(combo: str) -> list[str]:
-    """'ctrl+shift+t' -> ctrl, shift and t down, then up in reverse. A chord ending in '++' ends with the '+' key, as
-    'ctrl++' does. A lone character, '+' included, is typed as written, so `key A` types a capital A. An empty part, as
-    in 'ctrl+', is an error, so a chord never presses fewer keys than it names."""
+def chord_parts(combo: str) -> list[str]:
+    """'ctrl+shift+t' -> ctrl, shift, t. A chord ending in '++' ends with the '+' key, as 'ctrl++' does. A lone
+    character, '+' included, is that character. An empty part, as in 'ctrl+', is an error, so a chord never presses
+    fewer keys than it names."""
     if combo == "+":
         parts = ["+"]
     elif combo.endswith("++"):
@@ -43,6 +44,13 @@ def chord_words(combo: str) -> list[str]:
         parts = combo.split("+")
     if "" in parts:
         raise ValueError(f"'{combo}' names an empty key: join keys with '+', as in ctrl+shift+t or ctrl++")
+    return parts
+
+
+def chord_words(combo: str) -> list[str]:
+    """A chord's key events: each key down, then up in reverse. A lone character is typed as written, so `key A`
+    types a capital A."""
+    parts = chord_parts(combo)
     if len(parts) == 1 and len(parts[0]) == 1:
         return text_words(parts[0])
     keys = [press_release(part) for part in parts]

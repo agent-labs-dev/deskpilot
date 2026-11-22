@@ -6,19 +6,19 @@
 
 ```sh
 deskpilot windows                         # every window: address, class, title, geometry, whether on screen
-deskpilot shot battle.net.exe             # screenshot; prints its id, image path and scale
-deskpilot click battle.net.exe 920 367 --shot ID    # a point in that screenshot
+deskpilot shot notepad.exe                # screenshot; prints its id, image path and scale
+deskpilot click notepad.exe 920 367 --shot ID    # a point in that screenshot
 deskpilot drag gimp 100 400 500 400       # press, move and release: sliders, selections, drag and drop
 deskpilot hover firefox 300 40 --wait 1   # rest the pointer there; prints a shot showing the tooltip
 deskpilot elements gedit                  # the app's accessibility tree, with ids
 deskpilot click gedit --element e12       # the centre of that element, where the app says it is now
 deskpilot key Right --window kitty --hold 2         # hold a key down two seconds
-deskpilot type "/reload" --window wow.exe --delay 0.12
+deskpilot type "hello" --window notepad.exe --delay 0.12
 deskpilot key ctrl+a --window kitty
 deskpilot paste "Grüße, 日本" --window firefox    # any text, through a clipboard only that window sees
 deskpilot clipboard                       # the user's clipboard text; --set TEXT replaces it
-deskpilot wait-for wow.exe --timeout 120
-deskpilot wait-for wow.exe --changed ID --region 0 0 400 80   # until that part of shot ID looks different
+deskpilot wait-for firefox --timeout 120
+deskpilot wait-for firefox --changed ID --region 0 0 400 80   # until that part of shot ID looks different
 ```
 
 A window is named by its address, its class, or a substring of its class or title. A name that matches more
@@ -81,7 +81,7 @@ when the popup cannot be told exactly the action is refused (`stale` once it clo
 it) and `elements` reports the item with zero bounds, as it does an element whose app gives it a negative size (GTK 4
 does for a tab panel whose page is not realized), which a click refuses `offscreen`. An element's click is also refused `covered` when another
 surface, such as a submenu over its menu, takes the point. GTK and Qt apps expose a tree; Chromium, Electron and
-Firefox expose one only when started with accessibility on, and Wine games expose none. Chromium and Electron join
+Firefox expose one only when started with accessibility on, and Wine apps expose none. Chromium and Electron join
 the accessibility bus when it is already enabled as they start (its `org.a11y.Status.IsEnabled` property is true) or
 when `ACCESSIBILITY_ENABLED=1` is in their environment, which `launch` sets; `--force-renderer-accessibility` puts
 their pages in the tree. A Qt app joins it when `QT_LINUX_ACCESSIBILITY_ALWAYS_ON=1` is in its environment, which
@@ -93,7 +93,7 @@ the one instance whose socket answers, and with several live instances it stops 
 A chord's character is the key that gives it unmodified, else that key with the modifiers it needs, so `key ctrl++`
 presses Ctrl and `+` (Ctrl+Shift+= on a US layout). A chord with an empty key, such as `ctrl+`, is an error.
 
-`key --hold SECONDS` holds each key down that long, up to 10, for auto-repeat or a game's movement.
+`key --hold SECONDS` holds each key down that long, up to 10, for auto-repeat or a slider that moves while a key is held.
 
 `key` and `type` without `--window` press keys into the focused window. `--take-focus` focuses the window first and
 leaves it focused, for an app that ignores keys while unfocused. Keys go to the window's client, not through the
@@ -106,8 +106,8 @@ type, and the user's clipboard stays as it is. XWayland windows share one clipbo
 paste into any of its windows is refused with `owns_clipboard`: `type` the text (each newline becomes Return, which
 can submit a form), or ask the user to copy something in another app. `clipboard` reads the user's clipboard, and `clipboard --set` replaces it.
 
-`type` sends keys as fast as the app reads them, about 1 KB a second into Chrome. Games read keys once per frame,
-so type into them with `--delay 0.1` or more: each key is held that long, with the same gap before the next. For
+`type` sends keys as fast as the app reads them, about 1 KB a second into Chrome. An app that reads keys once per frame
+needs `--delay 0.1` or more: each key is held that long, with the same gap before the next. For
 long text, `paste` is faster still.
 
 `wait-for` waits for a window to appear, or with `--gone` to close. `--focused`, `--title TEXT` and `--size WxH` also
@@ -149,7 +149,8 @@ claude mcp add deskpilot -- deskpilot mcp
 - Each CLI action that uses the input device opens a new one and waits about a second for libinput to add it. The MCP server
   avoids that wait.
 - `drag` stays within one window: a drag and drop into another app is not supported.
-- Hyprland only, Linux only.
+- On Windows and macOS there is no plugin: hidden windows, adoption, `paste`, `record`, `cursor_press`, `recipe run`
+  and `--session` report `unavailable` there.
 
 ## Recipes
 

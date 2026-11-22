@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 import time
 from collections.abc import Callable
 from contextlib import contextmanager
@@ -20,6 +21,11 @@ from .hypr import Window
 SESSION_BUS_NAME = "org.a11y.Bus"
 SESSION_BUS_PATH = "/org/a11y/bus"
 SESSION_BUS_INTERFACE = "org.a11y.Bus"
+STATUS_INTERFACE = "org.a11y.Status"
+ADVERTISE_SETTLE = 1.5  # seconds for running apps to notice the flag and publish their trees
+# Desktops whose session services treat ScreenReaderEnabled as a request to start a screen reader, or whose settings
+# daemon loops when the two flags disagree: only IsEnabled is ever set there.
+SCREEN_READER_DESKTOPS = {"gnome", "cosmic", "cinnamon", "x-cinnamon"}
 A11Y_BUS_NAME = "org.a11y.atspi.Registry"
 A11Y_ROOT_PATH = "/org/a11y/atspi/accessible/root"
 ACCESSIBLE_INTERFACE = "org.a11y.atspi.Accessible"
@@ -180,6 +186,7 @@ class Element:
     children: tuple[Element, ...]
     truncated: bool = False  # on the root: the node budget ended the read before the whole tree was read
     snapshot: str = ""  # on the root: the id of the snapshot whose element ids these are
+    batched: bool = True  # on the root: a truncated read can be read on with `more` (a native desk reads in one call)
     parent: str = ""  # at the top of a later batch: the id of the element, read in an earlier batch, this hangs under
     # What the app says the element can do, so a caller need not infer it from the role, which every toolkit names
     # its own way: the AT-SPI interfaces it implements ("Action", "EditableText", "Value", "Selection") and the names
@@ -208,7 +215,7 @@ class Element:
             result["truncated"] = True
         if self.snapshot:
             result["snapshot"] = self.snapshot
-        if self.truncated and self.snapshot:
+        if self.truncated and self.snapshot and self.batched:
             # The rest of the tree is kept with the snapshot: `more` reads its next batch.
             result["more"] = self.snapshot
         return result
@@ -372,6 +379,44 @@ def _elements_path(window: Window) -> Path:
     return screen.state_dir() / "elements" / f"{window.address}.json"
 
 
+def advertise_accessibility(session: _Bus, desktop: str | None = None) -> bool:
+    """Tell the session an assistive technology is listening, as Chromium, Electron, GTK and Qt wait to hear before
+    they publish a tree: `IsEnabled` on the accessibility bus's status object, and `ScreenReaderEnabled` too, which
+    Chromium watches. Each is set only while false, so a screen reader the user runs stays what it is. Best-effort:
+    a session without the status object is left as it is. Whether it changed anything is returned: an app takes a
+    moment to publish its tree after the flag turns on."""
+    desktop = os.environ.get("XDG_CURRENT_DESKTOP", "") if desktop is None else desktop
+    reader_ok = not SCREEN_READER_DESKTOPS & {part.strip().lower() for part in desktop.replace(";", ":").split(":")}
+    changed = False
+    for prop in ("IsEnabled", *(("ScreenReaderEnabled",) if reader_ok else ())):
+        try:
+            current = _variant_value(
+                _reply_value(
+                    session.call(
+                        SESSION_BUS_NAME,
+                        SESSION_BUS_PATH,
+                        PROPERTIES_INTERFACE,
+                        "Get",
+                        "ss",
+                        (STATUS_INTERFACE, prop),
+                    )
+                )
+            )
+            if not current:
+                session.call(
+                    SESSION_BUS_NAME,
+                    SESSION_BUS_PATH,
+                    PROPERTIES_INTERFACE,
+                    "Set",
+                    "ssv",
+                    (STATUS_INTERFACE, prop, ("b", True)),
+                )
+                changed = True
+        except (A11yError, DBusErrorResponse, OSError, TimeoutError):
+            break
+    return changed
+
+
 @contextmanager
 def _bus_context(bus: _Bus | None):
     if bus is not None:
@@ -383,6 +428,8 @@ def _bus_context(bus: _Bus | None):
         session_connection = open_dbus_connection(bus="SESSION", auth_timeout=CALL_TIMEOUT)
         session = _JeepneyBus(session_connection)
         try:
+            if advertise_accessibility(session):
+                time.sleep(ADVERTISE_SETTLE)
             address_reply = session.call(
                 SESSION_BUS_NAME,
                 SESSION_BUS_PATH,
@@ -697,7 +744,7 @@ def _app_for_pid(bus: _Bus, pid: int) -> tuple[str, str]:
         "org.a11y.Status.IsEnabled is true before they start, and expose their pages only when also started with "
         "--force-renderer-accessibility. Firefox too needs accessibility on when it starts. A Qt app joins the bus "
         "only when QT_LINUX_ACCESSIBILITY_ALWAYS_ON=1 is in its environment (launch sets it) or a screen reader is "
-        "on as it starts, and a Qt Quick app may still expose none. Wine and XWayland games expose none.",
+        "on as it starts, and a Qt Quick app may still expose none. Wine and XWayland apps expose none.",
         "no_tree",
     )
 

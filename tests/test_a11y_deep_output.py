@@ -14,7 +14,7 @@ from deskpilot import a11y, cli, mcp_server
 def test_a_deep_tree_reaches_the_caller_whole_over_batches(tmp_path, monkeypatch, capsys, transport):
     # Each transport's serialiser stops at a fixed depth, so a 600-level tree arrives as batches it can carry.
     desk, *_ = make_desk(tmp_path, monkeypatch)
-    fake = FakeBus(pid=7, title="Battle.net")
+    fake = FakeBus(pid=7, title="Notepad")
     parent = "/button"
     for level in range(600):
         path = f"/deep{level}"
@@ -26,14 +26,14 @@ def test_a_deep_tree_reaches_the_caller_whole_over_batches(tmp_path, monkeypatch
         yield fake
 
     monkeypatch.setattr(a11y, "_bus_context", connection)
-    monkeypatch.setattr(cli, "Desk", lambda: desk)
+    monkeypatch.setattr(cli, "open_desk", lambda: desk)
     monkeypatch.setattr(mcp_server, "desk", desk)
 
     def read(more):
         if transport == "cli":
-            assert cli.main(["--json", "elements", "battle", *(["--more", more] if more else [])]) == 0
+            assert cli.main(["--json", "elements", "notepad", *(["--more", more] if more else [])]) == 0
             return capsys.readouterr().out
-        result = asyncio.run(mcp_server.mcp.call_tool("elements", {"window": "battle", "more": more}))
+        result = asyncio.run(mcp_server.mcp.call_tool("elements", {"window": "notepad", "more": more}))
         assert isinstance(result, CallToolResult) and not result.is_error
         return "\n".join(block.text for block in result.content if block.type == "text")
 

@@ -31,7 +31,7 @@
 //      input events other listeners would act on.
 //   4. The pointer goes back to where the user left it, keyboard focus goes back to the surface that had it if
 //      anything moved it, the cursor's visibility is restored, and the held input is replayed in the order it came
-//      through Hyprland's own handlers, so the user's motion keeps its acceleration and reaches pointer-locked games.
+//      through Hyprland's own handlers, so the user's motion keeps its acceleration and reaches apps that lock the pointer.
 //
 // SHOWN first glides the agent cursor, a marker the compositor draws, to the first point, then moves it with the action
 // and shows each press (see agentcursor). Each agent named by `agent=NAME` after the verb has a cursor of its own.
@@ -222,7 +222,7 @@ namespace {
     // How long the window's client may leave earlier input unread before the next keystroke gives up on it.
     constexpr auto CLIENT_WAIT = std::chrono::seconds(5);
 
-    // Gaps between the steps of a pointer sequence. A client that reads input once per frame (a game) still sees each.
+    // Gaps between the steps of a pointer sequence. A client that reads input once per frame (a renderer loop) still sees each.
     constexpr auto SETTLE  = ms(40);
     constexpr auto HOLD    = ms(60);
     constexpr auto BETWEEN = ms(80);
@@ -423,7 +423,7 @@ namespace {
 
     // The user's pointer input during an action: each event is held while a pointer action moves the seat's pointer
     // or a keystroke holds the user's input, and replayed after it in the order it came, through Hyprland's
-    // own handler, so acceleration, relative motion for pointer-locked games and absolute devices work as they would.
+    // own handler, so acceleration, relative motion for apps that lock the pointer and absolute devices work as they would.
     // A held event is replayed with the time it is replayed at, so it never reaches a client dated before the
     // agent's own events that went ahead of it.
     template <CFunctionHook*& HOOK, typename EVENT, typename... REST>
