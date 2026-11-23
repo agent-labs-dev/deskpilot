@@ -1444,6 +1444,32 @@ def test_client_env_names_the_selected_instance_s_socket(monkeypatch):
         hypr.Hyprland(hypr.run_hyprctl).client_env()
 
 
+def test_malformed_instances_json_reports_unavailable(monkeypatch):
+    # Issue #167: `hyprctl -j instances` returns a newline followed by `]` in a PID namespace.
+    # `windows` must report the instance as unavailable, not raise the raw JSON error.
+    from deskpilot import hypr
+
+    monkeypatch.setattr(hypr, "current_instance", lambda: "nested")
+
+    def run(args, *, instance=None):
+        if args[-1] == "instances":
+            return "\n]\n"
+        return "[]"
+
+    monkeypatch.setattr(hypr, "run_hyprctl", run)
+    with pytest.raises(HyprctlError, match="no Wayland socket for Hyprland nested"):
+        hypr.Hyprland(hypr.run_hyprctl).windows()
+
+
+def test_malformed_cursorpos_json_fails_fast():
+    # The instances fallback must stay scoped: a malformed cursorpos must fail
+    # before input moves, never restore the pointer to a (0, 0) default.
+    from deskpilot import hypr
+
+    with pytest.raises(json.JSONDecodeError):
+        hypr.Hyprland(lambda args: "\n]\n").cursor()
+
+
 @pytest.mark.parametrize("action", ["type", "paste"])
 def test_empty_text_is_refused_by_type_and_paste_alike(tmp_path, monkeypatch, action):
     desk, _, _, plugin = make_desk(tmp_path, monkeypatch)
