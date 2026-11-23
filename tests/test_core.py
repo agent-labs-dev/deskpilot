@@ -1461,6 +1461,15 @@ def test_malformed_instances_json_reports_unavailable(monkeypatch):
         hypr.Hyprland(hypr.run_hyprctl).windows()
 
 
+def test_malformed_cursorpos_json_fails_fast():
+    # The instances fallback must stay scoped: a malformed cursorpos must fail
+    # before input moves, never restore the pointer to a (0, 0) default.
+    from deskpilot import hypr
+
+    with pytest.raises(json.JSONDecodeError):
+        hypr.Hyprland(lambda args: "\n]\n").cursor()
+
+
 @pytest.mark.parametrize("action", ["type", "paste"])
 def test_empty_text_is_refused_by_type_and_paste_alike(tmp_path, monkeypatch, action):
     desk, _, _, plugin = make_desk(tmp_path, monkeypatch)

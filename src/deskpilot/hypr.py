@@ -177,10 +177,7 @@ class Hyprland:
         out = self._run(["-j", *args])
         if not out.strip():
             return None
-        try:
-            return json.loads(out)
-        except json.JSONDecodeError:
-            return None
+        return json.loads(out)
 
     def locked(self) -> bool | None:
         """Authoritative compositor lock state, or unknown on a version without the query."""
@@ -199,13 +196,18 @@ class Hyprland:
         out = run_hyprctl(["-j", name], instance=instance)
         if not out.strip():
             return None
-        try:
-            return json.loads(out)
-        except json.JSONDecodeError:
-            return None
+        return json.loads(out)
 
     def _instance(self, instance: str) -> dict:
-        listed = self._query(instance, "instances") or []
+        try:
+            listed = self._query(instance, "instances") or []
+        except json.JSONDecodeError:
+            # A malformed instances payload reports the instance as
+            # unavailable (no Wayland socket) rather than crashing the caller.
+            # The fallback stays scoped to instances: cursor, focus and other
+            # queries still fail fast so a borrowed pointer or focus is never
+            # restored from a default.
+            listed = []
         found = next((i for i in listed if i["instance"] == instance), {})
         if not found.get("wl_socket"):
             raise HyprctlError(f"no Wayland socket for Hyprland {instance or 'instance'}")
