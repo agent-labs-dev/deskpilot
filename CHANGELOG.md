@@ -19,6 +19,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 - deskpilot is on the AUR as `deskpilot` (`yay -S deskpilot`). The package brings Hyprland, `grim` and the plugin's build tools with it, and each release updates it.
 - `container/Dockerfile` builds while archive.archlinux.org is unreachable: it takes its pinned Arch Linux Archive snapshot from the archive's mirror, umea.archive.pkgbuild.com, and leaves no downloaded packages in the image.
+- `windows` reports an instance whose `instances` query returns malformed JSON as `unavailable` instead of failing on the raw parse error.
 
 ## [0.9.0] - 2026-11-21
 

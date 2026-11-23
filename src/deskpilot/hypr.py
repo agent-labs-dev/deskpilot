@@ -175,7 +175,12 @@ class Hyprland:
 
     def _json(self, *args: str):
         out = self._run(["-j", *args])
-        return json.loads(out) if out.strip() else None
+        if not out.strip():
+            return None
+        try:
+            return json.loads(out)
+        except json.JSONDecodeError:
+            return None
 
     def locked(self) -> bool | None:
         """Authoritative compositor lock state, or unknown on a version without the query."""
@@ -192,7 +197,12 @@ class Hyprland:
         if self._run is not run_hyprctl:
             return self._json(name)
         out = run_hyprctl(["-j", name], instance=instance)
-        return json.loads(out) if out.strip() else None
+        if not out.strip():
+            return None
+        try:
+            return json.loads(out)
+        except json.JSONDecodeError:
+            return None
 
     def _instance(self, instance: str) -> dict:
         listed = self._query(instance, "instances") or []
