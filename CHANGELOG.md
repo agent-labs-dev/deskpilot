@@ -7,7 +7,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
-- The agent cursor has a look of its own: an unnamed agent's is deskpilot's mint, and each glide leaves fast and settles onto its point, a little quicker than before.
+- The agent cursor has a look of its own: an unnamed agent's is deskpilot's mint, and each glide leaves fast and settles onto its point, taking about half as long as before. A named agent's colour now always stays clear of the unnamed one's, also when the named agent shows first.
 
 - One agent's click no longer closes a menu another agent has open in its own hidden window, and neither does the user's click elsewhere. A press closed every open menu deskpilot had opened, in any app. It now closes those of the app it lands in, and a press from the user's pointer also those in windows in view, as it would without deskpilot.
 

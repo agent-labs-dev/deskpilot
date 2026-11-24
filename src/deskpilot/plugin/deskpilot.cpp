@@ -900,8 +900,9 @@ namespace {
         }
 
         // A new cursor's hue: from its name's FNV-1a hash, so an agent alone on screen keeps its colour from run to
-        // run; stepped on by the golden angle while it is within MIN_HUE_GAP of a cursor already showing, so cursors
-        // on screen together stay apart. Past MAX_HUES cursors no hue is that far from all of them, and it takes the
+        // run; stepped on by the golden angle while it is within MIN_HUE_GAP of a cursor already showing or of
+        // DEFAULT_HUE, so cursors on screen together stay apart and none is taken for an unnamed agent's, even one
+        // that shows up later. Past MAX_HUES cursors no hue is that far from all of them, and it takes the
         // last step.
         constexpr double MIN_HUE_GAP = 0.08;
         constexpr int    MAX_HUES    = 12;
@@ -911,7 +912,7 @@ namespace {
                 hash = (hash ^ c) * 16777619u;
             double hue = (hash % 3600) / 3600.0;
             for (int step = 0; step < MAX_HUES; ++step) {
-                const bool CLEAR = std::ranges::all_of(g_state->cursors, [&](const auto& entry) { return entry.first == name || hueDistance(entry.second.hue, hue) >= MIN_HUE_GAP; });
+                const bool CLEAR = hueDistance(DEFAULT_HUE, hue) >= MIN_HUE_GAP && std::ranges::all_of(g_state->cursors, [&](const auto& entry) { return entry.first == name || hueDistance(entry.second.hue, hue) >= MIN_HUE_GAP; });
                 if (CLEAR)
                     break;
                 hue = std::fmod(hue + 0.381966, 1.0);
