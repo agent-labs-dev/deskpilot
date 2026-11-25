@@ -790,7 +790,7 @@ namespace {
     // head-up display) centred on the point. Each agent (DESKPILOT_AGENT) has its own, in a colour of its own with its
     // name on a tag beside it; any number can show at once. They are drawn at Hyprland's last render stage, above every
     // window and layer, and window captures (grim -T) never include them. Before a visible pointer action an agent's
-    // cursor glides to the first point along an arc, fast in the middle and slow at the ends, while the user's input
+    // cursor glides to the first point along an arc, leaving fast and settling onto the point, while the user's input
     // still runs; the action starts once it lands, as lock-on brackets close in around it. It then follows each move
     // of the action, shrinks while a button is down, and sends a ring out at each press. It fades out after IDLE_HIDE
     // with nothing to show, and is forgotten once faded.
@@ -803,9 +803,9 @@ namespace {
         constexpr double RING        = 5.5;  // the marker's ring radius in logical pixels
         constexpr double WING        = 13;   // from the centre to a wing tip
         constexpr double FIN         = 10.5; // from the centre to the fin's tip
-        constexpr double PEAK_SPEED  = 900;  // logical pixels a second at the middle of a glide, as cua-driver's
-        constexpr auto   MIN_GLIDE   = ms(120);
-        constexpr auto   MAX_GLIDE   = ms(700);
+        constexpr double SPEED       = 1100; // a glide's average speed, in logical pixels a second
+        constexpr auto   MIN_GLIDE   = ms(110);
+        constexpr auto   MAX_GLIDE   = ms(520);
         constexpr double ARC         = 0.2; // how far a glide bows out to the side, as a fraction of its length
         constexpr auto   PULSE       = ms(380);
         constexpr double PULSE_SIZE  = 30;
@@ -821,9 +821,9 @@ namespace {
         constexpr auto   IDLE_HIDE   = std::chrono::seconds(8);
         constexpr auto   FADE        = ms(400);
         constexpr auto   FRAME       = ms(8);
-        // The cursor of an unnamed agent: the colour cua-driver gives its default cursor, and no tag.
-        const CHyprColor DEFAULT{94 / 255.0, 192 / 255.0, 232 / 255.0, 1.0};
-        constexpr double DEFAULT_HUE = 197 / 360.0; // DEFAULT's hue, which named cursors keep apart from
+        // The cursor of an unnamed agent: deskpilot's mint (#7CF0B0, the logo's), and no tag.
+        const CHyprColor DEFAULT{124 / 255.0, 240 / 255.0, 176 / 255.0, 1.0};
+        constexpr double DEFAULT_HUE = 147 / 360.0; // DEFAULT's hue, which named cursors keep apart from
 
         struct SGlide {
             Vector2D              from, bend, to;
@@ -900,9 +900,10 @@ namespace {
         }
 
         // A new cursor's hue: from its name's FNV-1a hash, so an agent alone on screen keeps its colour from run to
-        // run; stepped on by the golden angle while it is within MIN_HUE_GAP of a cursor already showing, so cursors
-        // on screen together stay apart. Past MAX_HUES cursors no hue is that far from all of them, and it takes the
-        // last step.
+        // run; stepped on by the golden angle while it is within MIN_HUE_GAP of a cursor already showing or of
+        // DEFAULT_HUE, so cursors on screen together stay apart and none is taken for an unnamed agent's, even one
+        // that shows up later. Past MAX_HUES cursors no hue is that far from all of them, and it takes the
+        // last step that is still clear of DEFAULT_HUE.
         constexpr double MIN_HUE_GAP = 0.08;
         constexpr int    MAX_HUES    = 12;
         double hueOf(const std::string& name) {
@@ -911,11 +912,15 @@ namespace {
                 hash = (hash ^ c) * 16777619u;
             double hue = (hash % 3600) / 3600.0;
             for (int step = 0; step < MAX_HUES; ++step) {
-                const bool CLEAR = std::ranges::all_of(g_state->cursors, [&](const auto& entry) { return entry.first == name || hueDistance(entry.second.hue, hue) >= MIN_HUE_GAP; });
+                const bool CLEAR = hueDistance(DEFAULT_HUE, hue) >= MIN_HUE_GAP && std::ranges::all_of(g_state->cursors, [&](const auto& entry) { return entry.first == name || hueDistance(entry.second.hue, hue) >= MIN_HUE_GAP; });
                 if (CLEAR)
                     break;
                 hue = std::fmod(hue + 0.381966, 1.0);
             }
+            // Exhausted: spacing from other cursors is given up, but never the gap from DEFAULT_HUE, which the golden
+            // steps reach within a few more.
+            while (hueDistance(DEFAULT_HUE, hue) < MIN_HUE_GAP)
+                hue = std::fmod(hue + 0.381966, 1.0);
             return hue;
         }
 
@@ -1172,9 +1177,10 @@ namespace {
         };
         std::optional<SCapture> g_capture;
 
-        // A point on the glide's arc (a quadratic Bezier through a bend to one side), at an eased fraction of the way.
+        // A point on the glide's arc (a quadratic Bezier through a bend to one side), at an eased fraction of the way:
+        // it leaves fast and settles onto the point, as a marker locking on, rather than easing in and out.
         Vector2D along(const SGlide& glide, double t) {
-            const auto E = t < 0.5 ? 4 * t * t * t : 1 - std::pow(-2 * t + 2, 3) / 2;
+            const auto E = 1 - std::pow(1 - t, 4);
             return glide.from * ((1 - E) * (1 - E)) + glide.bend * (2 * (1 - E) * E) + glide.to * (E * E);
         }
 
@@ -1256,8 +1262,7 @@ namespace {
                 then();
                 return;
             }
-            // A smooth start and stop at a peak of PEAK_SPEED take about 1.5 times the time at that speed.
-            const auto SECONDS = std::clamp(1.5 * DIST / PEAK_SPEED, secondsOf(MIN_GLIDE), secondsOf(MAX_GLIDE));
+            const auto SECONDS = std::clamp(DIST / SPEED, secondsOf(MIN_GLIDE), secondsOf(MAX_GLIDE));
             const auto DIR     = (to - FROM) / DIST;
             const auto BEND    = (FROM + to) / 2 + Vector2D{-DIR.y, DIR.x} * (DIST * ARC);
             cursor.glide       = SGlide{FROM, BEND, to, Time::steadyNow(), SECONDS, std::move(then)};

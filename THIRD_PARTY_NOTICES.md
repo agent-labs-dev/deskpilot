@@ -3,8 +3,7 @@
 ## Cua
 
 deskpilot's design draws on [Cua](https://github.com/trycua/cua): its `cua-driver` and Hyprland plugin for acting on a
-window without taking the user's input, its agent cursor (glide speed and default colour in
-`src/deskpilot/plugin/deskpilot.cpp`), and its accessibility-tree reads (an explicit cut and `query` narrowing in
+window without taking the user's input, its agent cursor, which deskpilot first drew through `cua-driver`, and its accessibility-tree reads (an explicit cut and `query` narrowing in
 `src/deskpilot/a11y.py`).
 
 ```text
