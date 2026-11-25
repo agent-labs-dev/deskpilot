@@ -1130,7 +1130,7 @@ def test_hover_then_click_clicks_before_the_pointer_leaves(tmp_path, monkeypatch
 
 def test_an_element_is_targeted_at_its_live_centre(tmp_path, monkeypatch):
     desk, _, _, plugin = make_desk(tmp_path, monkeypatch)
-    monkeypatch.setattr("deskpilot.desk.a11y.locate", lambda win, element: a11y.Located(10, 20, 30, 40))
+    monkeypatch.setattr("deskpilot.desk.a11y.locate", lambda win, element, popups: a11y.Located(10, 20, 30, 40))
     assert desk.click("notepad", None, None, element="e3") == (2527 + 25, 966 + 40)
     assert plugin.calls[-1][-1][0] == "m2552,1006"
     with pytest.raises(ValueError, match="not both"):
@@ -1154,7 +1154,7 @@ def popup(id, parent, x, y, sx, sy, width=100, height=200):
 def test_a_gtk3_element_is_clicked_on_the_surface_it_is_on(tmp_path, monkeypatch):
     desk, _, _, plugin = launched_desk(tmp_path, monkeypatch)
     located = a11y.Located(10, 20, 30, 40, known=True)
-    monkeypatch.setattr("deskpilot.desk.a11y.locate", lambda win, element: located)
+    monkeypatch.setattr("deskpilot.desk.a11y.locate", lambda win, element, popups: located)
     desk.click("0xdef", None, None, element="e3", hidden=True)
     assert plugin.calls[-1] == ("path", "0xdef", "hidden", ["s", "m2552,1006", "d52", "p272", "r272"])
 
@@ -1176,7 +1176,9 @@ def test_a_gtk3_element_is_clicked_on_the_surface_it_is_on(tmp_path, monkeypatch
 
 def test_a_window_element_is_refused_while_a_popup_is_at_the_window_origin(tmp_path, monkeypatch):
     desk, _, _, plugin = launched_desk(tmp_path, monkeypatch)
-    monkeypatch.setattr("deskpilot.desk.a11y.locate", lambda win, element: a11y.Located(10, 20, 30, 40, known=True))
+    monkeypatch.setattr(
+        "deskpilot.desk.a11y.locate", lambda win, element, popups: a11y.Located(10, 20, 30, 40, known=True)
+    )
     plugin.mapped = [popup(0, -1, 0, 0, -6, -5)]
     with pytest.raises(a11y.A11yError) as error:
         desk.click("0xdef", None, None, element="e3", hidden=True)
@@ -1187,7 +1189,7 @@ def test_a_window_element_is_refused_while_a_popup_is_at_the_window_origin(tmp_p
 def test_a_popup_element_that_cannot_be_placed_is_refused(tmp_path, monkeypatch):
     desk, _, _, plugin = launched_desk(tmp_path, monkeypatch)
     located = a11y.Located(6, 9, 80, 20, ((20, 188),), True)
-    monkeypatch.setattr("deskpilot.desk.a11y.locate", lambda win, element: located)
+    monkeypatch.setattr("deskpilot.desk.a11y.locate", lambda win, element, popups: located)
     for mapped, code in (
         ([], "stale"),
         ([popup(0, -1, 20, 188, 14, 183), popup(1, -1, 20, 188, 14, 183)], "ambiguous"),
@@ -1441,6 +1443,32 @@ def test_client_env_names_the_selected_instance_s_socket(monkeypatch):
     listed.pop()
     with pytest.raises(HyprctlError, match="no Wayland socket for Hyprland nested"):
         hypr.Hyprland(hypr.run_hyprctl).client_env()
+
+
+def test_malformed_instances_json_reports_unavailable(monkeypatch):
+    # Issue #167: `hyprctl -j instances` returns a newline followed by `]` in a PID namespace.
+    # `windows` must report the instance as unavailable, not raise the raw JSON error.
+    from deskpilot import hypr
+
+    monkeypatch.setattr(hypr, "current_instance", lambda: "nested")
+
+    def run(args, *, instance=None):
+        if args[-1] == "instances":
+            return "\n]\n"
+        return "[]"
+
+    monkeypatch.setattr(hypr, "run_hyprctl", run)
+    with pytest.raises(HyprctlError, match="no Wayland socket for Hyprland nested"):
+        hypr.Hyprland(hypr.run_hyprctl).windows()
+
+
+def test_malformed_cursorpos_json_fails_fast():
+    # The instances fallback must stay scoped: a malformed cursorpos must fail
+    # before input moves, never restore the pointer to a (0, 0) default.
+    from deskpilot import hypr
+
+    with pytest.raises(json.JSONDecodeError):
+        hypr.Hyprland(lambda args: "\n]\n").cursor()
 
 
 @pytest.mark.parametrize("action", ["type", "paste"])

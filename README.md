@@ -63,6 +63,10 @@ agent's app), granted in System Settings > Privacy & Security.
 uv tool install deskpilot
 ```
 
+On Arch Linux, the [`deskpilot`](https://aur.archlinux.org/packages/deskpilot) AUR package installs it with
+Hyprland, `grim` and the plugin's build tools: `yay -S deskpilot`. `wl-clipboard` and `ffmpeg` are optional
+dependencies.
+
 On Hyprland, the first input action builds and loads the plugin for your running compositor. Run
 `deskpilot plugin load` to prepare it ahead of time. The build needs the tools listed under
 [Requirements](#requirements). Windows and macOS need nothing beyond the package.
@@ -90,6 +94,7 @@ deskpilot elements WINDOW
 
 A tree larger than one read ends with the command that reads the next batch, and
 `deskpilot elements WINDOW --query TEXT` prints only the elements whose role, name or text contains `TEXT`.
+With `--json` each element lists its `interfaces` and `actions`, what the app says it can do whatever its role is called.
 
 In an app with an accessibility tree, choose a control from the output and replace `ELEMENT` with its ID:
 

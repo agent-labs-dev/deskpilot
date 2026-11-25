@@ -41,6 +41,7 @@ are thin layers over the desk `open_desk` picks: `Desk` on Hyprland, `NativeDesk
 - `scripts/nested.py`: a throwaway nested Hyprland for live checks of the plugin off the user's screen
 - `scripts/wordmark.py`: the wordmark, its dark variant and the GitHub social preview, from `assets/logo.svg` and
   Liberation Sans (`uv run python scripts/wordmark.py`)
+- `scripts/render_aur.py`: the AUR `PKGBUILD` and `.SRCINFO` for a release, pushed by `release.yml`
 - `src/deskpilot/a11y.py`: the target app's AT-SPI accessibility tree over D-Bus, and element ids for actions
 - `src/deskpilot/recipe.py`: saved recipes (steps, `pause`, `wait`, `shot`), the window pinned once, filmed
   through `Desk.record`; `recipes/` holds the examples
@@ -88,6 +89,10 @@ are thin layers over the desk `open_desk` picks: `Desk` on Hyprland, `NativeDesk
   The Windows and macOS CI jobs run that file and the smoke script; the Linux gate cannot import their drivers.
 - Every user-visible change gets a line under `## [Unreleased]` in `CHANGELOG.md`, and a command or flag change
   updates `README.md` and `skills/deskpilot/SKILL.md` too.
+- A PR that adds a feature carries a video of it working on a real window: record the nested Hyprland's output
+  (`WAYLAND_DISPLAY=<wayland> wf-recorder -o DPTEST -f clip.mp4`, stopped with SIGINT), keep it short and under
+  10 MB, and attach it with `gh pr edit <n> --attach clip.mp4`, which GitHub plays inline. Never a mock; when it
+  cannot be recorded, the body says why.
 
 ## Standards
 
