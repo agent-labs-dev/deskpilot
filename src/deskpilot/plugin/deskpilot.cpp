@@ -903,7 +903,7 @@ namespace {
         // run; stepped on by the golden angle while it is within MIN_HUE_GAP of a cursor already showing or of
         // DEFAULT_HUE, so cursors on screen together stay apart and none is taken for an unnamed agent's, even one
         // that shows up later. Past MAX_HUES cursors no hue is that far from all of them, and it takes the
-        // last step.
+        // last step that is still clear of DEFAULT_HUE.
         constexpr double MIN_HUE_GAP = 0.08;
         constexpr int    MAX_HUES    = 12;
         double hueOf(const std::string& name) {
@@ -917,6 +917,10 @@ namespace {
                     break;
                 hue = std::fmod(hue + 0.381966, 1.0);
             }
+            // Exhausted: spacing from other cursors is given up, but never the gap from DEFAULT_HUE, which the golden
+            // steps reach within a few more.
+            while (hueDistance(DEFAULT_HUE, hue) < MIN_HUE_GAP)
+                hue = std::fmod(hue + 0.381966, 1.0);
             return hue;
         }
 
