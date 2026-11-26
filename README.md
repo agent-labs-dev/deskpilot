@@ -242,8 +242,7 @@ Python 3.12 or later and `uv` everywhere. On Windows and macOS that is all; macO
 
 deskpilot builds on [Cua](https://github.com/trycua/cua) (MIT, (c) 2025 Cua AI, Inc.) and owes it a great deal. Its
 `cua-driver` and Hyprland plugin showed how to act on a window without taking the user's input, and deskpilot first
-drew its agent cursor through `cua-driver`. The cursor's glide speed and default colour still come from Cua, and the
-accessibility reads follow its explicit cut and `query` narrowing. The notice is in
+drew its agent cursor through `cua-driver` before drawing its own. The accessibility reads follow its explicit cut and `query` narrowing. The notice is in
 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
 
 ## Documentation and contributing
