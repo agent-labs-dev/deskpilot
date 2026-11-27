@@ -251,8 +251,9 @@ class Desk(BaseDesk):
         env["QT_LINUX_ACCESSIBILITY_ALWAYS_ON"] = "1"
         # Chrome and Chromium hand a launch to the copy already running on the same profile, so on the user's profile
         # the window was the user's process: opened on their workspace with their focus, and left open by stop. The
-        # agent's own profile, the one its private --session uses, makes the browser a process of its own.
-        profile = agent_dir(self.plugin.agent) / "config"
+        # agent's own profile makes the browser a process of its own. It is not the one a private --session uses: a
+        # copy running there would take this launch the same way, onto that compositor.
+        profile = agent_dir(self.plugin.agent) / "desktop-config"
         profile.mkdir(parents=True, exist_ok=True, mode=0o700)
         env["CHROME_CONFIG_HOME"] = str(profile)
         self._launched = [p for p in self._launched if p.poll() is None]

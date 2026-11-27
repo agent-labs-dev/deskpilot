@@ -1533,7 +1533,7 @@ def test_a_launched_browser_gets_the_agent_s_own_profile(tmp_path, monkeypatch):
     GATE.on_start = lambda: fake.clients.append(AGENT_CLIENT)
     desk.launch(["google-chrome-stable"])
     (gate,) = GATE.made
-    profile = tmp_path / "data" / "deskpilot" / "agents" / "tester" / "config"
+    profile = tmp_path / "data" / "deskpilot" / "agents" / "tester" / "desktop-config"
     assert gate.env["CHROME_CONFIG_HOME"] == str(profile) and profile.is_dir()
 
 
