@@ -23,6 +23,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 - `container/Dockerfile` builds while archive.archlinux.org is unreachable: it takes its pinned Arch Linux Archive snapshot from the archive's mirror, umea.archive.pkgbuild.com, and leaves no downloaded packages in the image.
 - `windows` reports an instance whose `instances` query returns malformed JSON as `unavailable` instead of failing on the raw parse error.
 
+- `launch` starts Chrome and Chromium on the agent's own profile, so a browser the user already has open no longer takes the launch: the window opened in the user's browser, on their workspace with their focus, and `stop` left it open.
+
 ## [0.9.0] - 2026-11-21
 
 - A click, hover, scroll or drag result names its `route` (`agent`, `client`, `seat`, or `pointer` for `--take-pointer`), so an input that held the user's seat is no surprise.

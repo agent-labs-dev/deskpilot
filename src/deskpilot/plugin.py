@@ -55,6 +55,11 @@ def build_dir() -> Path:
     return Path(base) / "deskpilot"
 
 
+def agent_dir(agent: str | None) -> Path:
+    """The agent's own profile directories, kept from one launch to the next."""
+    return build_dir() / "agents" / str(agent)
+
+
 def prune_builds(keep: set[Path]) -> list[Path]:
     """Delete the plugin builds in the build directory that are not in `keep`: every source or Hyprland commit leaves
     its own file, a few MB each, and nothing else ever removes them. A build another Hyprland has loaded stays mapped

@@ -444,6 +444,7 @@ class FakeGate:
 def gated_launch(tmp_path, monkeypatch, birth=987654):
     desk, fake, _, plugin = make_desk(tmp_path, monkeypatch)
     GATE.reset()
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "data"))
     monkeypatch.setenv("HL_INITIAL_WORKSPACE_TOKEN", "the-terminal-s")
     monkeypatch.setattr(subprocess, "Popen", FakePopen)
     monkeypatch.setattr(desk_module, "process_birth", lambda pid: birth if pid == 5150 else None)
@@ -1523,6 +1524,17 @@ def test_a_launched_app_is_told_accessibility_is_on(tmp_path, monkeypatch):
     desk.launch(["google-chrome-stable", "--force-renderer-accessibility"])
     (gate,) = GATE.made
     assert gate.env["ACCESSIBILITY_ENABLED"] == "1"
+
+
+def test_a_launched_browser_gets_the_agent_s_own_profile(tmp_path, monkeypatch):
+    # On the user's profile, Chrome hands the launch to the user's running copy, which opens the window as its own.
+    desk, fake, _ = gated_launch(tmp_path, monkeypatch)
+    monkeypatch.delenv("CHROME_CONFIG_HOME", raising=False)
+    GATE.on_start = lambda: fake.clients.append(AGENT_CLIENT)
+    desk.launch(["google-chrome-stable"])
+    (gate,) = GATE.made
+    profile = tmp_path / "data" / "deskpilot" / "agents" / "tester" / "desktop-config"
+    assert gate.env["CHROME_CONFIG_HOME"] == str(profile) and profile.is_dir()
 
 
 def test_a_launched_qt_app_is_told_to_join_the_accessibility_bus(tmp_path, monkeypatch):
